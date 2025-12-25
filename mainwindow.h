@@ -32,8 +32,8 @@ public:
     SerialPort * serialPort;
     Coordinate * coordinate;
     Params * params;
-    ROSVisualizer * visualizer;
-    // ROSVisualizer3D * visualizer3d;
+    // ROSVisualizer * visualizer;
+    ROSVisualizer3D * visualizer3d;
 
 
 private:
