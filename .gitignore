@@ -1,0 +1,15 @@
+﻿.qtc_clangd
+debug
+build
+*.stash
+*.user
+Makefile
+Makefile.Debug
+*.Release
+ui_coordinate.h
+ui_form.h
+ui_mainwindow.h
+ui_params.h
+ui_rosvisualizer.h
+ui_serialport.h
+luaPort1_resource.rc
