@@ -6,25 +6,23 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>400</width>
-    <height>300</height>
+    <width>775</width>
+    <height>544</height>
    </rect>
   </property>
   <property name="windowTitle">
    <string>Form</string>
   </property>
-  <widget class="QLabel" name="label">
+  <widget class="QWidget" name="verticalLayoutWidget">
    <property name="geometry">
     <rect>
-     <x>80</x>
-     <y>130</y>
-     <width>69</width>
-     <height>19</height>
+     <x>30</x>
+     <y>40</y>
+     <width>481</width>
+     <height>411</height>
     </rect>
    </property>
-   <property name="text">
-    <string>测试</string>
-   </property>
+   <layout class="QVBoxLayout" name="verticalLayout"/>
   </widget>
  </widget>
  <resources/>

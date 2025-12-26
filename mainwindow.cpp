@@ -87,7 +87,7 @@ MainWindow::MainWindow(QWidget *parent)
     //     ui->stackedWidget->setCurrentIndex(2);
     // });
     connect(Ros3DAction,&QAction::triggered,this,[=](){
-        ui->stackedWidget->setCurrentIndex(3);
+        ui->stackedWidget->setCurrentIndex(2);
     });
 
     // 连接Params的消息信号到SerialPort的显示槽

@@ -1,4 +1,4 @@
-QT       += core gui serialport network
+QT       += core gui serialport network opengl
 
 greaterThan(QT_MAJOR_VERSION, 4): QT += widgets
 
@@ -19,6 +19,7 @@ INCLUDEPATH += $$PWD/src/ROSVisualizer
 INCLUDEPATH += $$PWD/src/ROSVisualizer3D
 INCLUDEPATH += $$PWD/utils/tcp
 INCLUDEPATH += $$PWD/utils/protocol
+INCLUDEPATH += $$PWD/utils/glscene
 
 SOURCES += \
     src/Coordinate/coordinate.cpp \
@@ -28,6 +29,7 @@ SOURCES += \
     src/ROSVisualizer3D/rosvisualizer3d.cpp \
     src/Serialport/serialport.cpp \
     src/ROSVisualizer/rosvisualizer.cpp \
+    utils/glscene/glscene.cpp \
     utils/protocol/protocolhandler.cpp \
     utils/tcp/tcpclient.cpp \
     utils/config/config.cpp
@@ -40,6 +42,7 @@ HEADERS += \
     src/Serialport/serialport.h \
     stdafx.h \
     src/ROSVisualizer/rosvisualizer.h \
+    utils/glscene/glscene.h \
     utils/protocol/protocolhandler.h \
     utils/tcp/tcpclient.h \
     utils/config/config.h
@@ -68,3 +71,4 @@ COPIES += ini
 ini.files = $$PWD/config/config.ini
 ini.path   = $$OUT_PWD
 
+win32:LIBS += -lopengl32
