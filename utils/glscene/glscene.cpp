@@ -11,11 +11,31 @@ GLScene::GLScene(QWidget* parent)
     setFocusPolicy(Qt::StrongFocus);
 }
 
+// 画 XY 平面栅格，halfSize 单方向范围，step 格子间距
+void drawGrid(float halfSize = 20.0f, float step = 1.0f)
+{
+    glColor3f(0.35f, 0.35f, 0.35f);          // 栅格线颜色 #595959
+    glBegin(GL_LINES);
+    for (float x = -halfSize; x <= halfSize + 1e-4f; x += step)
+    {
+        glVertex3f(x, -halfSize, 0.0f);
+        glVertex3f(x,  halfSize, 0.0f);
+    }
+    for (float y = -halfSize; y <= halfSize + 1e-4f; y += step)
+    {
+        glVertex3f(-halfSize, y, 0.0f);
+        glVertex3f( halfSize, y, 0.0f);
+    }
+    glEnd();
+}
+
 void GLScene::initializeGL()
 {
     initializeOpenGLFunctions();
     glEnable(GL_DEPTH_TEST);
-    glClearColor(0.95f, 0.95f, 0.95f, 1.0f);
+    glEnable(GL_CULL_FACE);               // 可选
+    // RViz 默认深灰
+    glClearColor(0.19f, 0.19f, 0.19f, 1.0f);   // #303030
 }
 
 void GLScene::resizeGL(int w, int h)
@@ -45,6 +65,10 @@ void GLScene::paintGL()
 
     applyCamera();
 
+    // 1. 栅格
+    drawGrid();
+
+    // 2. 其余对象
     drawAxes(1.0f);
     drawTFs();
     drawPointCloud();
@@ -130,3 +154,4 @@ void GLScene::setTFs(const QVector<Transform>& tfs)
     tfs_ = tfs;
     update();
 }
+
