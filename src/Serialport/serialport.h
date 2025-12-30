@@ -73,9 +73,8 @@ public:
     QSerialPort *serialPort;
 
     // 解析ROS数据帧
-    // void parseRosFrame(quint8 topicId, const QByteArray &payload);
-    void parseRosFrame(quint8 topicId, const QJsonObject &jsonData);
-    double quaternionToYaw(double x, double y, double z, double w);
+    // void parseRosFrame(quint8 topicId, const QJsonObject &jsonData);
+    // double quaternionToYaw(double x, double y, double z, double w);
 
     // 添加公共访问方法以便Params类可以访问连接状态
     bool getIsTcpConnected() const { return isTcpConnected; }
@@ -97,7 +96,7 @@ protected:
 
 private slots:
     void onTestTimeout();
-    void parseTestData(const QByteArray &frame);
+    // void parseTestData(const QByteArray &frame);
     // 串口通信相关函数
     void on_portSearchBt_clicked();
     void on_portOpenBt_clicked();
@@ -124,7 +123,7 @@ private:
     QTimer *testTimer;
 
     // 协议数据解析
-    void processProtocolFrame(const QByteArray &frame);
+    // void processProtocolFrame(const QByteArray &frame);
     void parseProtocolData(const QByteArray &data);
     // ROS数据解析
     void parseRosData(const QByteArray& recBuf);
@@ -147,32 +146,33 @@ private:
     // void sendData(const QByteArray &data);
 
     // TF缓存
-    QMap<QString, TFMessage::Transform> tfCache;
+    // QMap<QString, TFMessage::Transform> tfCache;
 
     // 统计相关变量
-    int tfCount = 0;
-    int scanCount = 0;
-    int mapCount = 0;
+    // int tfCount = 0;
+    // int scanCount = 0;
+    // int mapCount = 0;
     QTimer* statsTimer;
     QElapsedTimer elapsedTimer;
-    void onStatsTimeout();
+    // void onStatsTimeout();
 
     bool m_reconnectWarningShown = false;
 
 signals:
+    void rawBytesReceived(const QByteArray& data);
     void coordinatesUpdated(qint16 x, qint16 y, qint16 z, qint16 yaw);
 
      // 新增：向显示窗口添加信息
     void appendToDisplay(const QString &message);
 
     // ROS数据更新信号
-    void rosMapUpdated(const OccupancyGrid& map);
-    void rosScanUpdated(const LaserScan& scan);
-    void rosTfUpdated(const TFMessage& tf);
+    // void rosMapUpdated(const OccupancyGrid& map);
+    // void rosScanUpdated(const LaserScan& scan);
+    // void rosTfUpdated(const TFMessage& tf);
 
     void parameterResponseReceived(const QByteArray &data);  // 参数响应信号
     // 清理绘图视图
-    void requestClearVisualization();
+    // void requestClearVisualization();
 
 };
 

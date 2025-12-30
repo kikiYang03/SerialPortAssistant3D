@@ -3,7 +3,10 @@
 
 #include <QVBoxLayout>
 #include <QJsonArray>
+#include <QMatrix4x4>
 #include <cmath>
+
+
 
 ROSVisualizer3D::ROSVisualizer3D(QWidget *parent)
     : QWidget(parent)
@@ -61,6 +64,7 @@ void ROSVisualizer3D::onProtocolJson(int cmd, const QJsonObject& obj)
         break;
     }
 }
+
 
 QVector3D calcTF(const QString& target,
                  const QString& source,

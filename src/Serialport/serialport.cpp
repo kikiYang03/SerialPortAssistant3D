@@ -71,10 +71,10 @@ SerialPort::SerialPort(QWidget *parent)
             if (!statsTimer->isActive()) {
                 statsTimer->start();
                 elapsedTimer.restart();
-                // 重置计数器
-                tfCount = 0;
-                scanCount = 0;
-                mapCount = 0;
+                // // 重置计数器
+                // tfCount = 0;
+                // scanCount = 0;
+                // mapCount = 0;
             }
         } else {
             ui->lblWifiState->setText("尝试自动重连");
@@ -124,7 +124,7 @@ SerialPort::SerialPort(QWidget *parent)
     // 初始化统计定时器
     statsTimer = new QTimer(this);
     statsTimer->setInterval(10000); // 10秒
-    connect(statsTimer, &QTimer::timeout, this, &SerialPort::onStatsTimeout);
+    // connect(statsTimer, &QTimer::timeout, this, &SerialPort::onStatsTimeout);
 
     connect(tcpClient, &TcpClient::reconnectTimeout, this, [this](){
         if (!m_reconnectWarningShown) {
@@ -235,11 +235,13 @@ void SerialPort::processReceivedData(const QByteArray &recBuf)
     recvNum += recBuf.size();
     ui->recvNum->setText(QString("接收字节数量： %1").arg(recvNum));
 
+    // 串口测试逻辑保留（仅测试）
     if (isSerialPortConnected) {
         recvBuffer.append(recBuf);
         while (recvBuffer.size() >= 10) {
             int head = recvBuffer.indexOf(char(0xAA));
             if (head < 0 || recvBuffer.size() - head < 10) break;
+
             QByteArray frame = recvBuffer.mid(head, 10);
             if (quint8(frame[0]) != 0xAA || quint8(frame[9]) != 0x0A) {
                 recvBuffer.remove(head, 1);
@@ -247,238 +249,238 @@ void SerialPort::processReceivedData(const QByteArray &recBuf)
             }
             recvBuffer.remove(head, 10);
             QString line = uartFrameToText(frame);
-            if (!line.isEmpty()) ui->recvEdit->append(line);
+            if (!line.isEmpty())
+                ui->recvEdit->append(line);
         }
-    } else {
-        /* ---------- 网口链路：保持原 ROS-JSON 逻辑 ---------- */
-        recvBuffer.append(recBuf);
-        QList<QByteArray> frames = ProtocolHandler::extractFramesFromBuffer(recvBuffer);
-        for (const QByteArray &fr : frames)
-            processProtocolFrame(fr);
-    }
-}
-
-void SerialPort::processProtocolFrame(const QByteArray &frame)
-{
-    if (!ProtocolHandler::validateFrame(frame)) {
-        qWarning() << "无效帧:" << frame.toHex(' ');
         return;
     }
 
-    quint8 command = ProtocolHandler::getCommandType(frame);
-    QByteArray payload = ProtocolHandler::extractPayload(frame);
-
-    switch (command) {
-    case ProtocolCommand::TEST:
-        if (ProtocolHandler::parseTestResponse(frame)) {
-            testFlag = true;
-            testTimer->stop();
-            QString timestamp = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss >> 测试操作: ");
-            ui->recvEdit->append(timestamp + " 测试成功，模块通讯正常!!");
-        }
-        break;
-
-    case ProtocolCommand::PARAM_READ:{
-        quint8 paramId;
-        quint16 value;
-        if (ProtocolHandler::parseParameterResponse(frame, paramId, value)) {
-            emit parameterResponseReceived(frame);
-        }
-        break;
-    }
-
-    case ProtocolCommand::TF_DATA: {
-        tfCount++;  // 增加TF计数
-        QJsonObject jsonData = ProtocolHandler::parseRosData(payload);
-        if (!jsonData.isEmpty()) {
-            parseRosFrame(command, jsonData);
-        }
-        break;
-    }
-
-    case ProtocolCommand::SCAN_DATA: {
-        scanCount++;  // 增加SCAN计数
-        QJsonObject jsonData = ProtocolHandler::parseRosData(payload);
-        if (!jsonData.isEmpty()) {
-            parseRosFrame(command, jsonData);
-        }
-        break;
-    }
-
-    case ProtocolCommand::MAP_DATA: {
-        mapCount++;  // 增加MAP计数
-        QJsonObject jsonData = ProtocolHandler::parseRosData(payload);
-        if (!jsonData.isEmpty()) {
-            parseRosFrame(command, jsonData);
-        }
-        break;
-    }
-
-    default:
-        qWarning() << "未知命令类型:" << command;
-    }
+    // ❗ 网络数据：不解析、不拆包，直接抛出
+    emit rawBytesReceived(recBuf);
 }
 
-// 测试数据解析函数
-void SerialPort::parseTestData(const QByteArray &frame)
-{
-    // 检查是否为正确的测试回复数据: 0xAA 0x00 0x01 0x0A
-    if (frame.size() == 4 &&
-        static_cast<quint8>(frame.at(0)) == 0xAA &&
-        static_cast<quint8>(frame.at(1)) == 0x00 &&
-        static_cast<quint8>(frame.at(2)) == 0x01 &&
-        static_cast<quint8>(frame.at(3)) == 0x0A) {
 
-        // 设置测试标志
-        testFlag = true;
+// void SerialPort::processProtocolFrame(const QByteArray &frame)
+// {
+//     if (!ProtocolHandler::validateFrame(frame)) {
+//         qWarning() << "无效帧:" << frame.toHex(' ');
+//         return;
+//     }
 
-        // 停止定时器
-        testTimer->stop();
+//     quint8 command = ProtocolHandler::getCommandType(frame);
+//     QByteArray payload = ProtocolHandler::extractPayload(frame);
 
-        // 在接收框显示成功信息
-        ui->recvEdit->append("测试成功，模块通讯正常!!");
+//     switch (command) {
+//     case ProtocolCommand::TEST:
+//         if (ProtocolHandler::parseTestResponse(frame)) {
+//             testFlag = true;
+//             testTimer->stop();
+//             QString timestamp = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss >> 测试操作: ");
+//             ui->recvEdit->append(timestamp + " 测试成功，模块通讯正常!!");
+//         }
+//         break;
 
-        // 重置标志位
-        testFlag = false;
-    }
-}
+//     case ProtocolCommand::PARAM_READ:{
+//         quint8 paramId;
+//         quint16 value;
+//         if (ProtocolHandler::parseParameterResponse(frame, paramId, value)) {
+//             emit parameterResponseReceived(frame);
+//         }
+//         break;
+//     }
+
+//     case ProtocolCommand::TF_DATA: {
+//         tfCount++;  // 增加TF计数
+//         QJsonObject jsonData = ProtocolHandler::parseRosData(payload);
+//         if (!jsonData.isEmpty()) {
+//             parseRosFrame(command, jsonData);
+//         }
+//         break;
+//     }
+
+//     case ProtocolCommand::SCAN_DATA: {
+//         scanCount++;  // 增加SCAN计数
+//         QJsonObject jsonData = ProtocolHandler::parseRosData(payload);
+//         if (!jsonData.isEmpty()) {
+//             parseRosFrame(command, jsonData);
+//         }
+//         break;
+//     }
+
+//     case ProtocolCommand::MAP_DATA: {
+//         mapCount++;  // 增加MAP计数
+//         QJsonObject jsonData = ProtocolHandler::parseRosData(payload);
+//         if (!jsonData.isEmpty()) {
+//             parseRosFrame(command, jsonData);
+//         }
+//         break;
+//     }
+
+//     default:
+//         qWarning() << "未知命令类型:" << command;
+//     }
+// }
+
+// // 测试数据解析函数
+// void SerialPort::parseTestData(const QByteArray &frame)
+// {
+//     // 检查是否为正确的测试回复数据: 0xAA 0x00 0x01 0x0A
+//     if (frame.size() == 4 &&
+//         static_cast<quint8>(frame.at(0)) == 0xAA &&
+//         static_cast<quint8>(frame.at(1)) == 0x00 &&
+//         static_cast<quint8>(frame.at(2)) == 0x01 &&
+//         static_cast<quint8>(frame.at(3)) == 0x0A) {
+
+//         // 设置测试标志
+//         testFlag = true;
+
+//         // 停止定时器
+//         testTimer->stop();
+
+//         // 在接收框显示成功信息
+//         ui->recvEdit->append("测试成功，模块通讯正常!!");
+
+//         // 重置标志位
+//         testFlag = false;
+//     }
+// }
 
 // 定时任务
-void SerialPort::onStatsTimeout()
-{
-    // 固定10秒时间窗口
-    static const double TIME_WINDOW = 10.0;
+// void SerialPort::onStatsTimeout()
+// {
+//     // 固定10秒时间窗口
+//     static const double TIME_WINDOW = 10.0;
 
-    // 计算频率
-    double tfFreq = tfCount / TIME_WINDOW;
-    double scanFreq = scanCount / TIME_WINDOW;
-    double mapFreq = mapCount / TIME_WINDOW;
+//     // 计算频率
+//     double tfFreq = tfCount / TIME_WINDOW;
+//     double scanFreq = scanCount / TIME_WINDOW;
+//     double mapFreq = mapCount / TIME_WINDOW;
 
-    // 获取当前时间
-    QString timestamp = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss >> 话题统计: ");
+//     // 获取当前时间
+//     QString timestamp = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss >> 话题统计: ");
 
-    QString stats = QString("%1 /tf = %2 Hz, /scan = %3 Hz   /map = %4 Hz")
-                        .arg(timestamp)
-                        .arg(tfFreq, 0, 'f', 2)
-                        .arg(scanFreq, 0, 'f', 2)
-                        .arg(mapFreq, 0, 'f', 2);
+//     QString stats = QString("%1 /tf = %2 Hz, /scan = %3 Hz   /map = %4 Hz")
+//                         .arg(timestamp)
+//                         .arg(tfFreq, 0, 'f', 2)
+//                         .arg(scanFreq, 0, 'f', 2)
+//                         .arg(mapFreq, 0, 'f', 2);
 
-    ui->recvEdit->append(stats);
+//     ui->recvEdit->append(stats);
 
-    // 重置计数器
-    tfCount = 0;
-    scanCount = 0;
-    mapCount = 0;
-}
+//     // 重置计数器
+//     tfCount = 0;
+//     scanCount = 0;
+//     mapCount = 0;
+// }
 
 // 解析ros话题数据
-void SerialPort::parseRosFrame(quint8 topicId, const QJsonObject &obj)
-{
-    switch (topicId)
-    {
+// void SerialPort::parseRosFrame(quint8 topicId, const QJsonObject &obj)
+// {
+//     switch (topicId)
+//     {
 
-    case ProtocolCommand::TF_DATA: { // TF
-        TFMessage::Transform t;
-        t.header.frame_id = obj.value("frame_id").toString();
-        t.child_frame_id = obj.value("child_frame_id").toString();
-        t.x = obj.value("x").toDouble();
-        t.y = obj.value("y").toDouble();
-        t.z = obj.value("z").toDouble();
+//     case ProtocolCommand::TF_DATA: { // TF
+//         TFMessage::Transform t;
+//         t.header.frame_id = obj.value("frame_id").toString();
+//         t.child_frame_id = obj.value("child_frame_id").toString();
+//         t.x = obj.value("x").toDouble();
+//         t.y = obj.value("y").toDouble();
+//         t.z = obj.value("z").toDouble();
 
-        if (obj.contains("qx")) {
-            double qx = obj["qx"].toDouble();
-            double qy = obj["qy"].toDouble();
-            double qz = obj["qz"].toDouble();
-            double qw = obj["qw"].toDouble();
-            t.yaw = quaternionToYaw(qx, qy, qz, qw);
-        }
+//         if (obj.contains("qx")) {
+//             double qx = obj["qx"].toDouble();
+//             double qy = obj["qy"].toDouble();
+//             double qz = obj["qz"].toDouble();
+//             double qw = obj["qw"].toDouble();
+//             t.yaw = quaternionToYaw(qx, qy, qz, qw);
+//         }
 
-        // 缓存每个变换
-        tfCache[t.header.frame_id + "->" + t.child_frame_id] = t;
+//         // 缓存每个变换
+//         tfCache[t.header.frame_id + "->" + t.child_frame_id] = t;
 
-        // 当 map->odom 和 odom->base_link 都存在时，合成 map->base_link
-        if (tfCache.contains("map->odom") && tfCache.contains("odom->base_link")) {
-            auto mapOdom = tfCache["map->odom"];
-            auto odomBase = tfCache["odom->base_link"];
+//         // 当 map->odom 和 odom->base_link 都存在时，合成 map->base_link
+//         if (tfCache.contains("map->odom") && tfCache.contains("odom->base_link")) {
+//             auto mapOdom = tfCache["map->odom"];
+//             auto odomBase = tfCache["odom->base_link"];
 
-            // yaw 角合成（简单近似）
-            double yaw = mapOdom.yaw + odomBase.yaw;
-            double cosY = cos(mapOdom.yaw);
-            double sinY = sin(mapOdom.yaw);
+//             // yaw 角合成（简单近似）
+//             double yaw = mapOdom.yaw + odomBase.yaw;
+//             double cosY = cos(mapOdom.yaw);
+//             double sinY = sin(mapOdom.yaw);
 
-            // 坐标合成： map→base_link = map→odom + (odom→base_link 在 map 坐标下的平移)
-            double x = mapOdom.x + cosY * odomBase.x - sinY * odomBase.y;
-            double y = mapOdom.y + sinY * odomBase.x + cosY * odomBase.y;
-            double z = mapOdom.z + odomBase.z;   // ✅ z 直接线性叠加（通常odom/base_link只相差很小）
+//             // 坐标合成： map→base_link = map→odom + (odom→base_link 在 map 坐标下的平移)
+//             double x = mapOdom.x + cosY * odomBase.x - sinY * odomBase.y;
+//             double y = mapOdom.y + sinY * odomBase.x + cosY * odomBase.y;
+//             double z = mapOdom.z + odomBase.z;   // ✅ z 直接线性叠加（通常odom/base_link只相差很小）
 
-            TFMessage tf;
-            TFMessage::Transform result;
-            result.header.frame_id = "map";
-            result.child_frame_id = "base_link";
-            result.x = x;
-            result.y = y;
-            result.z = z;
-            result.yaw = yaw;
-            tf.transforms.append(result);
+//             TFMessage tf;
+//             TFMessage::Transform result;
+//             result.header.frame_id = "map";
+//             result.child_frame_id = "base_link";
+//             result.x = x;
+//             result.y = y;
+//             result.z = z;
+//             result.yaw = yaw;
+//             tf.transforms.append(result);
 
-            emit rosTfUpdated(tf);
-            // qDebug() << "TF合成为: map->base_link, x=" << x << " y=" << y << " z=" << z << " yaw=" << yaw;
-        }
+//             emit rosTfUpdated(tf);
+//             // qDebug() << "TF合成为: map->base_link, x=" << x << " y=" << y << " z=" << z << " yaw=" << yaw;
+//         }
 
-        break;
-    }
+//         break;
+//     }
 
-    case ProtocolCommand::SCAN_DATA: { // Scan
-        LaserScan scan;
-        scan.angle_min = obj.value("angle_min").toDouble();
-        scan.angle_max = obj.value("angle_max").toDouble();
-        scan.angle_increment = obj.value("angle_increment").toDouble();
-        scan.range_min = 0.05;
-        scan.range_max = 30.0;
-        QJsonArray arr = obj.value("ranges").toArray();
-        for (const auto &v : arr)
-            scan.ranges.append(v.toDouble());
-        emit rosScanUpdated(scan);
-        break;
-    }
+//     case ProtocolCommand::SCAN_DATA: { // Scan
+//         LaserScan scan;
+//         scan.angle_min = obj.value("angle_min").toDouble();
+//         scan.angle_max = obj.value("angle_max").toDouble();
+//         scan.angle_increment = obj.value("angle_increment").toDouble();
+//         scan.range_min = 0.05;
+//         scan.range_max = 30.0;
+//         QJsonArray arr = obj.value("ranges").toArray();
+//         for (const auto &v : arr)
+//             scan.ranges.append(v.toDouble());
+//         emit rosScanUpdated(scan);
+//         break;
+//     }
 
-    case ProtocolCommand::MAP_DATA: { // Map
+//     case ProtocolCommand::MAP_DATA: { // Map
 
-        OccupancyGrid map;
-        map.width = obj.value("width").toInt();
-        map.height = obj.value("height").toInt();
-        map.resolution = obj.value("resolution").toDouble();
-        map.origin_x = obj.value("origin_x").toDouble();
-        map.origin_y = obj.value("origin_y").toDouble();
-        // qDebug() << "绘制地图:" << obj;
+//         OccupancyGrid map;
+//         map.width = obj.value("width").toInt();
+//         map.height = obj.value("height").toInt();
+//         map.resolution = obj.value("resolution").toDouble();
+//         map.origin_x = obj.value("origin_x").toDouble();
+//         map.origin_y = obj.value("origin_y").toDouble();
+//         // qDebug() << "绘制地图:" << obj;
 
-        QJsonArray rle = obj.value("rle").toArray();
-        map.data.reserve(map.width * map.height);
-        for (auto entry : rle) {
-            QJsonArray pair = entry.toArray();
-            int value = pair.at(0).toInt();
-            int count = pair.at(1).toInt();
-            for (int i = 0; i < count; ++i)
-                map.data.append(value);
-        }
+//         QJsonArray rle = obj.value("rle").toArray();
+//         map.data.reserve(map.width * map.height);
+//         for (auto entry : rle) {
+//             QJsonArray pair = entry.toArray();
+//             int value = pair.at(0).toInt();
+//             int count = pair.at(1).toInt();
+//             for (int i = 0; i < count; ++i)
+//                 map.data.append(value);
+//         }
 
-        emit rosMapUpdated(map);
-        break;
-    }
+//         emit rosMapUpdated(map);
+//         break;
+//     }
 
-    default:
-        qWarning() << "未知topicId:" << topicId;
-    }
-}
+//     default:
+//         qWarning() << "未知topicId:" << topicId;
+//     }
+// }
 
 // 四元数转yaw，在解析ros话题数据中使用
-double SerialPort::quaternionToYaw(double x, double y, double z, double w)
-{
-    // 四元数转偏航角 (yaw) - 绕Z轴旋转
-    double siny_cosp = 2.0 * (w * z + x * y);
-    double cosy_cosp = 1.0 - 2.0 * (y * y + z * z);
-    return std::atan2(siny_cosp, cosy_cosp);
-}
+// double SerialPort::quaternionToYaw(double x, double y, double z, double w)
+// {
+//     // 四元数转偏航角 (yaw) - 绕Z轴旋转
+//     double siny_cosp = 2.0 * (w * z + x * y);
+//     double cosy_cosp = 1.0 - 2.0 * (y * y + z * z);
+//     return std::atan2(siny_cosp, cosy_cosp);
+// }
 
 
 
@@ -494,7 +496,7 @@ void SerialPort::on_wifiConnectBt_clicked()
         // 清空输出窗口
         on_clearRecvBt_clicked();
         // 清空地图
-        emit requestClearVisualization();
+        // emit requestClearVisualization();
         // 先停止可能的重连
         tcpClient->stopAutoReconnect();
         // 重置'重连'警告标志
@@ -513,11 +515,6 @@ void SerialPort::on_wifiConnectBt_clicked()
                     // 处理转换失败，例如使用默认值
                     port = 6666;
                 }
-                // QString ip = "10.42.0.1";
-                // QString ip = "172.27.191.1";
-                // quint16 port = 6666;
-
-
                 if (!ok || port == 0) {
                     // 转换失败或端口号为0的处理
                     QMessageBox::warning(this, "错误", "请输入有效的端口号(1-65535)");
@@ -565,9 +562,9 @@ void SerialPort::on_wifiConnectBt_clicked()
                         statsTimer->start();
                         elapsedTimer.restart();
                         // 重置计数器
-                        tfCount = 0;
-                        scanCount = 0;
-                        mapCount = 0;
+                        // tfCount = 0;
+                        // scanCount = 0;
+                        // mapCount = 0;
                     }
                 } else {
                     QMessageBox::warning(this, "错误", "UDP绑定失败");
@@ -588,9 +585,9 @@ void SerialPort::on_wifiConnectBt_clicked()
         }
 
         // 重置统计计数器
-        tfCount = 0;
-        scanCount = 0;
-        mapCount = 0;
+        // tfCount = 0;
+        // scanCount = 0;
+        // mapCount = 0;
         ui->wifiConnectBt->setText("打开连接");
         ui->serialBox->setEnabled(true);
         if (protocol == "TCP"){

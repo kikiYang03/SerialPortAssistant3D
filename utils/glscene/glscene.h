@@ -1,6 +1,7 @@
 ﻿#ifndef GLSCENE_H
 #define GLSCENE_H
 
+
 #include <QOpenGLWidget>
 #include <QOpenGLFunctions>
 #include <QVector>
@@ -8,6 +9,7 @@
 #include <QQuaternion>
 #include <QMouseEvent>
 #include <QWheelEvent>
+
 
 struct Point3D {
     float x, y, z;
@@ -28,7 +30,6 @@ public:
 
     void setPointCloud(const QVector<Point3D>& pts);
     void setTFs(const QVector<Transform>& tfs);
-
 protected:
     void initializeGL() override;
     void resizeGL(int w, int h) override;
@@ -38,13 +39,13 @@ protected:
     void mouseMoveEvent(QMouseEvent*) override;
     void wheelEvent(QWheelEvent*) override;
 
+
 private:
     void drawAxes(float scale = 1.0f);
     void drawPointCloud();
     void drawTFs();
     void applyCamera();
 
-private:
     QVector<Point3D> pointCloud_;
     QVector<Transform> tfs_;
 

@@ -12,6 +12,7 @@ MainWindow::MainWindow(QWidget *parent)
     params = new Params;
     // visualizer = new ROSVisualizer;
     visualizer3d = new ROSVisualizer3D;
+    dispatcher = new ProtocolDispatcher;
 
 
     // 添加子页面
@@ -70,7 +71,12 @@ MainWindow::MainWindow(QWidget *parent)
     // connect(serialPort, &SerialPort::rosScanUpdated, visualizer, &ROSVisualizer::updateScan);
     // connect(serialPort, &SerialPort::rosTfUpdated, visualizer, &ROSVisualizer::updateTf);
     // connect(serialPort, &SerialPort::requestClearVisualization, visualizer, &ROSVisualizer::clearVisualization);
+    connect(serialPort, &SerialPort::rawBytesReceived,
+            dispatcher, &ProtocolDispatcher::onRawBytes);
 
+    // 协议 → 可视化（下一步再细分）
+    connect(dispatcher, &ProtocolDispatcher::rosJsonReceived,
+            visualizer3d, &ROSVisualizer3D::onProtocolJson);
     // ----------------------------------------------------------
     // 绑定槽函数——显示页面
     // ----------------------------------------------------------

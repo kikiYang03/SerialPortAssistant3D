@@ -2,6 +2,8 @@
 #include <QJsonObject>
 #include <QVector>
 #include <utils/glscene/glscene.h>
+#include <utils/protocol/protocoldispatcher.h>
+
 
 namespace Ui {
 class ROSVisualizer3D;

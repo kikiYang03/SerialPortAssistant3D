@@ -14,6 +14,7 @@
 #include <params.h>
 #include <rosvisualizer.h>
 #include <rosvisualizer3d.h>
+#include <protocoldispatcher.h>
 
 QT_BEGIN_NAMESPACE
 namespace Ui {
@@ -34,6 +35,7 @@ public:
     Params * params;
     // ROSVisualizer * visualizer;
     ROSVisualizer3D * visualizer3d;
+    ProtocolDispatcher * dispatcher;
 
 
 private:
