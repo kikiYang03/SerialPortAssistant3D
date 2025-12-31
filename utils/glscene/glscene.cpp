@@ -1,5 +1,6 @@
 ﻿#include "glscene.h"
 #include <cmath>
+#include <QMatrix4x4>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -12,10 +13,65 @@ GLScene::GLScene(QWidget* parent)
 
     distance_ = 20.0f;
     pitch_    = -45.0f;   // 关键：向下看
-    yaw_      = 0.0f;
+    yaw_ = 180.0f;
+
 
     center_ = QVector3D(0, 0, 0);
 }
+
+static void applyQuaternion(const QQuaternion& q)
+{
+    QMatrix4x4 m;
+    m.rotate(q);                 // quaternion → rotation matrix
+    glMultMatrixf(m.constData()); // 乘到当前 MODELVIEW
+}
+
+// 绘制机头箭头
+void draw3DArrow(float length = 1.0f, float shaftRadius = 0.05f, float headLength = 0.2f, float headRadius = 0.1f, int slices = 16)
+{
+    if (length <= 0) return;
+    if (headLength >= length) headLength = length * 0.3f;
+
+    float shaftLength = length - headLength;
+
+    // --------------------
+    // 1. 绘制圆柱杆 (shaft)
+    // --------------------
+    glColor3f(1.0f, 0.6f, 0.0f); // 橙色
+    glBegin(GL_QUAD_STRIP);
+    for (int i = 0; i <= slices; ++i) {
+        float theta = (2.0f * M_PI * i) / slices;
+        float x = 0.0f;
+        float y = cos(theta) * shaftRadius;
+        float z = sin(theta) * shaftRadius;
+
+        glVertex3f(x, y, z);
+        glVertex3f(shaftLength, y, z);
+    }
+    glEnd();
+
+    // --------------------
+    // 2. 绘制圆锥头 (head)
+    // --------------------
+    glBegin(GL_TRIANGLES);
+    for (int i = 0; i < slices; ++i) {
+        float theta0 = (2.0f * M_PI * i) / slices;
+        float theta1 = (2.0f * M_PI * (i + 1)) / slices;
+
+        float y0 = cos(theta0) * headRadius;
+        float z0 = sin(theta0) * headRadius;
+
+        float y1 = cos(theta1) * headRadius;
+        float z1 = sin(theta1) * headRadius;
+
+        // 顶点：尖端 + 两底边
+        glVertex3f(length, 0, 0);              // 尖端
+        glVertex3f(shaftLength, y1, z1);       // 底边1
+        glVertex3f(shaftLength, y0, z0);       // 底边0
+    }
+    glEnd();
+}
+
 
 // 画 XY 平面栅格，halfSize 单方向范围，step 格子间距
 void drawGrid(float halfSize = 20.0f, float step = 1.0f)
@@ -71,21 +127,34 @@ void GLScene::paintGL()
 
     applyCamera();
 
-    // 1. 栅格
-    drawGrid();
-
-    // 2. 其余对象
-    glTranslatef(0, 0, 0.001f);
-    drawAxes(1.0f);
-    drawTFs();
+    drawGrid();           // 栅格地面
+    drawTrajectory();     // 轨迹（先画）
+    drawAxes(1.0f);       // 原点坐标轴
+    drawTFs();            // 当前 TF
     drawPointCloud();
 }
+// 绘制轨迹
+void GLScene::drawTrajectory()
+{
+    if (trajectory_.size() < 2)
+        return;
+
+    glLineWidth(2.0f);
+    glColor3f(0.0f, 1.0f, 0.0f);   // 绿色
+
+    glBegin(GL_LINE_STRIP);
+    for (const auto& p : trajectory_) {
+        glVertex3f(p.x(), p.y(), p.z());
+    }
+    glEnd();
+}
+
 // 相机操控
 void GLScene::applyCamera()
 {
     glTranslatef(0, 0, -distance_);
     glRotatef(pitch_, 1, 0, 0);
-    glRotatef(yaw_, 0, 0, 1);
+    glRotatef(-yaw_, 0, 0, 1);
     glTranslatef(-center_.x(), -center_.y(), -center_.z());
 }
 
@@ -132,10 +201,22 @@ void GLScene::drawAxes(float s)
 
 void GLScene::drawTFs()
 {
-    for (auto& tf : tfs_) {
+
+    for (const auto& tf : tfs_) {
         glPushMatrix();
+
+        // 1. 平移到 TF 原点
         glTranslatef(tf.t.x(), tf.t.y(), tf.t.z());
+
+        // 2. 应用姿态（关键）
+        applyQuaternion(tf.q);
+
+        // 3. 画机体朝向（X 轴 = 机头）
+        draw3DArrow(1.0f, 0.05f, 0.2f, 0.1f, 16);
+
+        // 可选：同时画局部坐标轴（像 RViz）
         drawAxes(0.5f);
+
         glPopMatrix();
     }
 }
@@ -159,6 +240,15 @@ void GLScene::setPointCloud(const QVector<Point3D>& pts)
 void GLScene::setTFs(const QVector<Transform>& tfs)
 {
     tfs_ = tfs;
+
+    if (!tfs_.isEmpty()) {
+        trajectory_.push_back(tfs_[0].t);
+
+        if (trajectory_.size() > maxTrajectoryPoints_)
+            trajectory_.pop_front();
+    }
+
     update();
 }
+
 

@@ -12,7 +12,6 @@
 #include <coordinate.h>
 #include <serialport.h>
 #include <params.h>
-#include <rosvisualizer.h>
 #include <rosvisualizer3d.h>
 #include <protocolros3d.h>
 
@@ -33,7 +32,6 @@ public:
     SerialPort * serialPort;
     Coordinate * coordinate;
     Params * params;
-    // ROSVisualizer * visualizer;
     ROSVisualizer3D * visualizer3d;
     ProtocolRos3D * protocolHandler;
 

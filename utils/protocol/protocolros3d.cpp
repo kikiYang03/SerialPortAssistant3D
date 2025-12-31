@@ -83,7 +83,6 @@ void ProtocolRos3D::parseTF(const QJsonObject& obj)
                       obj["qx"].toDouble(),
                       obj["qy"].toDouble(),
                       obj["qz"].toDouble());
-    qDebug() << "TFMsg: " << m;
     emit tfUpdated(m);
 }
 
@@ -98,7 +97,6 @@ void ProtocolRos3D::parseCloud(const QJsonObject& obj)
         obj["height"].toInt(),
         obj["point_step"].toInt(),
         obj["is_dense"].toBool());
-    qDebug() << "CloudMsg: " << m;
     emit cloudUpdated(m);
 }
 
@@ -118,7 +116,6 @@ void ProtocolRos3D::parseMap(const QJsonObject& obj)
     rle.resize(rleBa.size());
     memcpy(rle.data(), rleBa.constData(), rleBa.size());
     m.cells = decompressRLE(rle);
-    qDebug() << "MapMsg: " << m;
     emit mapUpdated(m);
 }
 

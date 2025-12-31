@@ -43,10 +43,14 @@ private:
     void drawPointCloud();
     void drawTFs();
     void applyCamera();
+    void drawTrajectory();
 
 private:
     QVector<Point3D> pointCloud_;
     QVector<Transform> tfs_;
+
+    QVector<QVector3D> trajectory_;   // 绿色轨迹点
+    int maxTrajectoryPoints_ = 5000;  // 防止无限增长
 
     // 相机参数（RViz 风格）
     float distance_ = 10.0f;
