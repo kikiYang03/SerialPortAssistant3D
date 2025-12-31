@@ -9,6 +9,12 @@ GLScene::GLScene(QWidget* parent)
     : QOpenGLWidget(parent)
 {
     setFocusPolicy(Qt::StrongFocus);
+
+    distance_ = 20.0f;
+    pitch_    = -45.0f;   // 关键：向下看
+    yaw_      = 0.0f;
+
+    center_ = QVector3D(0, 0, 0);
 }
 
 // 画 XY 平面栅格，halfSize 单方向范围，step 格子间距
@@ -69,6 +75,7 @@ void GLScene::paintGL()
     drawGrid();
 
     // 2. 其余对象
+    glTranslatef(0, 0, 0.001f);
     drawAxes(1.0f);
     drawTFs();
     drawPointCloud();

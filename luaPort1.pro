@@ -15,7 +15,6 @@ QMAKE_CXXFLAGS += /utf-8
 INCLUDEPATH += $$PWD/src/Coordinate
 INCLUDEPATH += $$PWD/src/Params
 INCLUDEPATH += $$PWD/src/Serialport
-INCLUDEPATH += $$PWD/src/ROSVisualizer
 INCLUDEPATH += $$PWD/src/ROSVisualizer3D
 INCLUDEPATH += $$PWD/utils/tcp
 INCLUDEPATH += $$PWD/utils/protocol
