@@ -2,6 +2,7 @@
 #include <QJsonObject>
 #include <QVector>
 #include <utils/glscene/glscene.h>
+#include <utils/protocol/protocol_msg.h>
 
 namespace Ui {
 class ROSVisualizer3D;
@@ -15,12 +16,9 @@ public:
     ~ROSVisualizer3D();
 
 public slots:
-    void onProtocolJson(int cmd, const QJsonObject& obj);
-
-private:
-    void handleTF(const QJsonObject& obj);
-    void handleScan(const QJsonObject& obj);
-    void handleMap(const QJsonObject& obj);
+    void onTFUpdated(const TFMsg& msg);
+    void onMapUpdated(const MapMsg& msg);
+    void onCloudUpdated(const CloudMsg& msg);
 
 private:
     Ui::ROSVisualizer3D *ui;

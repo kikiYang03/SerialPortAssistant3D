@@ -51,17 +51,6 @@ bool resolveTFChain(const QString& target,
     return true;
 }
 
-void ROSVisualizer3D::onProtocolJson(int cmd, const QJsonObject& obj)
-{
-    switch (cmd) {
-    case 0x01: handleTF(obj);   break;
-    case 0x02: handleScan(obj); break;
-    case 0x03: handleMap(obj);  break;
-    default:
-        break;
-    }
-}
-
 QVector3D calcTF(const QString& target,
                  const QString& source,
                  const QMap<QString, Transform>& map)
@@ -78,101 +67,60 @@ QVector3D calcTF(const QString& target,
     return result;
 }
 
-void ROSVisualizer3D::handleTF(const QJsonObject& obj)
+void ROSVisualizer3D::onTFUpdated(const TFMsg& msg)
 {
     Transform tf;
-    tf.frame = obj["frame_id"].toString();        // parent
-    tf.child = obj["child_frame_id"].toString();  // child
-
-    tf.t = QVector3D(
-        obj["x"].toDouble(),
-        obj["y"].toDouble(),
-        obj["z"].toDouble()
-        );
-
-    tf.q = QQuaternion(
-        obj["qw"].toDouble(),
-        obj["qx"].toDouble(),
-        obj["qy"].toDouble(),
-        obj["qz"].toDouble()
-        );
+    tf.frame = msg.frame_id;
+    tf.child = msg.child_frame_id;
+    tf.t     = msg.t;
+    tf.q     = msg.q;
 
     tfMap_[tf.child] = tf;
-
-    // 可视化整个 TF 树
     glScene_->setTFs(tfMap_.values().toVector());
 }
 
 
-void ROSVisualizer3D::handleScan(const QJsonObject& obj)
+
+void ROSVisualizer3D::onCloudUpdated(const CloudMsg& msg)
 {
+    /* 1. 取出本地坐标系 → map 的变换 */
+    QVector3D  t_map_base;          // map  <- base_link
+    QQuaternion q_map_base;
+    if (!resolveTFChain("map", msg.frame_id, tfMap_, t_map_base, q_map_base))
+        return;                     // TF 链拼不起来就放弃这一帧
+
+    /* 2. 直接把每个本地点转到 map */
     QVector<Point3D> pts;
+    pts.reserve(msg.points.size());
 
-    QVector3D base_t;
-    QQuaternion base_q;
-
-    if (!resolveTFChain("map", "base_link", tfMap_, base_t, base_q))
-        return;
-
-    double angle = obj["angle_min"].toDouble();
-    double inc   = obj["angle_increment"].toDouble();
-    QJsonArray ranges = obj["ranges"].toArray();
-
-    for (auto v : ranges) {
-        double r = v.toDouble();
-        if (r < 0.05) { angle += inc; continue; }
-
-        QVector3D p_local(
-            r * cos(angle),
-            r * sin(angle),
-            0.0
-            );
-
-        QVector3D p_map = base_t + base_q.rotatedVector(p_local);
-
-        pts.push_back({ p_map.x(), p_map.y(), p_map.z() });
-        angle += inc;
+    for (const QVector3D& p_local : msg.points) {
+        QVector3D p_map = t_map_base + q_map_base.rotatedVector(p_local);
+        pts.push_back({p_map.x(), p_map.y(), p_map.z()});
     }
-
     glScene_->setPointCloud(pts);
 }
 
-
-void ROSVisualizer3D::handleMap(const QJsonObject& obj)
+// ================= Map =================
+void ROSVisualizer3D::onMapUpdated(const MapMsg& msg)
 {
     QVector<Point3D> mapPts;
+    mapPts.reserve(msg.cells.size());
 
-    int width  = obj["width"].toInt();
-    int height = obj["height"].toInt();
-    double res = obj["resolution"].toDouble();
-    double ox  = obj["origin_x"].toDouble();
-    double oy  = obj["origin_y"].toDouble();
+    for (int i = 0; i < msg.cells.size(); ++i) {
+        if (msg.cells[i] != 100)
+            continue;
 
-    QJsonArray rle = obj["rle"].toArray();
+        int x = i % msg.width;
+        int y = i / msg.width;
 
-    int idx = 0;
-    for (auto v : rle) {
-        QJsonArray pair = v.toArray();
-        int val   = pair[0].toInt();
-        int count = pair[1].toInt();
+        Point3D p;
+        p.x = msg.origin_x + x * msg.resolution;
+        p.y = msg.origin_y + y * msg.resolution;
+        p.z = 0.f;
 
-        for (int i = 0; i < count; ++i) {
-            if (val == 100) {
-                int x = idx % width;
-                int y = idx / width;
-
-                Point3D p;
-                p.x = ox + x * res;
-                p.y = oy + y * res;
-                p.z = 0.0f;
-
-                mapPts.push_back(p);
-            }
-            idx++;
-        }
+        mapPts.push_back(p);
     }
 
     glScene_->setPointCloud(mapPts);
 }
-
 

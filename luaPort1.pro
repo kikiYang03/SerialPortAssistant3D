@@ -28,9 +28,9 @@ SOURCES += \
     src/Params/params.cpp \
     src/ROSVisualizer3D/rosvisualizer3d.cpp \
     src/Serialport/serialport.cpp \
-    src/ROSVisualizer/rosvisualizer.cpp \
     utils/glscene/glscene.cpp \
     utils/protocol/protocolhandler.cpp \
+    utils/protocol/protocolros3d.cpp \
     utils/tcp/tcpclient.cpp \
     utils/config/config.cpp
 
@@ -41,9 +41,10 @@ HEADERS += \
     src/ROSVisualizer3D/rosvisualizer3d.h \
     src/Serialport/serialport.h \
     stdafx.h \
-    src/ROSVisualizer/rosvisualizer.h \
     utils/glscene/glscene.h \
+    utils/protocol/protocol_msg.h \
     utils/protocol/protocolhandler.h \
+    utils/protocol/protocolros3d.h \
     utils/tcp/tcpclient.h \
     utils/config/config.h
 
@@ -53,8 +54,7 @@ FORMS += \
     mainwindow.ui \
     src/Params/params.ui \
     src/ROSVisualizer3D/rosvisualizer3d.ui \
-    src/Serialport/serialport.ui \
-    src/ROSVisualizer/rosvisualizer.ui
+    src/Serialport/serialport.ui
 
 RC_ICONS = images/logo256.ico
 

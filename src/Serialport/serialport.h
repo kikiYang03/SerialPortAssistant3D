@@ -72,11 +72,6 @@ public:
 
     QSerialPort *serialPort;
 
-    // 解析ROS数据帧
-    // void parseRosFrame(quint8 topicId, const QByteArray &payload);
-    void parseRosFrame(quint8 topicId, const QJsonObject &jsonData);
-    double quaternionToYaw(double x, double y, double z, double w);
-
     // 添加公共访问方法以便Params类可以访问连接状态
     bool getIsTcpConnected() const { return isTcpConnected; }
     bool getIsUdpBound() const { return isUdpBound; }
@@ -124,7 +119,6 @@ private:
     QTimer *testTimer;
 
     // 协议数据解析
-    void processProtocolFrame(const QByteArray &frame);
     void parseProtocolData(const QByteArray &data);
     // ROS数据解析
     void parseRosData(const QByteArray& recBuf);
@@ -143,12 +137,6 @@ private:
     // 添加TCP客户端单例访问
     TcpClient* getTcpClient() { return TcpClient::getInstance(); }
 
-    // 删除私有的sendData声明，因为已经移到public
-    // void sendData(const QByteArray &data);
-
-    // TF缓存
-    QMap<QString, TFMessage::Transform> tfCache;
-
     // 统计相关变量
     int tfCount = 0;
     int scanCount = 0;
@@ -160,15 +148,12 @@ private:
     bool m_reconnectWarningShown = false;
 
 signals:
+    void rawBytesArrived(const QByteArray& data);
+
     void coordinatesUpdated(qint16 x, qint16 y, qint16 z, qint16 yaw);
 
      // 新增：向显示窗口添加信息
     void appendToDisplay(const QString &message);
-
-    // ROS数据更新信号
-    void rosMapUpdated(const OccupancyGrid& map);
-    void rosScanUpdated(const LaserScan& scan);
-    void rosTfUpdated(const TFMessage& tf);
 
     void parameterResponseReceived(const QByteArray &data);  // 参数响应信号
     // 清理绘图视图

@@ -8,19 +8,15 @@ MainWindow::MainWindow(QWidget *parent)
     ui->setupUi(this);
     // 实例化页面
     serialPort = new SerialPort;
-    // coordinate = new Coordinate;
     params = new Params;
-    // visualizer = new ROSVisualizer;
     visualizer3d = new ROSVisualizer3D;
+    protocolHandler = new ProtocolRos3D;
 
 
     // 添加子页面
     ui->stackedWidget->addWidget(serialPort);
-    // ui->stackedWidget->addWidget(coordinate);
     ui->stackedWidget->addWidget(params);
-    // ui->stackedWidget->addWidget(visualizer);
     ui->stackedWidget->addWidget(visualizer3d);
-    // qDebug() << "current index:" << ui->stackedWidget->count();
 
     // 设置当前页面
     ui->stackedWidget->setCurrentWidget(serialPort);
@@ -42,9 +38,7 @@ MainWindow::MainWindow(QWidget *parent)
 
     // 添加子菜单
     QAction *NewAction = fileMenu->addAction("连接设置");
-    // QAction *OpenAction = fileMenu->addAction("坐标展示");
     QAction *ReadAction = fileMenu->addAction("参数设置");
-    // QAction *RosAction = fileMenu->addAction("可视化");
     QAction *Ros3DAction = fileMenu->addAction("3D可视化");
 
     // 创建工具栏
@@ -53,9 +47,7 @@ MainWindow::MainWindow(QWidget *parent)
 
     // 将菜单项依次添加到工具栏
     toolBar->addAction(NewAction);
-    // toolBar->addAction(OpenAction);
     toolBar->addAction(ReadAction);
-    // toolBar->addAction(RosAction);
     toolBar->addAction(Ros3DAction);
 
     // 设置禁止移动属性,工具栏默认贴在上方
@@ -66,10 +58,17 @@ MainWindow::MainWindow(QWidget *parent)
 
 
     // 连接信号
-    // connect(serialPort, &SerialPort::rosMapUpdated, visualizer, &ROSVisualizer::updateMap);
-    // connect(serialPort, &SerialPort::rosScanUpdated, visualizer, &ROSVisualizer::updateScan);
-    // connect(serialPort, &SerialPort::rosTfUpdated, visualizer, &ROSVisualizer::updateTf);
-    // connect(serialPort, &SerialPort::requestClearVisualization, visualizer, &ROSVisualizer::clearVisualization);
+    connect(serialPort, &SerialPort::rawBytesArrived,
+            protocolHandler, &ProtocolRos3D::onRawBytes);
+
+    connect(protocolHandler, &ProtocolRos3D::tfUpdated,
+            visualizer3d, &ROSVisualizer3D::onTFUpdated);
+
+    connect(protocolHandler, &ProtocolRos3D::cloudUpdated,
+            visualizer3d, &ROSVisualizer3D::onCloudUpdated);
+
+    connect(protocolHandler, &ProtocolRos3D::mapUpdated,
+            visualizer3d, &ROSVisualizer3D::onMapUpdated);
 
     // ----------------------------------------------------------
     // 绑定槽函数——显示页面
@@ -77,22 +76,15 @@ MainWindow::MainWindow(QWidget *parent)
     connect(NewAction,&QAction::triggered,this,[=](){
         ui->stackedWidget->setCurrentIndex(0);
     });
-    // connect(OpenAction,&QAction::triggered,this,[=](){
-    //     ui->stackedWidget->setCurrentIndex(1);
-    // });
     connect(ReadAction,&QAction::triggered,this,[=](){
         ui->stackedWidget->setCurrentIndex(1);
     });
-    // connect(RosAction,&QAction::triggered,this,[=](){
-    //     ui->stackedWidget->setCurrentIndex(2);
-    // });
     connect(Ros3DAction,&QAction::triggered,this,[=](){
         ui->stackedWidget->setCurrentIndex(2);
     });
 
     // 连接Params的消息信号到SerialPort的显示槽
     connect(params, &Params::appendMessage, serialPort, &SerialPort::appendMessage);
-    // connect(visualizer, &ROSVisualizer::appendMessage, serialPort, &SerialPort::appendMessage);
 
     // // 连接参数响应信号
     // connect(serialPort, &SerialPort::parameterResponseReceived,
