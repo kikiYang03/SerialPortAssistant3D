@@ -28,6 +28,8 @@ public:
 
     void setPointCloud(const QVector<Point3D>& pts);
     void setTFs(const QVector<Transform>& tfs);
+    void setMapPoints(const QVector<Point3D>& pts);
+    void setCloudPoints(const QVector<Point3D>& pts);
 
 protected:
     void initializeGL() override;
@@ -40,7 +42,7 @@ protected:
 
 private:
     void drawAxes(float scale = 1.0f);
-    void drawPointCloud();
+    void drawPointClouds();
     void drawTFs();
     void applyCamera();
     void drawTrajectory();
@@ -51,6 +53,10 @@ private:
 
     QVector<QVector3D> trajectory_;   // 绿色轨迹点
     int maxTrajectoryPoints_ = 5000;  // 防止无限增长
+
+    QVector<Point3D> mapPoints_;    // 存储地图点
+    QVector<Point3D> cloudPoints_;  // 存储最新传感器点
+
 
     // 相机参数（RViz 风格）
     float distance_ = 10.0f;

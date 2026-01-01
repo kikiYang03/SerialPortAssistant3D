@@ -131,7 +131,7 @@ void GLScene::paintGL()
     drawTrajectory();     // 轨迹（先画）
     drawAxes(1.0f);       // 原点坐标轴
     drawTFs();            // 当前 TF
-    drawPointCloud();
+    drawPointClouds();
 }
 // 绘制轨迹
 void GLScene::drawTrajectory()
@@ -221,17 +221,49 @@ void GLScene::drawTFs()
     }
 }
 
-void GLScene::drawPointCloud()
+void GLScene::drawPointClouds()
 {
-    glPointSize(3.0f);
+    // 地图点云
+    glPointSize(2.0f);
     glBegin(GL_POINTS);
-    glColor3f(0.2f, 0.2f, 0.2f);
-
-    for (auto& p : pointCloud_)
+    glColor3f(0.5f, 0.5f, 0.5f); // 灰色
+    for (const auto& p : mapPoints_)
         glVertex3f(p.x, p.y, p.z);
+    glEnd();
 
+    // 当前激光点云
+    glPointSize(4.0f);
+    glBegin(GL_POINTS);
+    glColor3f(1.0f, 0.0f, 0.0f); // 红色
+    for (const auto& p : cloudPoints_)
+        glVertex3f(p.x, p.y, p.z);
     glEnd();
 }
+
+void GLScene::setMapPoints(const QVector<Point3D>& pts)
+{
+    mapPoints_ = pts;
+    update();
+}
+
+void GLScene::setCloudPoints(const QVector<Point3D>& pts)
+{
+    cloudPoints_ = pts;
+    update();
+}
+
+
+// void GLScene::drawPointCloud()
+// {
+//     glPointSize(3.0f);
+//     glBegin(GL_POINTS);
+//     glColor3f(0.2f, 0.2f, 0.2f);
+
+//     for (auto& p : pointCloud_)
+//         glVertex3f(p.x, p.y, p.z);
+
+//     glEnd();
+// }
 void GLScene::setPointCloud(const QVector<Point3D>& pts)
 {
     pointCloud_ = pts;

@@ -83,21 +83,20 @@ void ROSVisualizer3D::onTFUpdated(const TFMsg& msg)
 
 void ROSVisualizer3D::onCloudUpdated(const CloudMsg& msg)
 {
-    /* 1. 取出本地坐标系 → map 的变换 */
-    QVector3D  t_map_base;          // map  <- base_link
+    QVector3D t_map_base;
     QQuaternion q_map_base;
-    if (!resolveTFChain("map", msg.frame_id, tfMap_, t_map_base, q_map_base))
-        return;                     // TF 链拼不起来就放弃这一帧
 
-    /* 2. 直接把每个本地点转到 map */
+    if (!resolveTFChain("map", msg.frame_id, tfMap_, t_map_base, q_map_base))
+        return;
+
     QVector<Point3D> pts;
     pts.reserve(msg.points.size());
-
     for (const QVector3D& p_local : msg.points) {
         QVector3D p_map = t_map_base + q_map_base.rotatedVector(p_local);
         pts.push_back({p_map.x(), p_map.y(), p_map.z()});
     }
-    glScene_->setPointCloud(pts);
+
+    glScene_->setCloudPoints(pts);
 }
 
 // ================= Map =================
@@ -107,20 +106,18 @@ void ROSVisualizer3D::onMapUpdated(const MapMsg& msg)
     mapPts.reserve(msg.cells.size());
 
     for (int i = 0; i < msg.cells.size(); ++i) {
-        if (msg.cells[i] != 100)
-            continue;
+        if (msg.cells[i] != 100) continue;
 
         int x = i % msg.width;
         int y = i / msg.width;
 
-        Point3D p;
-        p.x = msg.origin_x + x * msg.resolution;
-        p.y = msg.origin_y + y * msg.resolution;
-        p.z = 0.f;
-
-        mapPts.push_back(p);
+        mapPts.push_back({
+            msg.origin_x + x * msg.resolution,
+            msg.origin_y + y * msg.resolution,
+            0.f
+        });
     }
 
-    glScene_->setPointCloud(mapPts);
+    glScene_->setMapPoints(mapPts);
 }
 
