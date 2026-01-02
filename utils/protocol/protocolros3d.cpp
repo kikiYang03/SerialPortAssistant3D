@@ -143,25 +143,6 @@ void ProtocolRos3D::parseCloud(const QJsonObject& obj)
 /* 地图解析 */
 void ProtocolRos3D::parseMap(const QJsonObject& obj)
 {
-    // 兼容：如果带 cells，则认为是旧栅格格式
-    if (obj.contains("cells")) {
-        MapMsg m;
-        m.width      = obj["width"].toInt();
-        m.height     = obj["height"].toInt();
-        m.resolution = obj["resolution"].toDouble();
-        m.origin_x   = obj["origin_x"].toDouble();
-        m.origin_y   = obj["origin_y"].toDouble();
-
-        QByteArray rleBa = QByteArray::fromBase64(obj["cells"].toString().toLatin1());
-        QVector<int8_t> rle;
-        rle.resize(rleBa.size());
-        memcpy(rle.data(), rleBa.constData(), rleBa.size());
-        m.cells = decompressRLE(rle);
-
-        emit mapUpdated(m);
-        return;
-    }
-
     // 新格式：PointCloud2
     MapCloudMsg m;
     m.frame_id = obj["frame_id"].toString();
