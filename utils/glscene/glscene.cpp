@@ -127,12 +127,20 @@ void GLScene::paintGL()
 
     applyCamera();
 
-    drawGrid();           // 栅格地面
-    drawTrajectory();     // 轨迹（先画）
-    drawAxes(1.0f);       // 原点坐标轴
-    drawTFs();            // 当前 TF
+    drawGrid();
+    drawTrajectory();
+    drawAxes(1.0f);
+
+    // 画 body
+    glPushMatrix();
+    draw3DArrow(1.0f, 0.05f, 0.2f, 0.1f, 16);
+    drawAxes(0.5f);
+    glPopMatrix();
+
     drawPointClouds();
 }
+
+
 // 绘制轨迹
 void GLScene::drawTrajectory()
 {
@@ -231,13 +239,21 @@ void GLScene::drawPointClouds()
         glVertex3f(p.x, p.y, p.z);
     glEnd();
 
-    // 当前激光点云
+    // 当前激光点云：点坐标在 camera_init，下发了 cloudPose=map<-camera_init，绘制时一次性变换
+    glPushMatrix();
+    glTranslatef(cloud_t_.x(), cloud_t_.y(), cloud_t_.z());
+    applyQuaternion(cloud_q_);
+
     glPointSize(4.0f);
     glBegin(GL_POINTS);
     glColor3f(1.0f, 0.0f, 0.0f); // 红色
-    for (const auto& p : cloudPoints_)
-        glVertex3f(p.x, p.y, p.z);
+    for (const auto& p : cloudPoints_) {
+        glVertex3f(p.x, p.y, p.z); // 注意：这里仍是 camera_init 局部坐标
+    }
     glEnd();
+
+    glPopMatrix();
+
 }
 
 void GLScene::setMapPoints(const QVector<Point3D>& pts)
@@ -283,4 +299,17 @@ void GLScene::setTFs(const QVector<Transform>& tfs)
     update();
 }
 
+void GLScene::addTrajectoryPoint(const QVector3D& p)
+{
+    trajectory_.push_back(p);
+    if (trajectory_.size() > maxTrajectoryPoints_)
+        trajectory_.pop_front();
+    update();
+}
 
+void GLScene::setCloudPoseInWorld(const QVector3D& t, const QQuaternion& q)
+{
+    cloud_t_ = t;
+    cloud_q_ = q;
+    update();
+}

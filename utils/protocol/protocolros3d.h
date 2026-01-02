@@ -18,6 +18,8 @@ signals:
     void cloudUpdated(const CloudMsg& msg);
     void mapUpdated(const MapMsg& msg);
 
+    void mapCloudUpdated(const MapCloudMsg& m);
+
 private:
     QByteArray buffer_;
 
@@ -30,10 +32,11 @@ private:
 
     /* 工具 */
     static quint8 crc8(const QByteArray& data);
-    static QVector<QVector3D> extractXYZFromPointCloud2(
-        const QByteArray& base64data,
-        quint32 width, quint32 height, quint32 point_step,
+    static QVector<QVector3D> extractXYZFromPointCloud2Raw(
+        const QByteArray& raw,
+        quint32 width, quint32 height, quint32 point_step, quint32 row_step,
         bool is_dense);
+
     static QVector<int8_t> decompressRLE(const QVector<int8_t>& rle);
 };
 

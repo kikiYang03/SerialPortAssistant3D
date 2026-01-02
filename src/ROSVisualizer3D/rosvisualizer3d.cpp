@@ -13,6 +13,14 @@ ROSVisualizer3D::ROSVisualizer3D(QWidget *parent)
 
     glScene_ = new GLScene(this);
 
+
+    glSceneMap_     = new GLScene(this);
+
+    // 设置“视图坐标系”
+    glSceneMap_->setWorldFrame("map");
+
+    // Map 视角默认参数
+    // glSceneMap_->setDefaultThirdPersonView(/*distance=*/30.f, /*pitch=*/-60.f, /*yaw=*/180.f);
     auto* layout = new QVBoxLayout(this);
     layout->setMargin(0);
     layout->addWidget(glScene_);
@@ -70,34 +78,46 @@ QVector3D calcTF(const QString& target,
 void ROSVisualizer3D::onTFUpdated(const TFMsg& msg)
 {
     Transform tf;
-    tf.frame = msg.frame_id;
-    tf.child = msg.child_frame_id;
+    tf.frame = msg.frame_id;        // parent
+    tf.child = msg.child_frame_id;  // child
     tf.t     = msg.t;
     tf.q     = msg.q;
 
     tfMap_[tf.child] = tf;
-    glScene_->setTFs(tfMap_.values().toVector());
-}
 
+    // 1) body in map：用于显示机器人姿态与轨迹（用户视角是 map）
+    QVector3D t_map_body;
+    QQuaternion q_map_body;
+    if (resolveTFChain("map", "body", tfMap_, t_map_body, q_map_body)) {
+        // glScene_->setBodyPoseInWorld(t_map_body, q_map_body);
+        glScene_->addTrajectoryPoint(t_map_body);
+    }
+
+    // 2) camera_init in map：用于点云一次性模型变换（点云顶点仍是 camera_init 坐标）
+    QVector3D t_map_cam;
+    QQuaternion q_map_cam;
+    if (resolveTFChain("map", "camera_init", tfMap_, t_map_cam, q_map_cam)) {
+        glScene_->setCloudPoseInWorld(t_map_cam, q_map_cam);
+    }
+}
 
 
 void ROSVisualizer3D::onCloudUpdated(const CloudMsg& msg)
 {
-    QVector3D t_map_base;
-    QQuaternion q_map_base;
-
-    if (!resolveTFChain("map", msg.frame_id, tfMap_, t_map_base, q_map_base))
+    // 点云数据接收是在 camera_init 下
+    if (msg.frame_id != "camera_init")
         return;
 
-    QVector<Point3D> pts;
-    pts.reserve(msg.points.size());
-    for (const QVector3D& p_local : msg.points) {
-        QVector3D p_map = t_map_base + q_map_base.rotatedVector(p_local);
-        pts.push_back({p_map.x(), p_map.y(), p_map.z()});
+    QVector<Point3D> pts_cam;
+    pts_cam.reserve(msg.points.size());
+    for (const auto& p : msg.points) {
+        pts_cam.push_back({p.x(), p.y(), p.z()});
     }
 
-    glScene_->setCloudPoints(pts);
+    // 关键：点云点保持 camera_init 坐标
+    glScene_->setCloudPoints(pts_cam);
 }
+
 
 // ================= Map =================
 void ROSVisualizer3D::onMapUpdated(const MapMsg& msg)
@@ -120,4 +140,19 @@ void ROSVisualizer3D::onMapUpdated(const MapMsg& msg)
 
     glScene_->setMapPoints(mapPts);
 }
+
+void ROSVisualizer3D::onMapCloudUpdated(const MapCloudMsg& msg)
+{
+    if (msg.frame_id != "camera_init" && msg.frame_id != "map") {
+        // 需要 TF 到 map；这里略
+    }
+
+    QVector<Point3D> pts;
+    pts.reserve(msg.points.size());
+    for (const auto& p : msg.points)
+        pts.push_back({p.x(), p.y(), p.z()});
+
+    glScene_->setMapPoints(pts);
+}
+
 

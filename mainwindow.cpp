@@ -67,8 +67,8 @@ MainWindow::MainWindow(QWidget *parent)
     connect(protocolHandler, &ProtocolRos3D::cloudUpdated,
             visualizer3d, &ROSVisualizer3D::onCloudUpdated);
 
-    connect(protocolHandler, &ProtocolRos3D::mapUpdated,
-            visualizer3d, &ROSVisualizer3D::onMapUpdated);
+    connect(protocolHandler, &ProtocolRos3D::mapCloudUpdated,
+            visualizer3d, &ROSVisualizer3D::onMapCloudUpdated);
 
     // ----------------------------------------------------------
     // 绑定槽函数——显示页面

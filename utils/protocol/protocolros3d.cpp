@@ -3,6 +3,9 @@
 #include <QJsonValue>
 #include <QDebug>
 #include <QtEndian>
+#include <QJsonArray>
+#include <QJsonObject>
+
 
 static const uint8_t CMD_TF   = 0x01;
 static const uint8_t CMD_CLOUD = 0x02;
@@ -93,63 +96,141 @@ void ProtocolRos3D::parseCloud(const QJsonObject& obj)
 {
     CloudMsg m;
     m.frame_id = obj["frame_id"].toString();
-    m.points   = extractXYZFromPointCloud2(
-        obj["data"].toString().toLatin1(),
-        obj["width"].toInt(),
-        obj["height"].toInt(),
-        obj["point_step"].toInt(),
-        obj["is_dense"].toBool());
+
+    const int width      = obj["width"].toInt();
+    const int height     = obj["height"].toInt();
+    const int point_step = obj["point_step"].toInt();
+    const bool is_dense  = obj["is_dense"].toBool();
+    const int row_step = obj["row_step"].toInt();
+
+
+    QByteArray raw;
+
+    // 兼容两种格式：1) data 是 object: {bytes:[...]}  2) data 是 base64 string
+    if (obj["data"].isObject()) {
+        QJsonObject dataObj = obj["data"].toObject();
+        QJsonArray bytesArr = dataObj["bytes"].toArray();
+
+        raw.resize(bytesArr.size());
+        for (int i = 0; i < bytesArr.size(); ++i) {
+            raw[i] = static_cast<char>(bytesArr[i].toInt()); // 0..255
+        }
+    } else {
+        // 旧格式：base64 string
+        QByteArray b64 = obj["data"].toString().toLatin1();
+        raw = QByteArray::fromBase64(b64);
+    }
+
+    const int expected = width * height * point_step;
+    if (raw.size() < expected) {
+        qWarning() << "PointCloud raw bytes too small:"
+                   << "raw=" << raw.size() << "expected>=" << expected
+                   << "width=" << width << "height=" << height << "point_step=" << point_step;
+        return;
+    }
+
+    m.points = extractXYZFromPointCloud2Raw(raw, width, height, point_step, row_step, is_dense);
+
+
+    for (int i=0; i<qMin(5, m.points.size()); ++i)
+        qDebug() << "p" << i << m.points[i];
+
     qDebug() << "CloudMsg: " << m;
     emit cloudUpdated(m);
 }
 
+
 /* 地图解析 */
 void ProtocolRos3D::parseMap(const QJsonObject& obj)
 {
-    MapMsg m;
-    m.width      = obj["width"].toInt();
-    m.height     = obj["height"].toInt();
-    m.resolution = obj["resolution"].toDouble();
-    m.origin_x   = obj["origin_x"].toDouble();
-    m.origin_y   = obj["origin_y"].toDouble();
+    // 兼容：如果带 cells，则认为是旧栅格格式
+    if (obj.contains("cells")) {
+        MapMsg m;
+        m.width      = obj["width"].toInt();
+        m.height     = obj["height"].toInt();
+        m.resolution = obj["resolution"].toDouble();
+        m.origin_x   = obj["origin_x"].toDouble();
+        m.origin_y   = obj["origin_y"].toDouble();
 
-    /* 假设收到的 cells 是 RLE 压缩后的 base64-int8 数组 */
-    QByteArray rleBa = QByteArray::fromBase64(obj["cells"].toString().toLatin1());
-    QVector<int8_t> rle;
-    rle.resize(rleBa.size());
-    memcpy(rle.data(), rleBa.constData(), rleBa.size());
-    m.cells = decompressRLE(rle);
-    qDebug() << "MapMsg: " << m;
-    emit mapUpdated(m);
+        QByteArray rleBa = QByteArray::fromBase64(obj["cells"].toString().toLatin1());
+        QVector<int8_t> rle;
+        rle.resize(rleBa.size());
+        memcpy(rle.data(), rleBa.constData(), rleBa.size());
+        m.cells = decompressRLE(rle);
+
+        emit mapUpdated(m);
+        return;
+    }
+
+    // 新格式：PointCloud2
+    MapCloudMsg m;
+    m.frame_id = obj["frame_id"].toString();
+
+    const int width      = obj["width"].toInt();
+    const int height     = obj["height"].toInt();
+    const int point_step = obj["point_step"].toInt();
+    const int row_step   = obj["row_step"].toInt();
+    const bool is_dense  = obj["is_dense"].toBool();
+
+    QByteArray raw;
+    if (obj["data"].isObject()) {
+        QJsonObject dataObj = obj["data"].toObject();
+        QJsonArray bytesArr = dataObj["bytes"].toArray();
+        raw.resize(bytesArr.size());
+        for (int i = 0; i < bytesArr.size(); ++i)
+            raw[i] = static_cast<char>(bytesArr[i].toInt());
+    } else {
+        raw = QByteArray::fromBase64(obj["data"].toString().toLatin1());
+    }
+
+    const int expectedMin = height * row_step; // 更稳妥
+    if (raw.size() < expectedMin) {
+        qWarning() << "Map PointCloud raw bytes too small:"
+                   << "raw=" << raw.size() << "expected>=" << expectedMin
+                   << "width=" << width << "height=" << height
+                   << "point_step=" << point_step << "row_step=" << row_step;
+        return;
+    }
+
+    m.points = extractXYZFromPointCloud2Raw(raw, width, height, point_step, row_step, is_dense);
+
+    emit mapCloudUpdated(m);
 }
+
 
 /* -------------- 工具实现 -------------- */
 
-QVector<QVector3D> ProtocolRos3D::extractXYZFromPointCloud2(
-    const QByteArray& base64data,
-    quint32 width, quint32 height, quint32 point_step,
+QVector<QVector3D> ProtocolRos3D::extractXYZFromPointCloud2Raw(
+    const QByteArray& raw,
+    quint32 width, quint32 height, quint32 point_step, quint32 row_step,
     bool is_dense)
 {
-    QByteArray blob = QByteArray::fromBase64(base64data);
-    const char* ptr = blob.constData();
-    QVector<QVector3D> pts;
-    pts.reserve(width * height);
+    const char* base = raw.constData();
 
-    for (uint i = 0; i < width * height; ++i) {
-        const char* off = ptr + i * point_step;
-        float x, y, z;
-        memcpy(&x, off + 0, 4);
-        memcpy(&y, off + 4, 4);
-        memcpy(&z, off + 8, 4);
-        if (!is_dense) {
-            /* 简单跳过 NaN/Inf */
+    QVector<QVector3D> pts;
+    pts.reserve(static_cast<int>(width * height));
+
+    for (quint32 r = 0; r < height; ++r) {
+        const char* row = base + r * row_step;
+        for (quint32 c = 0; c < width; ++c) {
+            const char* off = row + c * point_step;
+
+            float x, y, z;
+            memcpy(&x, off + 0, 4);
+            memcpy(&y, off + 4, 4);
+            memcpy(&z, off + 8, 4);
+
             if (qIsNaN(x) || qIsNaN(y) || qIsNaN(z) ||
-                qIsInf(x) || qIsInf(y) || qIsInf(z)) continue;
+                qIsInf(x) || qIsInf(y) || qIsInf(z)) {
+                continue;
+            }
+            pts.append(QVector3D(x, y, z));
         }
-        pts.append(QVector3D(x, y, z));
     }
     return pts;
 }
+
+
 
 QVector<int8_t> ProtocolRos3D::decompressRLE(const QVector<int8_t>& rle)
 {

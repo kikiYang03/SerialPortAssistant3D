@@ -31,6 +31,14 @@ public:
     void setMapPoints(const QVector<Point3D>& pts);
     void setCloudPoints(const QVector<Point3D>& pts);
 
+    void setWorldFrame(const QString& f) { worldFrame_ = f; }
+
+
+    // 轨迹追加点（点已经是在本视图 world 坐标系下）
+    void addTrajectoryPoint(const QVector3D& p);
+
+    void setCloudPoseInWorld(const QVector3D& t, const QQuaternion& q);
+
 protected:
     void initializeGL() override;
     void resizeGL(int w, int h) override;
@@ -48,6 +56,11 @@ private:
     void drawTrajectory();
 
 private:
+    QString worldFrame_;
+    //
+    QVector3D    cloud_t_ = QVector3D(0,0,0);            // T_world_cloudFrame
+    QQuaternion  cloud_q_ = QQuaternion(1,0,0,0);
+    //
     QVector<Point3D> pointCloud_;
     QVector<Transform> tfs_;
 

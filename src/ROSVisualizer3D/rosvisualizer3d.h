@@ -20,9 +20,12 @@ public slots:
     void onMapUpdated(const MapMsg& msg);
     void onCloudUpdated(const CloudMsg& msg);
 
+    void onMapCloudUpdated(const MapCloudMsg& msg);
+
 private:
     Ui::ROSVisualizer3D *ui;
     GLScene* glScene_;
+    GLScene* glSceneMap_{nullptr};
 
     QMap<QString, Transform> tfMap_;
     QVector<Point3D> scanPoints_;

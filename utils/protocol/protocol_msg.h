@@ -26,6 +26,13 @@ struct MapMsg {
     QVector<int8_t> cells; // 解 RLE 后 or 保留 RLE
 };
 
+struct MapCloudMsg {
+    QString frame_id;
+    QVector<QVector3D> points;
+};
+
+
+
 inline QDebug operator<<(QDebug dbg, const TFMsg &m)
 {
     QDebugStateSaver saver(dbg);
