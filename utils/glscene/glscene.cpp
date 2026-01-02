@@ -161,7 +161,7 @@ void GLScene::applyCamera()
     glTranslatef(-center_.x(), -center_.y(), -center_.z());
 
     // 2. 再乘一次  map->camera_init 的逆，于是 OpenGL 当前矩阵变成
-    //    “camera_init 系 -> 眼”
+    //    “camera_init 系 -> map 眼”
     QMatrix4x4 m;
     QQuaternion invQ = camInit_q_.inverted();
     m.translate(-camInit_t_);

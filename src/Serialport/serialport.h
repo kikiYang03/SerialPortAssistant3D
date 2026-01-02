@@ -120,8 +120,9 @@ private:
 
     // 协议数据解析
     void parseProtocolData(const QByteArray &data);
+    void processProtocolFrame(const QByteArray &frame);
     // ROS数据解析
-    void parseRosData(const QByteArray& recBuf);
+    // void parseRosData(const QByteArray& recBuf);
     // 数据处理
     void processReceivedData(const QByteArray &recBuf);
 
@@ -146,6 +147,9 @@ private:
     void onStatsTimeout();
 
     bool m_reconnectWarningShown = false;
+    void tryExtractUartFrame();          // 从 recvBuffer 拆 10 B 定长帧
+    void handleUartFrame(const QByteArray& frame); // 解析测试/参数命令
+
 
 signals:
     void rawBytesArrived(const QByteArray& data);
