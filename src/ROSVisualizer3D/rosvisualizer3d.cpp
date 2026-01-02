@@ -14,7 +14,7 @@ ROSVisualizer3D::ROSVisualizer3D(QWidget *parent)
     glScene_ = new GLScene(this);
 
 
-    glSceneMap_     = new GLScene(this);
+    glSceneMap_= new GLScene(this);
 
     // 设置“视图坐标系”
     glSceneMap_->setWorldFrame("map");
@@ -89,7 +89,7 @@ void ROSVisualizer3D::onTFUpdated(const TFMsg& msg)
     QVector3D t_map_body;
     QQuaternion q_map_body;
     if (resolveTFChain("map", "body", tfMap_, t_map_body, q_map_body)) {
-        // glScene_->setBodyPoseInWorld(t_map_body, q_map_body);
+        glScene_->setTFs({Transform{"map", "body", t_map_body, q_map_body}});   // ← 就加这一句
         glScene_->addTrajectoryPoint(t_map_body);
     }
 

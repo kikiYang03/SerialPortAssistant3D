@@ -37,7 +37,7 @@ void draw3DArrow(float length = 1.0f, float shaftRadius = 0.05f, float headLengt
     // --------------------
     // 1. 绘制圆柱杆 (shaft)
     // --------------------
-    glColor3f(1.0f, 0.6f, 0.0f); // 橙色
+    glColor3f(1.0f, 0.0f, 0.0f); // 橙色
     glBegin(GL_QUAD_STRIP);
     for (int i = 0; i <= slices; ++i) {
         float theta = (2.0f * M_PI * i) / slices;
@@ -128,17 +128,11 @@ void GLScene::paintGL()
     applyCamera();
 
     drawGrid();
-    drawTrajectory();
-    drawAxes(1.0f);
-
-    // 画 body
-    glPushMatrix();
-    draw3DArrow(1.0f, 0.05f, 0.2f, 0.1f, 16);
-    drawAxes(0.5f);
-    glPopMatrix();
-
+    drawTrajectory();     // 轨迹
+    drawTFs();            // 只画跟随 TF 的箭头
     drawPointClouds();
 }
+
 
 
 // 绘制轨迹
@@ -182,8 +176,8 @@ void GLScene::mouseMoveEvent(QMouseEvent* e)
         pitch_ += delta.y() * 0.5f;
     }
     else if (e->buttons() & Qt::RightButton) {
-        center_.setX(center_.x() - delta.x() * 0.01f);
-        center_.setY(center_.y() + delta.y() * 0.01f);
+        center_.setX(center_.x() + delta.x() * 0.01f);
+        center_.setY(center_.y() - delta.y() * 0.01f);
     }
     update();
 }
@@ -209,25 +203,26 @@ void GLScene::drawAxes(float s)
 
 void GLScene::drawTFs()
 {
+    if (tfs_.isEmpty())
+        return;
 
-    for (const auto& tf : tfs_) {
-        glPushMatrix();
+    const auto& tf = tfs_.last();   // 只画最新 TF
 
-        // 1. 平移到 TF 原点
-        glTranslatef(tf.t.x(), tf.t.y(), tf.t.z());
+    glPushMatrix();
 
-        // 2. 应用姿态（关键）
-        applyQuaternion(tf.q);
+    // 1) 平移到 TF 原点
+    glTranslatef(tf.t.x(), tf.t.y(), tf.t.z());
 
-        // 3. 画机体朝向（X 轴 = 机头）
-        draw3DArrow(1.0f, 0.05f, 0.2f, 0.1f, 16);
+    // 2) 应用姿态
+    applyQuaternion(tf.q);
 
-        // 可选：同时画局部坐标轴（像 RViz）
-        drawAxes(0.5f);
+    // 3) 画机体朝向（X 轴 = 机头）
+    // draw3DArrow(1.0f, 0.05f, 0.2f, 0.1f, 16);
+    draw3DArrow(3.0f, 0.15f, 0.6f, 0.25f, 24);
 
-        glPopMatrix();
-    }
+    glPopMatrix();
 }
+
 
 void GLScene::drawPointClouds()
 {
@@ -246,7 +241,7 @@ void GLScene::drawPointClouds()
 
     glPointSize(4.0f);
     glBegin(GL_POINTS);
-    glColor3f(1.0f, 0.0f, 0.0f); // 红色
+    glColor3f(0.0f, 0.0f, 1.0f); // 蓝色
     for (const auto& p : cloudPoints_) {
         glVertex3f(p.x, p.y, p.z); // 注意：这里仍是 camera_init 局部坐标
     }
@@ -269,17 +264,6 @@ void GLScene::setCloudPoints(const QVector<Point3D>& pts)
 }
 
 
-// void GLScene::drawPointCloud()
-// {
-//     glPointSize(3.0f);
-//     glBegin(GL_POINTS);
-//     glColor3f(0.2f, 0.2f, 0.2f);
-
-//     for (auto& p : pointCloud_)
-//         glVertex3f(p.x, p.y, p.z);
-
-//     glEnd();
-// }
 void GLScene::setPointCloud(const QVector<Point3D>& pts)
 {
     pointCloud_ = pts;
@@ -290,7 +274,7 @@ void GLScene::setTFs(const QVector<Transform>& tfs)
     tfs_ = tfs;
 
     if (!tfs_.isEmpty()) {
-        trajectory_.push_back(tfs_[0].t);
+        trajectory_.push_back(tfs_.last().t);   // 关键：使用最新 TF
 
         if (trajectory_.size() > maxTrajectoryPoints_)
             trajectory_.pop_front();
@@ -298,6 +282,7 @@ void GLScene::setTFs(const QVector<Transform>& tfs)
 
     update();
 }
+
 
 void GLScene::addTrajectoryPoint(const QVector3D& p)
 {

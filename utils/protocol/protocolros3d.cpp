@@ -76,7 +76,7 @@ void ProtocolRos3D::parseJsonFrame(uint8_t cmd, const QJsonObject& obj)
 /* TF 解析 */
 void ProtocolRos3D::parseTF(const QJsonObject& obj)
 {
-    qDebug() << "TF数据解析前："<< obj;
+    // qDebug() << "TF数据解析前："<< obj;
     TFMsg m;
     m.frame_id       = obj["frame_id"].toString();
     m.child_frame_id = obj["child_frame_id"].toString();
@@ -132,10 +132,10 @@ void ProtocolRos3D::parseCloud(const QJsonObject& obj)
     m.points = extractXYZFromPointCloud2Raw(raw, width, height, point_step, row_step, is_dense);
 
 
-    for (int i=0; i<qMin(5, m.points.size()); ++i)
-        qDebug() << "p" << i << m.points[i];
+    // for (int i=0; i<qMin(5, m.points.size()); ++i)
+    //     qDebug() << "p" << i << m.points[i];
 
-    qDebug() << "CloudMsg: " << m;
+    // qDebug() << "CloudMsg: " << m;
     emit cloudUpdated(m);
 }
 
