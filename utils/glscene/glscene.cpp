@@ -154,10 +154,19 @@ void GLScene::drawTrajectory()
 // 相机操控
 void GLScene::applyCamera()
 {
+    // 1. 原来的轨道球：眼睛在 map 系
     glTranslatef(0, 0, -distance_);
     glRotatef(pitch_, 1, 0, 0);
     glRotatef(-yaw_, 0, 0, 1);
     glTranslatef(-center_.x(), -center_.y(), -center_.z());
+
+    // 2. 再乘一次  map->camera_init 的逆，于是 OpenGL 当前矩阵变成
+    //    “camera_init 系 -> 眼”
+    QMatrix4x4 m;
+    QQuaternion invQ = camInit_q_.inverted();
+    m.translate(-camInit_t_);
+    m.rotate(invQ);
+    glMultMatrixf(m.constData());
 }
 
 // 鼠标控制
@@ -226,28 +235,21 @@ void GLScene::drawTFs()
 
 void GLScene::drawPointClouds()
 {
-    // 地图点云
+    // 1. 地图点云（本来就在 map，所以保持原样）
     glPointSize(2.0f);
     glBegin(GL_POINTS);
-    glColor3f(0.5f, 0.5f, 0.5f); // 灰色
+    glColor3f(0.5f, 0.5f, 0.5f);
     for (const auto& p : mapPoints_)
         glVertex3f(p.x, p.y, p.z);
     glEnd();
 
-    // 当前激光点云：点坐标在 camera_init，下发了 cloudPose=map<-camera_init，绘制时一次性变换
-    glPushMatrix();
-    glTranslatef(cloud_t_.x(), cloud_t_.y(), cloud_t_.z());
-    applyQuaternion(cloud_q_);
-
+    // 2. 当前激光点云——**直接画，不再乘 cloud_t_/cloud_q_**
     glPointSize(4.0f);
     glBegin(GL_POINTS);
-    glColor3f(0.0f, 0.0f, 1.0f); // 蓝色
-    for (const auto& p : cloudPoints_) {
-        glVertex3f(p.x, p.y, p.z); // 注意：这里仍是 camera_init 局部坐标
-    }
+    glColor3f(0.0f, 0.0f, 1.0f);
+    for (const auto& p : cloudPoints_)
+        glVertex3f(p.x, p.y, p.z);   // 纯 camera_init 坐标
     glEnd();
-
-    glPopMatrix();
 
 }
 
@@ -294,7 +296,9 @@ void GLScene::addTrajectoryPoint(const QVector3D& p)
 
 void GLScene::setCloudPoseInWorld(const QVector3D& t, const QQuaternion& q)
 {
-    cloud_t_ = t;
-    cloud_q_ = q;
+    // cloud_t_ = t;
+    // cloud_q_ = q;
+    camInit_t_ = t;
+    camInit_q_ = q;
     update();
 }

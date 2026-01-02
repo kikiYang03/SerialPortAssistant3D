@@ -60,6 +60,9 @@ private:
     //
     QVector3D    cloud_t_ = QVector3D(0,0,0);            // T_world_cloudFrame
     QQuaternion  cloud_q_ = QQuaternion(1,0,0,0);
+
+    QVector3D   camInit_t_;      // map -> camera_init  平移
+    QQuaternion camInit_q_;      // map -> camera_init  旋转
     //
     QVector<Point3D> pointCloud_;
     QVector<Transform> tfs_;
