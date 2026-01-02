@@ -18,9 +18,7 @@ public:
 
 public slots:
     void onTFUpdated(const TFMsg& msg);
-    void onMapUpdated(const MapMsg& msg);
     void onCloudUpdated(const CloudMsg& msg);
-
     void onMapCloudUpdated(const MapCloudMsg& msg);
 
 private:

@@ -120,27 +120,6 @@ void ROSVisualizer3D::onCloudUpdated(const CloudMsg& msg)
 
 
 // ================= Map =================
-void ROSVisualizer3D::onMapUpdated(const MapMsg& msg)
-{
-    QVector<Point3D> mapPts;
-    mapPts.reserve(msg.cells.size());
-
-    for (int i = 0; i < msg.cells.size(); ++i) {
-        if (msg.cells[i] != 100) continue;
-
-        int x = i % msg.width;
-        int y = i / msg.width;
-
-        mapPts.push_back({
-            msg.origin_x + x * msg.resolution,
-            msg.origin_y + y * msg.resolution,
-            0.f
-        });
-    }
-
-    glScene_->setMapPoints(mapPts);
-}
-
 void ROSVisualizer3D::onMapCloudUpdated(const MapCloudMsg& msg)
 {
     if (msg.frame_id != "camera_init" && msg.frame_id != "map") {

@@ -16,8 +16,6 @@ public slots:
 signals:
     void tfUpdated(const TFMsg& msg);
     void cloudUpdated(const CloudMsg& msg);
-    void mapUpdated(const MapMsg& msg);
-
     void mapCloudUpdated(const MapCloudMsg& m);
 
 private:

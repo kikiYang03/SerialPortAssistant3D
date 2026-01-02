@@ -17,15 +17,6 @@ struct CloudMsg {
     QVector<QVector3D> points;   // 或先只存统计量
 };
 
-struct MapMsg {
-    int width;
-    int height;
-    float resolution;
-    float origin_x;
-    float origin_y;
-    QVector<int8_t> cells; // 解 RLE 后 or 保留 RLE
-};
-
 struct MapCloudMsg {
     QString frame_id;
     QVector<QVector3D> points;
@@ -51,13 +42,11 @@ inline QDebug operator<<(QDebug dbg, const CloudMsg &m)
     return dbg;
 }
 
-inline QDebug operator<<(QDebug dbg, const MapMsg &m)
+inline QDebug operator<<(QDebug dbg, const MapCloudMsg &m)
 {
     QDebugStateSaver saver(dbg);
-    dbg.nospace() << "MapMsg{w=" << m.width
-                  << ", h=" << m.height
-                  << ", res=" << m.resolution
-                  << ", cells=" << m.cells.size() << '}';
+    dbg.nospace() << "MapCloudMsg{frame=" << m.frame_id
+                  << ", points=" << m.points.size() << '}';
     return dbg;
 }
 
