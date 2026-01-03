@@ -12,8 +12,6 @@ ROSVisualizer3D::ROSVisualizer3D(QWidget *parent)
     ui->setupUi(this);
 
     glScene_ = new GLScene(this);
-
-
     glSceneMap_= new GLScene(this);
 
     // 设置“视图坐标系”
@@ -83,24 +81,22 @@ void ROSVisualizer3D::onTFUpdated(const TFMsg& msg)
     tf.t     = msg.t;
     tf.q     = msg.q;
 
+    //保存动态TF
     tfMap_[tf.child] = tf;
 
-    // 1) body in map：用于显示机器人姿态与轨迹（用户视角是 map）
-    QVector3D t_map_body;
-    QQuaternion q_map_body;
-    if (resolveTFChain("map", "body", tfMap_, t_map_body, q_map_body)) {
-        glScene_->setTFs({Transform{"map", "body", t_map_body, q_map_body}});   // ← 就加这一句
-        glScene_->addTrajectoryPoint(t_map_body);
+    // 保存静态TF
+    if (tf.frame == "map" && tf.child == "camera_init")
+    {
+        staticTfMapCam_[tf.child] = tf;
+        qDebug() << "map-camera_init: "<< staticTfMapCam_;
+    }
+    if (tf.frame == "body"  && tf.child == "base_link")
+    {
+        staticTfBodyBase_[tf.child] = tf;
+        qDebug() << "body-base_link: "<< staticTfMapCam_;
     }
 
-    // 2) camera_init in map：用于点云一次性模型变换（点云顶点仍是 camera_init 坐标）
-    QVector3D t_map_cam;
-    QQuaternion q_map_cam;
-    if (resolveTFChain("map", "camera_init", tfMap_, t_map_cam, q_map_cam)) {
-        glScene_->setCloudPoseInWorld(t_map_cam, q_map_cam);
-    }
 }
-
 
 void ROSVisualizer3D::onCloudUpdated(const CloudMsg& msg)
 {

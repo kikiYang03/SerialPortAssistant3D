@@ -11,12 +11,14 @@ MainWindow::MainWindow(QWidget *parent)
     params = new Params;
     visualizer3d = new ROSVisualizer3D;
     protocolHandler = new ProtocolRos3D;
+    glWidget = new GLWidget;
 
 
     // 添加子页面
     ui->stackedWidget->addWidget(serialPort);
     ui->stackedWidget->addWidget(params);
-    ui->stackedWidget->addWidget(visualizer3d);
+    ui->stackedWidget->addWidget(glWidget);
+
 
     // 设置当前页面
     ui->stackedWidget->setCurrentWidget(serialPort);
@@ -61,14 +63,22 @@ MainWindow::MainWindow(QWidget *parent)
     connect(serialPort, &SerialPort::rawBytesArrived,
             protocolHandler, &ProtocolRos3D::onRawBytes);
 
-    connect(protocolHandler, &ProtocolRos3D::tfUpdated,
-            visualizer3d, &ROSVisualizer3D::onTFUpdated);
+    // connect(protocolHandler, &ProtocolRos3D::tfUpdated,
+    //         visualizer3d, &ROSVisualizer3D::onTFUpdated);
 
-    connect(protocolHandler, &ProtocolRos3D::cloudUpdated,
-            visualizer3d, &ROSVisualizer3D::onCloudUpdated);
+    // connect(protocolHandler, &ProtocolRos3D::cloudUpdated,
+    //         visualizer3d, &ROSVisualizer3D::onCloudUpdated);
 
-    connect(protocolHandler, &ProtocolRos3D::mapCloudUpdated,
-            visualizer3d, &ROSVisualizer3D::onMapCloudUpdated);
+    // connect(protocolHandler, &ProtocolRos3D::mapCloudUpdated,
+    //         visualizer3d, &ROSVisualizer3D::onMapCloudUpdated);
+
+    // 把解析到的数据直接转发给渲染器
+    QObject::connect(protocolHandler, &ProtocolRos3D::tfUpdated,
+                     glWidget, &GLWidget::onTf);
+    QObject::connect(protocolHandler, &ProtocolRos3D::cloudUpdated,
+                     glWidget, &GLWidget::onCloud);
+    QObject::connect(protocolHandler, &ProtocolRos3D::mapCloudUpdated,
+                     glWidget, &GLWidget::onMap);
 
     // ----------------------------------------------------------
     // 绑定槽函数——显示页面

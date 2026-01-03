@@ -27,6 +27,10 @@ private:
     GLScene* glSceneMap_{nullptr};
 
     QMap<QString, Transform> tfMap_;
+    // 存储初始值
+    QMap<QString, Transform> staticTfMapCam_;
+    QMap<QString, Transform> staticTfBodyBase_;
+
     QVector<Point3D> scanPoints_;
     QVector<Transform> tfList_;
 };

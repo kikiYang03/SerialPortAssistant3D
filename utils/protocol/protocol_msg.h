@@ -22,6 +22,12 @@ struct MapCloudMsg {
     QVector<QVector3D> points;
 };
 
+struct Transform {
+    QString frame;
+    QString child;
+    QVector3D t;
+    QQuaternion q;
+};
 
 
 inline QDebug operator<<(QDebug dbg, const TFMsg &m)
@@ -50,4 +56,13 @@ inline QDebug operator<<(QDebug dbg, const MapCloudMsg &m)
     return dbg;
 }
 
+inline QDebug operator<<(QDebug dbg, const Transform &t)
+{
+    QDebugStateSaver saver(dbg);
+    dbg.nospace() << "Transform{frame=" << t.frame
+                  << ", child=" << t.child
+                  << ", t=" << t.t
+                  << ", q=" << t.q << '}';
+    return dbg;
+}
 #endif // PROTOCOL_MSG_H

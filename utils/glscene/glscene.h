@@ -8,17 +8,13 @@
 #include <QQuaternion>
 #include <QMouseEvent>
 #include <QWheelEvent>
+#include "protocol_msg.h"
 
 struct Point3D {
     float x, y, z;
 };
 
-struct Transform {
-    QString frame;
-    QString child;
-    QVector3D t;
-    QQuaternion q;
-};
+
 
 class GLScene : public QOpenGLWidget, protected QOpenGLFunctions
 {

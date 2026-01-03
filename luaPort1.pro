@@ -1,4 +1,4 @@
-QT       += core gui serialport network opengl
+QT       += core gui serialport network opengl widgets
 
 greaterThan(QT_MAJOR_VERSION, 4): QT += widgets
 
@@ -16,26 +16,31 @@ INCLUDEPATH += $$PWD/src/Coordinate
 INCLUDEPATH += $$PWD/src/Params
 INCLUDEPATH += $$PWD/src/Serialport
 INCLUDEPATH += $$PWD/src/ROSVisualizer3D
+INCLUDEPATH += $$PWD/src/GL
 INCLUDEPATH += $$PWD/utils/tcp
 INCLUDEPATH += $$PWD/utils/protocol
 INCLUDEPATH += $$PWD/utils/glscene
+INCLUDEPATH += $$PWD/thirds/Eigen
 
 SOURCES += \
     src/Coordinate/coordinate.cpp \
     main.cpp \
     mainwindow.cpp \
+    src/GL/glwidget.cpp \
     src/Params/params.cpp \
     src/ROSVisualizer3D/rosvisualizer3d.cpp \
     src/Serialport/serialport.cpp \
     utils/glscene/glscene.cpp \
     utils/protocol/protocolhandler.cpp \
     utils/protocol/protocolros3d.cpp \
+    utils/protocol/tftree.cpp \
     utils/tcp/tcpclient.cpp \
     utils/config/config.cpp
 
 HEADERS += \
     src/Coordinate/coordinate.h \
     mainwindow.h \
+    src/GL/glwidget.h \
     src/Params/params.h \
     src/ROSVisualizer3D/rosvisualizer3d.h \
     src/Serialport/serialport.h \
@@ -44,6 +49,7 @@ HEADERS += \
     utils/protocol/protocol_msg.h \
     utils/protocol/protocolhandler.h \
     utils/protocol/protocolros3d.h \
+    utils/protocol/tftree.h \
     utils/tcp/tcpclient.h \
     utils/config/config.h
 
