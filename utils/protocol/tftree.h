@@ -18,14 +18,12 @@ public:
     void setTransform(const QString &parent,
                       const QString &child,
                       const Vec3 &t,
-                      const Quat &q)
-    {
-        Mat4 T = Mat4::Identity();
-        T.block<3,3>(0,0) = q.toRotationMatrix();
-        T.block<3,1>(0,3) = t;
-        std::lock_guard<std::mutex> lk(m_);
-        data_[{parent,child}] = T;
-    }
+                      const Quat &q);
+
+    // 固定路径 lookup，O(1)
+    std::optional<Mat4> lookupMapCameraInit() const;
+    std::optional<Mat4> lookupCameraInitBody() const;
+
 
     std::optional<Mat4> lookup(const QString &target,
                                const QString &source) const
@@ -46,5 +44,9 @@ private:
 
     std::optional<Mat4> dfs(const QString &cur,
                             const QString &target) const;
+
+    // 新增：只存最新
+    std::optional<Mat4> T_map_camInit_;      // map -> camera_init
+    std::optional<Mat4> T_camInit_body_;     // camera_init -> body
 };
 #endif // TFTREE_H

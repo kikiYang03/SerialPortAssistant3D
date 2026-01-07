@@ -87,7 +87,7 @@ void ProtocolRos3D::parseTF(const QJsonObject& obj)
                       obj["qx"].toDouble(),
                       obj["qy"].toDouble(),
                       obj["qz"].toDouble());
-    qDebug() << "TF数据解析成TFMsg："<< m;
+    // qDebug() << "TF数据解析成TFMsg："<< m;
     emit tfUpdated(m);
 }
 

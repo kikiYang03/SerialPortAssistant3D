@@ -8,6 +8,13 @@
 #include "tftree.h"
 #include "protocol_msg.h"
 
+// TF 轨迹缓存（map 坐标系）
+struct TfTrail {
+    std::vector<Eigen::Vector3f> body;      // body 原点序列
+    std::vector<Eigen::Vector3f> camera_init;
+    std::vector<Eigen::Vector3f> base_link;
+};
+
 class GLWidget : public QOpenGLWidget, protected QOpenGLFunctions
 {
     Q_OBJECT
@@ -45,16 +52,36 @@ private:
     void drawArrow(const Eigen::Matrix4d &T, float len = 2.f);
     std::vector<Eigen::Matrix4d> trajectory_;
     void drawPointCloud(QOpenGLVertexArrayObject &vao,
-                        QOpenGLBuffer &vbo,
-                        int pointCount,
-                        const Eigen::Matrix4d &modelMatrix,
+                                  QOpenGLBuffer &vbo,
+                                  int pointCount,
+                                  const Eigen::Matrix4d &modelMatrix,
                         const QVector3D &color);
+
+    // 添加相机参数
+    float distance_ = 30.0f;
+    float pitch_ = -45.0f;    // 俯仰角
+    float yaw_ = 180.0f;      // 偏航角
+    QVector3D center_ = QVector3D(0, 0, 0);
+    QPoint lastMousePos_;
+
+    // 添加鼠标事件处理
+    void mousePressEvent(QMouseEvent* e) override;
+    void mouseMoveEvent(QMouseEvent* e) override;
+    void wheelEvent(QWheelEvent* e) override;
+
+
+
+    // 测试立方体
+    QOpenGLVertexArrayObject vaoCube_;
+    QOpenGLBuffer vboCube_;
+    int cubePts_ = 0;
+    void drawCube(const Eigen::Matrix4d &T, float size);
+
+    // 测试立方体变换矩阵
+    Eigen::Matrix4d cubeTransform_;
+
+    TfTrail trail_;
+    static constexpr size_t kMaxTrail = 5000;   // 轨迹最多存 5000 点
+
 };
-inline QDebug operator<<(QDebug dbg, const Eigen::Matrix4d& m)
-{
-    std::stringstream ss;
-    ss << m;
-    dbg << QString::fromStdString(ss.str());
-    return dbg;
-}
 #endif // GLWIDGET_H
