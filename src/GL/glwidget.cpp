@@ -49,16 +49,10 @@ void GLWidget::initializeGL()
     glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,0,nullptr);
     vaoMap_.release();
 
-    // 初始化立方体VAO/VBO
-    vaoCube_.create();
-    vboCube_.create();
-
     // 静态 TF
     // tf_.setTransform("map","camera_init", Eigen::Vector3d::Zero(), Eigen::Quaterniond::Identity());
     tf_.setTransform("body","base_link", Eigen::Vector3d::Zero(), Eigen::Quaterniond::Identity());
-    // 初始化立方体变换矩阵（放置在原点）
-    cubeTransform_ = Eigen::Matrix4d::Identity();
-    cubeTransform_(2,3) = -10.0;   // 往“相机前方”推 10 米
+
 }
 
 void GLWidget::resizeGL(int w,int h)
@@ -208,140 +202,125 @@ void GLWidget::paintGL()
 
     // ========== 3. 绘制 ==========
 
-    // 1. 绘制map坐标系下的内容
-    // 1. 绘制map坐标系下的内容
-    if(map_T_camera_init_ready_){
+    // ========== 2. 绘制基础元素 ==========
+    if(map_T_camera_init_ready_) {
         Eigen::Matrix4d id = Eigen::Matrix4d::Identity();
 
-        // 绘制map坐标轴（红色X，绿色Y，蓝色Z）
+        // 绘制坐标轴
         drawAxis(id, 10.f);
 
         // 绘制栅格
         drawGrid(id, 40, 1.f);
 
-        // 绘制测试立方体（在map坐标系原点）
-        drawCube(cubeTransform_, 2.0f); // 边长为2的立方体
-
-        // 绘制相机初始位姿（map->camera_init）
-        if(auto T = tf_.lookup("map","camera_init")){
-            drawAxis(*T, 3.f);
-
-            // 在camera_init坐标系原点也绘制一个小立方体
-            Eigen::Matrix4d cubeAtCameraInit = *T; // 立方体跟随camera_init坐标系
-            drawCube(cubeAtCameraInit, 1.0f); // 边长为1的小立方体
-
-            // 绘制从camera_init到body的箭头
-            if(auto T_body = tf_.lookup("camera_init", "body")){
-                Eigen::Matrix4d T_map_body = (*T) * (*T_body);
-                drawArrow(T_map_body, 2.f);
-            }
-        }
-    } else {
-        // 如果没有TF变换，也在原点绘制一个立方体
-        drawCube(Eigen::Matrix4d::Identity(), 2.0f);
     }
 
-    // 2. 绘制点云（现在点云在camera_init坐标系，相机也在camera_init坐标系）
-    progSimple_.bind();
-
-    // 为点云设置MVP矩阵
-    Eigen::Matrix4d mvp = proj_ * view_;
-    progSimple_.setUniformValue("mvp", toQMatrix(mvp));
-
-    // 绘制当前点云（蓝色）
-    progSimple_.setUniformValue("col", QVector3D(0, 0, 1));
-    vaoCloud_.bind();
-    if(cloudPts_ > 0) {
-        glPointSize(3.0f);  // 设置点大小
-        glDrawArrays(GL_POINTS, 0, cloudPts_);
-    }
-    vaoCloud_.release();
-
-    // 绘制地图点云（灰色）
-    progSimple_.setUniformValue("col", QVector3D(0.5, 0.5, 0.5));
-    vaoMap_.bind();
-    if(mapPts_ > 0) {
-        glPointSize(2.0f);  // 设置点大小
-        glDrawArrays(GL_POINTS, 0, mapPts_);
-    }
-
-    vaoMap_.release();
-
-    // ========== 4. 画 TF 轨迹（map1 空间，但数据已在 map 系） ==========
-    if(trail_.body.size() > 1)    // 至少两个点才能看出方向
-    {
+    // ========== 3. 绘制轨迹线（只有线条，没有箭头） ==========
+    if(trail_.points.size() > 1) {
         progSimple_.bind();
-        progSimple_.setUniformValue("mvp", toQMatrix(proj_*view_)); // 已在世界空间
-        progSimple_.setUniformValue("col", QVector3D(0,1,0));       // 纯绿轨迹
+        progSimple_.setUniformValue("mvp", toQMatrix(proj_ * view_));
+        progSimple_.setUniformValue("col", QVector3D(0, 1, 0));  // 绿色轨迹
 
-        static QOpenGLBuffer trailVbo; static QOpenGLVertexArrayObject trailVao;
-        if(!trailVbo.isCreated()){ trailVbo.create(); trailVao.create(); }
-        trailVao.bind(); trailVbo.bind();
-        trailVbo.allocate(trail_.body.data(),
-                          trail_.body.size()*sizeof(Eigen::Vector3f));
-        glEnableVertexAttribArray(0);
-        glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,0,nullptr);
+        // 创建轨迹线的VAO/VBO
+        static QOpenGLVertexArrayObject trailVao;
+        static QOpenGLBuffer trailVbo;
 
-        // 1. 绿色线
-        glLineWidth(3.0f);
-        glDrawArrays(GL_LINE_STRIP, 0, trail_.body.size());
-
-        // 2. 每段终点画绿色箭头
-        progSimple_.setUniformValue("col", QVector3D(0,0.8,0));   // 稍深绿
-        for(size_t i = 1; i < trail_.body.size(); ++i)
-        {
-            Eigen::Vector3f from = trail_.body[i-1];
-            Eigen::Vector3f to   = trail_.body[i];
-            Eigen::Vector3f dir  = (to - from).normalized();
-            float len = 0.8f;                 // 箭头长度，可调
-
-            // 构造一个“Z 轴沿 dir”的 4×4 矩阵
-            Eigen::Vector3f up(0,0,1);
-            Eigen::Vector3f x = dir.cross(up).normalized();
-            Eigen::Vector3f y = dir.cross(x).normalized();
-            Eigen::Matrix4d T = Eigen::Matrix4d::Identity();
-            T.block<3,1>(0,0) = x.cast<double>();
-            T.block<3,1>(0,1) = y.cast<double>();
-            T.block<3,1>(0,2) = dir.cast<double>();
-            T.block<3,1>(0,3) = to.cast<double>();   // 平移到线段终点
-
-            drawArrow(T, len);   // 复用你已有的 drawArrow
+        if(!trailVao.isCreated()) {
+            trailVao.create();
+            trailVbo.create();
         }
+
+        trailVao.bind();
+        trailVbo.bind();
+
+        // 上传轨迹点数据
+        trailVbo.allocate(trail_.points.data(),
+                          trail_.points.size() * sizeof(Eigen::Vector3f));
+
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, nullptr);
+
+        // 绘制轨迹线
+        glLineWidth(3.0f);
+        glDrawArrays(GL_LINE_STRIP, 0, trail_.points.size());
 
         trailVao.release();
         progSimple_.release();
     }
 
-    // progSimple_.release();
+    // ========== 4. 绘制最新箭头（只有一个） ==========
+    if(trail_.hasValidTransform) {
+        // 使用相同的着色器程序
+        progSimple_.bind();
+
+        // 绘制橙色箭头（更显眼）
+        drawSolidArrow(trail_.latestTransform, 1.0f, 0.15f);  // 长度3米，半径0.15米
+
+        progSimple_.release();
+    }
+
+    // ========== 5. 绘制点云 ==========
+    progSimple_.bind();
+    Eigen::Matrix4d mvp = proj_ * view_;
+    progSimple_.setUniformValue("mvp", toQMatrix(mvp));
+
+    // 绘制当前点云
+    progSimple_.setUniformValue("col", QVector3D(0, 0, 1));
+    vaoCloud_.bind();
+    if(cloudPts_ > 0) {
+        glPointSize(3.0f);
+        glDrawArrays(GL_POINTS, 0, cloudPts_);
+    }
+    vaoCloud_.release();
+
+    // 绘制地图点云
+    progSimple_.setUniformValue("col", QVector3D(0.5, 0.5, 0.5));
+    vaoMap_.bind();
+    if(mapPts_ > 0) {
+        glPointSize(2.0f);
+        glDrawArrays(GL_POINTS, 0, mapPts_);
+    }
+    vaoMap_.release();
+
+    progSimple_.release();
 }
 
 // 槽函数
 void GLWidget::onTf(const TFMsg &m)
 {
-    // 1. 照旧存 TF 树
+    // 1. 存储TF到树中
     tf_.setTransform(m.frame_id, m.child_frame_id,
                      Eigen::Vector3d(m.t.x(),m.t.y(),m.t.z()),
                      Eigen::Quaterniond(m.q.scalar(),m.q.x(),m.q.y(),m.q.z()));
-    // 无论哪条 TF，只要能让链完整就更新轨迹
-    // auto T_map_ci = tf_.lookup("map","camera_init");
-    // auto T_ci_b   = tf_.lookup("camera_init","body");
-    auto T_map_ci = tf_.lookupMapCameraInit();
-    auto T_ci_b   = tf_.lookupCameraInitBody();
-    // qDebug() << "lookup map->camera_init =" << (T_map_ci.has_value() ? "OK" : "FAIL")
-    //          << "  lookup camera_init->body =" << (T_ci_b.has_value() ? "OK" : "FAIL");
-    if (T_map_ci && T_ci_b) {
-        Eigen::Matrix4d T_map_body = (*T_map_ci) * (*T_ci_b);
-        Eigen::Vector3f pt = T_map_body.block<3,1>(0,3).cast<float>();
 
-        trail_.body.push_back(pt);
-        if(trail_.body.size() > kMaxTrail) trail_.body.erase(trail_.body.begin());
+    // 2. 检查map->camera_init是否就绪
+    if(m.frame_id == "map" && m.child_frame_id == "camera_init") {
+        map_T_camera_init_ready_ = true;
     }
 
-    // 照旧开门
-    if(m.frame_id == "map" && m.child_frame_id == "camera_init")
-        map_T_camera_init_ready_ = true;
+    // 3. 获取最新TF变换
+    auto T_map_ci = tf_.lookupMapCameraInit();
+    auto T_ci_b   = tf_.lookupCameraInitBody();
 
-    update();   // 重绘
+    if (T_map_ci && T_ci_b) {
+        // 计算map->body的变换
+        Eigen::Matrix4d T_map_body = (*T_map_ci) * (*T_ci_b);
+
+        // 3.1 存储轨迹点（只存位置）
+        Eigen::Vector3f position = T_map_body.block<3,1>(0,3).cast<float>();
+        trail_.points.push_back(position);
+
+        // 限制轨迹点数量
+        const size_t kMaxTrailPoints = 1000;  // 可以根据需要调整
+        if(trail_.points.size() > kMaxTrailPoints) {
+            trail_.points.erase(trail_.points.begin());
+        }
+
+        // 3.2 更新最新变换（用于绘制箭头）
+        trail_.latestTransform = T_map_body;
+        trail_.hasValidTransform = true;
+    }
+
+    update();   // 触发重绘
 }
 
 void GLWidget::onCloud(const CloudMsg &m)
@@ -413,70 +392,77 @@ void GLWidget::wheelEvent(QWheelEvent* e)
     update();
 }
 
-void GLWidget::drawCube(const Eigen::Matrix4d &T, float size)
+void GLWidget::drawSolidArrow(const Eigen::Matrix4d &T, float len, float radius)
 {
-    // 创建立方体的8个顶点
-    float half = size * 0.5f;
-    std::vector<Eigen::Vector3f> vertices = {
-        // 前平面
-        {-half, -half, half},  // 0: 左下前
-        {half, -half, half},   // 1: 右下前
-        {half, half, half},    // 2: 右上前
-        {-half, half, half},   // 3: 左上前
+    // 1. 创建箭头几何数据
+    const int seg = 16;
+    const float shaftLen = len * 0.65f;
+    const float headLen = len - shaftLen;
+    const float headRad = radius * 2.0f;
 
-        // 后平面
-        {-half, -half, -half}, // 4: 左下后
-        {half, -half, -half},  // 5: 右下后
-        {half, half, -half},   // 6: 右后上
-        {-half, half, -half}   // 7: 左后上
-    };
+    std::vector<Eigen::Vector3f> vertices;
 
-    // 绘制线框的索引（12条边）
-    std::vector<unsigned int> indices = {
-        // 前平面的边
-        0,1, 1,2, 2,3, 3,0,
-        // 后平面的边
-        4,5, 5,6, 6,7, 7,4,
-        // 连接前后平面的边
-        0,4, 1,5, 2,6, 3,7
-    };
-
-    // 创建线框顶点数据
-    std::vector<Eigen::Vector3f> lines;
-    for (size_t i = 0; i < indices.size(); i += 2) {
-        lines.push_back(vertices[indices[i]]);
-        lines.push_back(vertices[indices[i+1]]);
+    // 2. 圆柱杆（四边形带）
+    for (int i = 0; i <= seg; ++i) {
+        float a = 2.0f * M_PI * i / seg;
+        float x = cosf(a) * radius;
+        float y = sinf(a) * radius;
+        vertices.emplace_back(x, y, 0);            // 起点
+        vertices.emplace_back(x, y, shaftLen);     // 终点
     }
 
-    // 绘制线框立方体
+    // 3. 圆锥头（三角形）
+    for (int i = 0; i < seg; ++i) {
+        float a0 = 2.0f * M_PI * i / seg;
+        float a1 = 2.0f * M_PI * (i+1) / seg;
+        float x0 = cosf(a0) * headRad;
+        float y0 = sinf(a0) * headRad;
+        float x1 = cosf(a1) * headRad;
+        float y1 = sinf(a1) * headRad;
+
+        // 三个顶点组成一个三角形
+        vertices.emplace_back(0, 0, shaftLen + headLen);  // 尖
+        vertices.emplace_back(x1, y1, shaftLen);          // 底边1
+        vertices.emplace_back(x0, y0, shaftLen);          // 底边0
+    }
+
+    // 4. 使用着色器绘制
     progSimple_.bind();
-    progSimple_.setUniformValue("mvp", toQMatrix(proj_ * view_ * T));
-    progSimple_.setUniformValue("col", QVector3D(1.0f, 1.0f, 0.0f)); // 黄色
 
-    // 创建临时VAO/VBO
-    static QOpenGLVertexArrayObject tempVao;
-    static QOpenGLBuffer tempVbo;
+    // 关键：设置正确的MVP矩阵
+    Eigen::Matrix4d mvp = proj_ * view_ * T;
+    progSimple_.setUniformValue("mvp", toQMatrix(mvp));
 
-    if (!tempVao.isCreated()) {
-        tempVao.create();
-        tempVbo.create();
+    // 设置箭头颜色
+    progSimple_.setUniformValue("col", QVector3D(1.0f, 0.5f, 0.0f));  // 橙色
+
+    // 创建VAO/VBO
+    static QOpenGLVertexArrayObject arrowVao;
+    static QOpenGLBuffer arrowVbo;
+
+    if (!arrowVao.isCreated()) {
+        arrowVao.create();
+        arrowVbo.create();
     }
 
-    tempVao.bind();
-    tempVbo.bind();
+    arrowVao.bind();
+    arrowVbo.bind();
 
-    // 上传数据
-    tempVbo.allocate(lines.data(), lines.size() * sizeof(Eigen::Vector3f));
+    // 上传顶点数据
+    arrowVbo.allocate(vertices.data(), vertices.size() * sizeof(Eigen::Vector3f));
 
     // 设置顶点属性
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, nullptr);
 
-    // 绘制线框
-    glLineWidth(2.0f);  // 设置线宽
-    glDrawArrays(GL_LINES, 0, lines.size());
+    // 绘制圆柱杆（GL_QUAD_STRIP）
+    int cylinderVertices = (seg + 1) * 2;
+    glDrawArrays(GL_QUAD_STRIP, 0, cylinderVertices);
 
-    tempVao.release();
-    progSimple_.release();
+    // 绘制圆锥头（GL_TRIANGLES）
+    int coneVertices = vertices.size() - cylinderVertices;
+    glDrawArrays(GL_TRIANGLES, cylinderVertices, coneVertices);
+
+    arrowVao.release();
 }
 

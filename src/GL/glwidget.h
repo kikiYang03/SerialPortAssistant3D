@@ -5,6 +5,7 @@
 #include <QOpenGLBuffer>
 #include <QOpenGLVertexArrayObject>
 #include <QOpenGLShaderProgram>
+#include <QOpenGLTexture>
 #include "tftree.h"
 #include "protocol_msg.h"
 
@@ -13,6 +14,12 @@ struct TfTrail {
     std::vector<Eigen::Vector3f> body;      // body 原点序列
     std::vector<Eigen::Vector3f> camera_init;
     std::vector<Eigen::Vector3f> base_link;
+};
+
+struct Trail {
+    std::vector<Eigen::Vector3f> points;    // 只存储轨迹点（用于画线）
+    Eigen::Matrix4d latestTransform;        // 只存储最新变换（用于画箭头）
+    bool hasValidTransform = false;         // 是否有有效的变换
 };
 
 class GLWidget : public QOpenGLWidget, protected QOpenGLFunctions
@@ -72,16 +79,18 @@ private:
 
 
     // 测试立方体
-    QOpenGLVertexArrayObject vaoCube_;
-    QOpenGLBuffer vboCube_;
-    int cubePts_ = 0;
-    void drawCube(const Eigen::Matrix4d &T, float size);
+    // QOpenGLVertexArrayObject vaoCube_;
+    // QOpenGLBuffer vboCube_;
+    // int cubePts_ = 0;
+    // void drawCube(const Eigen::Matrix4d &T, float size);
 
     // 测试立方体变换矩阵
-    Eigen::Matrix4d cubeTransform_;
+    // Eigen::Matrix4d cubeTransform_;
 
-    TfTrail trail_;
+    Trail  trail_;
     static constexpr size_t kMaxTrail = 5000;   // 轨迹最多存 5000 点
+
+    void drawSolidArrow(const Eigen::Matrix4d &T, float len, float radius = 0.08f);
 
 };
 #endif // GLWIDGET_H
