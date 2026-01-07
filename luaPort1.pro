@@ -15,11 +15,9 @@ QMAKE_CXXFLAGS += /utf-8
 INCLUDEPATH += $$PWD/src/Coordinate
 INCLUDEPATH += $$PWD/src/Params
 INCLUDEPATH += $$PWD/src/Serialport
-INCLUDEPATH += $$PWD/src/ROSVisualizer3D
 INCLUDEPATH += $$PWD/src/GL
 INCLUDEPATH += $$PWD/utils/tcp
 INCLUDEPATH += $$PWD/utils/protocol
-INCLUDEPATH += $$PWD/utils/glscene
 INCLUDEPATH += $$PWD/thirds/Eigen
 
 SOURCES += \
@@ -28,9 +26,7 @@ SOURCES += \
     mainwindow.cpp \
     src/GL/glwidget.cpp \
     src/Params/params.cpp \
-    src/ROSVisualizer3D/rosvisualizer3d.cpp \
     src/Serialport/serialport.cpp \
-    utils/glscene/glscene.cpp \
     utils/protocol/protocolhandler.cpp \
     utils/protocol/protocolros3d.cpp \
     utils/protocol/tftree.cpp \
@@ -42,10 +38,8 @@ HEADERS += \
     mainwindow.h \
     src/GL/glwidget.h \
     src/Params/params.h \
-    src/ROSVisualizer3D/rosvisualizer3d.h \
     src/Serialport/serialport.h \
     stdafx.h \
-    utils/glscene/glscene.h \
     utils/protocol/protocol_msg.h \
     utils/protocol/protocolhandler.h \
     utils/protocol/protocolros3d.h \
@@ -58,7 +52,6 @@ FORMS += \
     src/Coordinate/coordinate.ui \
     mainwindow.ui \
     src/Params/params.ui \
-    src/ROSVisualizer3D/rosvisualizer3d.ui \
     src/Serialport/serialport.ui
 
 RC_ICONS = images/logo256.ico

@@ -171,7 +171,6 @@ void GLWidget::paintGL()
     drawGrid(world, 40, 1.0f);
 
     /* ---------------- 3. 轨迹线（绿色） ---------------- */
-    /* ---------------- 轨迹线（camera_init 系） ---------------- */
     if (trail_.points.size() > 1)
     {
         progSimple_.bind();
@@ -222,44 +221,6 @@ void GLWidget::paintGL()
     progSimple_.release();
 }
 
-// 槽函数
-// void GLWidget::onTf(const TFMsg &m)
-// {
-//     // 1. 存储TF到树中
-//     tf_.setTransform(m.frame_id, m.child_frame_id,
-//                      Eigen::Vector3d(m.t.x(),m.t.y(),m.t.z()),
-//                      Eigen::Quaterniond(m.q.scalar(),m.q.x(),m.q.y(),m.q.z()));
-
-//     // 2. 检查map->camera_init是否就绪
-//     if(m.frame_id == "map" && m.child_frame_id == "camera_init") {
-//         map_T_camera_init_ready_ = true;
-//     }
-
-//     // 3. 获取最新TF变换
-//     auto T_map_ci = tf_.lookupMapCameraInit();
-//     auto T_ci_b   = tf_.lookupCameraInitBody();
-
-//     if (T_map_ci && T_ci_b) {
-//         // 计算map->body的变换
-//         Eigen::Matrix4d T_map_body = (*T_map_ci) * (*T_ci_b);
-
-//         // 3.1 存储轨迹点（只存位置）
-//         Eigen::Vector3f position = T_map_body.block<3,1>(0,3).cast<float>();
-//         trail_.points.push_back(position);
-
-//         // 限制轨迹点数量
-//         const size_t kMaxTrailPoints = 1000;  // 可以根据需要调整
-//         if(trail_.points.size() > kMaxTrailPoints) {
-//             trail_.points.erase(trail_.points.begin());
-//         }
-
-//         // 3.2 更新最新变换（用于绘制箭头）
-//         trail_.latestTransform = T_map_body;
-//         trail_.hasValidTransform = true;
-//     }
-
-//     update();   // 触发重绘
-// }
 void GLWidget::onTf(const TFMsg &m)
 {
     /* 1. 照旧存树（方便别处用） */
@@ -290,13 +251,8 @@ void GLWidget::onCloud(const CloudMsg &m)
 {
     std::vector<Eigen::Vector3f> tmp;
     tmp.reserve(m.points.size());
-    // auto T_map_ci = tf_.lookup("map","camera_init");
-    // Eigen::Matrix4d T = T_map_ci ? (*T_map_ci) : Eigen::Matrix4d::Identity();
 
     for(const auto &p : m.points){
-        // Eigen::Vector4d pi(p.x(),p.y(),p.z(),1.0);
-        // Eigen::Vector4d pw = T * pi;
-        // tmp.emplace_back(pw.head<3>().cast<float>());
         tmp.emplace_back(p.x(), p.y(), p.z());   // 直接拷
     }
     vboCloud_.bind();
@@ -309,13 +265,8 @@ void GLWidget::onMap(const MapCloudMsg &m)
 {
     std::vector<Eigen::Vector3f> tmp;
     tmp.reserve(m.points.size());
-    // auto T_map_ci = tf_.lookup("map","camera_init");
-    // Eigen::Matrix4d T = T_map_ci ? (*T_map_ci) : Eigen::Matrix4d::Identity();
 
     for(const auto &p : m.points){
-        // Eigen::Vector4d pi(p.x(),p.y(),p.z(),1.0);
-        // Eigen::Vector4d pw = T * pi;
-        // tmp.emplace_back(pw.head<3>().cast<float>());
         tmp.emplace_back(p.x(), p.y(), p.z());   // 直接拷
     }
     vboMap_.bind();
