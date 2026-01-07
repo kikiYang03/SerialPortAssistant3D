@@ -19,24 +19,25 @@ std::optional<Mat4> TfTree::dfs(const QString &target,
 
 void TfTree::setTransform(const QString &parent,
                           const QString &child,
-                          const Eigen::Vector3d &t,
-                          const Eigen::Quaterniond &q)
+                          const Vec3 &t,
+                          const Quat &q)
 {
     Mat4 T = Mat4::Identity();
     T.block<3,3>(0,0) = q.matrix();
     T.block<3,1>(0,3) = t;
 
     std::lock_guard<std::mutex> lk(m_);
-    data_[{parent, child}] = T;          // 原逻辑保留，可删
+    /* 正向边 */
+    data_[{parent, child}] = T;
+    /* 反向边 */
+    data_[{child, parent}] = T.inverse();
 
+    /* 继续保留你的快速路径缓存 */
     if (parent == "map" && child == "camera_init") {
         T_map_camInit_ = T;
-    }
-    else if (parent == "camera_init" && child == "body") {
+    } else if (parent == "camera_init" && child == "body") {
         T_camInit_body_ = T;
-    }
-    // 如果发的是 body->camera_init（反向），就存逆矩阵
-    else if (parent == "body" && child == "camera_init") {
+    } else if (parent == "body" && child == "camera_init") {
         T_camInit_body_ = T.inverse();
     }
 }

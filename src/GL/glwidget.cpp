@@ -137,202 +137,167 @@ void GLWidget::drawArrow(const Eigen::Matrix4d &T, float len)
 
 void GLWidget::paintGL()
 {
-    glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     glEnable(GL_DEPTH_TEST);
 
-    static bool firstTime = true;
-    if (firstTime) {
-        qDebug() << "Camera parameters:";
-        qDebug() << "  Distance:" << distance_;
-        qDebug() << "  Yaw:" << yaw_;
-        qDebug() << "  Pitch:" << pitch_;
-        qDebug() << "  Center:" << center_.x() << center_.y() << center_.z();
-        firstTime = false;
-    }
-
-    // ========== 1. 计算正确的视图矩阵 ==========
-    // 使用类似 GLScene 的轨道球相机
+    /* ---------------- 1. 轨道球视图矩阵（camera_init 系） ---------------- */
     Eigen::Matrix4d view = Eigen::Matrix4d::Identity();
 
-    // 轨道球相机矩阵构建顺序（与GLScene一致）：
-    // 1. 相机从中心点向后移动
-    // 2. 应用俯仰和偏航旋转
-    // 3. 看向中心点
+    const double ry = yaw_   * M_PI / 180.0;
+    const double rp = pitch_ * M_PI / 180.0;
 
-    // 将相机向后移动
-    Eigen::Matrix4d translateBack = Eigen::Matrix4d::Identity();
-    translateBack(2,3) = -distance_;  // 沿Z轴向后
+    Eigen::Matrix4d transBack = Eigen::Matrix4d::Identity();
+    transBack(2,3) = -distance_;
 
-    // 旋转矩阵：先偏航（绕Z轴），再俯仰（绕X轴）
-    double radYaw = yaw_ * M_PI / 180.0;
-    double radPitch = pitch_ * M_PI / 180.0;
+    Eigen::Matrix4d rotYaw = Eigen::Matrix4d::Identity();
+    rotYaw(0,0) =  cos(ry); rotYaw(0,1) = -sin(ry);
+    rotYaw(1,0) =  sin(ry); rotYaw(1,1) =  cos(ry);
 
-    // 偏航矩阵（绕Z轴）
-    Eigen::Matrix4d yawRot = Eigen::Matrix4d::Identity();
-    yawRot(0,0) = cos(radYaw);   yawRot(0,1) = -sin(radYaw);
-    yawRot(1,0) = sin(radYaw);   yawRot(1,1) = cos(radYaw);
+    Eigen::Matrix4d rotPitch = Eigen::Matrix4d::Identity();
+    rotPitch(1,1) =  cos(rp); rotPitch(1,2) = -sin(rp);
+    rotPitch(2,1) =  sin(rp); rotPitch(2,2) =  cos(rp);
 
-    // 俯仰矩阵（绕X轴）
-    Eigen::Matrix4d pitchRot = Eigen::Matrix4d::Identity();
-    pitchRot(1,1) = cos(radPitch);   pitchRot(1,2) = -sin(radPitch);
-    pitchRot(2,1) = sin(radPitch);   pitchRot(2,2) = cos(radPitch);
+    Eigen::Matrix4d lookCenter = Eigen::Matrix4d::Identity();
+    lookCenter(0,3) = -center_.x();
+    lookCenter(1,3) = -center_.y();
+    lookCenter(2,3) = -center_.z();
 
-    // 看向中心点
-    Eigen::Matrix4d lookAtCenter = Eigen::Matrix4d::Identity();
-    lookAtCenter(0,3) = -center_.x();
-    lookAtCenter(1,3) = -center_.y();
-    lookAtCenter(2,3) = -center_.z();
-
-    // 组合视图矩阵：先向后平移，再旋转，最后看向中心
-    // 注意：矩阵乘法顺序与OpenGL的glTranslate/glRotate调用顺序相反
-    view = translateBack * yawRot * pitchRot * lookAtCenter;
-
-    // ========== 2. 应用TF变换（map->camera_init） ==========
-    // 为了让点云在map坐标系正确显示，需要将camera_init坐标系的点变换到map坐标系
-    // 或者等效地，将相机从map坐标系变换到camera_init坐标系
-    if(map_T_camera_init_ready_){
-        if(auto T_map_cam = tf_.lookup("map","camera_init")){
-            // 方将相机从map系变换到camera_init系
-            Eigen::Matrix4d T_cam_map = T_map_cam->inverse();  // camera_init -> map
-            view = view * T_cam_map;  // 先变换相机到camera_init系
-        }
-    }
-
+    view = transBack * rotYaw * rotPitch * lookCenter;
     view_ = view;
 
-    // ========== 3. 绘制 ==========
+    /* ---------------- 2. 基础元素（camera_init 系） ---------------- */
+    Eigen::Matrix4d world = Eigen::Matrix4d::Identity(); // 就是 camera_init
+    drawAxis(world, 10.0f);
+    drawGrid(world, 40, 1.0f);
 
-    // ========== 2. 绘制基础元素 ==========
-    if(map_T_camera_init_ready_) {
-        Eigen::Matrix4d id = Eigen::Matrix4d::Identity();
-
-        // 绘制坐标轴
-        drawAxis(id, 10.f);
-
-        // 绘制栅格
-        drawGrid(id, 40, 1.f);
-
-    }
-
-    // ========== 3. 绘制轨迹线（只有线条，没有箭头） ==========
-    if(trail_.points.size() > 1) {
+    /* ---------------- 3. 轨迹线（绿色） ---------------- */
+    /* ---------------- 轨迹线（camera_init 系） ---------------- */
+    if (trail_.points.size() > 1)
+    {
         progSimple_.bind();
         progSimple_.setUniformValue("mvp", toQMatrix(proj_ * view_));
-        progSimple_.setUniformValue("col", QVector3D(0, 1, 0));  // 绿色轨迹
+        progSimple_.setUniformValue("col", QVector3D(0,1,0));
 
-        // 创建轨迹线的VAO/VBO
-        static QOpenGLVertexArrayObject trailVao;
-        static QOpenGLBuffer trailVbo;
+        static QOpenGLVertexArrayObject vao;
+        static QOpenGLBuffer vbo;
+        if (!vao.isCreated()) { vao.create(); vbo.create(); }
 
-        if(!trailVao.isCreated()) {
-            trailVao.create();
-            trailVbo.create();
-        }
-
-        trailVao.bind();
-        trailVbo.bind();
-
-        // 上传轨迹点数据
-        trailVbo.allocate(trail_.points.data(),
-                          trail_.points.size() * sizeof(Eigen::Vector3f));
-
+        vao.bind();
+        vbo.bind();
+        vbo.allocate(trail_.points.data(),
+                     trail_.points.size() * sizeof(Eigen::Vector3f));
         glEnableVertexAttribArray(0);
         glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, nullptr);
-
-        // 绘制轨迹线
         glLineWidth(3.0f);
         glDrawArrays(GL_LINE_STRIP, 0, trail_.points.size());
-
-        trailVao.release();
+        vao.release();
         progSimple_.release();
     }
 
-    // ========== 4. 绘制最新箭头（只有一个） ==========
-    if(trail_.hasValidTransform) {
-        // 使用相同的着色器程序
+    /* ---------------- 最新箭头（camera_init 系） ---------------- */
+    if (trail_.hasValidTransform)
+    {
         progSimple_.bind();
-
-        // 绘制橙色箭头（更显眼）
-        drawSolidArrow(trail_.latestTransform, 1.0f, 0.15f);  // 长度3米，半径0.15米
-
+        drawSolidArrow(trail_.latestTransform, 1.0f, 0.15f);
         progSimple_.release();
     }
 
-    // ========== 5. 绘制点云 ==========
+    /* ---------------- 5. 点云（蓝色当前 / 灰色地图） ---------------- */
     progSimple_.bind();
-    Eigen::Matrix4d mvp = proj_ * view_;
+    const Eigen::Matrix4d mvp = proj_ * view_;
     progSimple_.setUniformValue("mvp", toQMatrix(mvp));
 
-    // 绘制当前点云
-    progSimple_.setUniformValue("col", QVector3D(0, 0, 1));
+    // 当前帧点云
+    progSimple_.setUniformValue("col", QVector3D(0,0,1));
     vaoCloud_.bind();
-    if(cloudPts_ > 0) {
-        glPointSize(3.0f);
-        glDrawArrays(GL_POINTS, 0, cloudPts_);
-    }
+    if (cloudPts_ > 0) { glPointSize(3.0f); glDrawArrays(GL_POINTS, 0, cloudPts_); }
     vaoCloud_.release();
 
-    // 绘制地图点云
-    progSimple_.setUniformValue("col", QVector3D(0.5, 0.5, 0.5));
+    // 地图点云
+    progSimple_.setUniformValue("col", QVector3D(0.5f,0.5f,0.5f));
     vaoMap_.bind();
-    if(mapPts_ > 0) {
-        glPointSize(2.0f);
-        glDrawArrays(GL_POINTS, 0, mapPts_);
-    }
+    if (mapPts_ > 0) { glPointSize(2.0f); glDrawArrays(GL_POINTS, 0, mapPts_); }
     vaoMap_.release();
 
     progSimple_.release();
 }
 
 // 槽函数
+// void GLWidget::onTf(const TFMsg &m)
+// {
+//     // 1. 存储TF到树中
+//     tf_.setTransform(m.frame_id, m.child_frame_id,
+//                      Eigen::Vector3d(m.t.x(),m.t.y(),m.t.z()),
+//                      Eigen::Quaterniond(m.q.scalar(),m.q.x(),m.q.y(),m.q.z()));
+
+//     // 2. 检查map->camera_init是否就绪
+//     if(m.frame_id == "map" && m.child_frame_id == "camera_init") {
+//         map_T_camera_init_ready_ = true;
+//     }
+
+//     // 3. 获取最新TF变换
+//     auto T_map_ci = tf_.lookupMapCameraInit();
+//     auto T_ci_b   = tf_.lookupCameraInitBody();
+
+//     if (T_map_ci && T_ci_b) {
+//         // 计算map->body的变换
+//         Eigen::Matrix4d T_map_body = (*T_map_ci) * (*T_ci_b);
+
+//         // 3.1 存储轨迹点（只存位置）
+//         Eigen::Vector3f position = T_map_body.block<3,1>(0,3).cast<float>();
+//         trail_.points.push_back(position);
+
+//         // 限制轨迹点数量
+//         const size_t kMaxTrailPoints = 1000;  // 可以根据需要调整
+//         if(trail_.points.size() > kMaxTrailPoints) {
+//             trail_.points.erase(trail_.points.begin());
+//         }
+
+//         // 3.2 更新最新变换（用于绘制箭头）
+//         trail_.latestTransform = T_map_body;
+//         trail_.hasValidTransform = true;
+//     }
+
+//     update();   // 触发重绘
+// }
 void GLWidget::onTf(const TFMsg &m)
 {
-    // 1. 存储TF到树中
+    /* 1. 照旧存树（方便别处用） */
     tf_.setTransform(m.frame_id, m.child_frame_id,
                      Eigen::Vector3d(m.t.x(),m.t.y(),m.t.z()),
                      Eigen::Quaterniond(m.q.scalar(),m.q.x(),m.q.y(),m.q.z()));
 
-    // 2. 检查map->camera_init是否就绪
-    if(m.frame_id == "map" && m.child_frame_id == "camera_init") {
-        map_T_camera_init_ready_ = true;
-    }
+    /* 2. 只要收到 camera_init→body 就记录轨迹 */
+    if (m.frame_id == "camera_init" && m.child_frame_id == "body")
+    {
+        Eigen::Matrix4d T_ci_b = Eigen::Matrix4d::Identity();
+        T_ci_b.block<3,3>(0,0) = Eigen::Quaterniond(m.q.scalar(),m.q.x(),m.q.y(),m.q.z()).matrix();
+        T_ci_b.block<3,1>(0,3) = Eigen::Vector3d(m.t.x(),m.t.y(),m.t.z());
 
-    // 3. 获取最新TF变换
-    auto T_map_ci = tf_.lookupMapCameraInit();
-    auto T_ci_b   = tf_.lookupCameraInitBody();
+        Eigen::Vector3f pt = T_ci_b.block<3,1>(0,3).cast<float>();
 
-    if (T_map_ci && T_ci_b) {
-        // 计算map->body的变换
-        Eigen::Matrix4d T_map_body = (*T_map_ci) * (*T_ci_b);
+        trail_.points.push_back(pt);
+        if (trail_.points.size() > kMaxTrail) trail_.points.erase(trail_.points.begin());
 
-        // 3.1 存储轨迹点（只存位置）
-        Eigen::Vector3f position = T_map_body.block<3,1>(0,3).cast<float>();
-        trail_.points.push_back(position);
-
-        // 限制轨迹点数量
-        const size_t kMaxTrailPoints = 1000;  // 可以根据需要调整
-        if(trail_.points.size() > kMaxTrailPoints) {
-            trail_.points.erase(trail_.points.begin());
-        }
-
-        // 3.2 更新最新变换（用于绘制箭头）
-        trail_.latestTransform = T_map_body;
+        trail_.latestTransform   = T_ci_b;   // 箭头也放在 camera_init 系
         trail_.hasValidTransform = true;
-    }
 
-    update();   // 触发重绘
+        update();          // 请求主线程重绘
+    }
 }
 
 void GLWidget::onCloud(const CloudMsg &m)
 {
-    std::vector<Eigen::Vector3f> tmp; tmp.reserve(m.points.size());
-    auto T_map_ci = tf_.lookup("map","camera_init");
-    Eigen::Matrix4d T = T_map_ci ? (*T_map_ci) : Eigen::Matrix4d::Identity();
+    std::vector<Eigen::Vector3f> tmp;
+    tmp.reserve(m.points.size());
+    // auto T_map_ci = tf_.lookup("map","camera_init");
+    // Eigen::Matrix4d T = T_map_ci ? (*T_map_ci) : Eigen::Matrix4d::Identity();
 
     for(const auto &p : m.points){
-        Eigen::Vector4d pi(p.x(),p.y(),p.z(),1.0);
-        Eigen::Vector4d pw = T * pi;
-        tmp.emplace_back(pw.head<3>().cast<float>());
+        // Eigen::Vector4d pi(p.x(),p.y(),p.z(),1.0);
+        // Eigen::Vector4d pw = T * pi;
+        // tmp.emplace_back(pw.head<3>().cast<float>());
+        tmp.emplace_back(p.x(), p.y(), p.z());   // 直接拷
     }
     vboCloud_.bind();
     vboCloud_.allocate(tmp.data(), tmp.size()*sizeof(Eigen::Vector3f));
@@ -342,14 +307,16 @@ void GLWidget::onCloud(const CloudMsg &m)
 
 void GLWidget::onMap(const MapCloudMsg &m)
 {
-    std::vector<Eigen::Vector3f> tmp; tmp.reserve(m.points.size());
-    auto T_map_ci = tf_.lookup("map","camera_init");
-    Eigen::Matrix4d T = T_map_ci ? (*T_map_ci) : Eigen::Matrix4d::Identity();
+    std::vector<Eigen::Vector3f> tmp;
+    tmp.reserve(m.points.size());
+    // auto T_map_ci = tf_.lookup("map","camera_init");
+    // Eigen::Matrix4d T = T_map_ci ? (*T_map_ci) : Eigen::Matrix4d::Identity();
 
     for(const auto &p : m.points){
-        Eigen::Vector4d pi(p.x(),p.y(),p.z(),1.0);
-        Eigen::Vector4d pw = T * pi;
-        tmp.emplace_back(pw.head<3>().cast<float>());
+        // Eigen::Vector4d pi(p.x(),p.y(),p.z(),1.0);
+        // Eigen::Vector4d pw = T * pi;
+        // tmp.emplace_back(pw.head<3>().cast<float>());
+        tmp.emplace_back(p.x(), p.y(), p.z());   // 直接拷
     }
     vboMap_.bind();
     vboMap_.allocate(tmp.data(), tmp.size()*sizeof(Eigen::Vector3f));
