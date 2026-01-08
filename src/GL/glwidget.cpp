@@ -34,6 +34,27 @@ void GLWidget::initializeGL()
                                         "out vec4 fragCol;\n"
                                         "void main(){ fragCol = vec4(col,1); }");
     progSimple_.link();
+    // ===== 新增：彩色点云着色器 =====
+    progColorCloud_.addShaderFromSourceCode(QOpenGLShader::Vertex,
+                                            "#version 330 core\n"
+                                            "layout(location=0) in vec3 aPos;\n"
+                                            "layout(location=1) in vec3 aColor;\n"  // 新增颜色属性
+                                            "out vec3 vColor;\n"
+                                            "uniform mat4 mvp;\n"
+                                            "void main() {\n"
+                                            "    vColor = aColor;\n"
+                                            "    gl_Position = mvp * vec4(aPos,1);\n"
+                                            "}\n");
+
+    progColorCloud_.addShaderFromSourceCode(QOpenGLShader::Fragment,
+                                            "#version 330 core\n"
+                                            "in vec3 vColor;\n"
+                                            "out vec4 fragCol;\n"
+                                            "void main() {\n"
+                                            "    fragCol = vec4(vColor,1);\n"
+                                            "}\n");
+    progColorCloud_.link();
+    // ===== 结束新增 =====
 
     vaoCloud_.create();  vaoCloud_.bind();
     vboCloud_.create();  vboCloud_.setUsagePattern(QOpenGLBuffer::DynamicDraw);
@@ -42,11 +63,16 @@ void GLWidget::initializeGL()
     glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,0,nullptr);
     vaoCloud_.release();
 
-    vaoMap_.create();  vaoMap_.bind();
-    vboMap_.create();  vboMap_.setUsagePattern(QOpenGLBuffer::DynamicDraw);
+    // ===== 修改：为地图点云创建带颜色的VAO =====
+    vaoMap_.create();
+    vaoMap_.bind();
+    vboMap_.create();
+    vboMap_.setUsagePattern(QOpenGLBuffer::DynamicDraw);
     vboMap_.bind();
-    glEnableVertexAttribArray(0);
-    glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,0,nullptr);
+    glEnableVertexAttribArray(0);  // 位置属性
+    glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,6*sizeof(float),(void*)0);
+    glEnableVertexAttribArray(1);  // 颜色属性（新增）
+    glVertexAttribPointer(1,3,GL_FLOAT,GL_FALSE,6*sizeof(float),(void*)(3*sizeof(float)));
     vaoMap_.release();
 
     // 静态 TF
@@ -211,14 +237,28 @@ void GLWidget::paintGL()
     vaoCloud_.bind();
     if (cloudPts_ > 0) { glPointSize(3.0f); glDrawArrays(GL_POINTS, 0, cloudPts_); }
     vaoCloud_.release();
+    progSimple_.release();
 
     // 地图点云
-    progSimple_.setUniformValue("col", QVector3D(0.5f,0.5f,0.5f));
-    vaoMap_.bind();
-    if (mapPts_ > 0) { glPointSize(2.0f); glDrawArrays(GL_POINTS, 0, mapPts_); }
-    vaoMap_.release();
+    // progSimple_.setUniformValue("col", QVector3D(0.5f,0.5f,0.5f));
+    // vaoMap_.bind();
+    // if (mapPts_ > 0) { glPointSize(2.0f); glDrawArrays(GL_POINTS, 0, mapPts_); }
+    // vaoMap_.release();
 
-    progSimple_.release();
+
+
+    // ===== 修改：地图点云使用彩色着色器 =====
+    if (mapPts_ > 0) {
+        progColorCloud_.bind();
+        progColorCloud_.setUniformValue("mvp", toQMatrix(mvp));
+
+        vaoMap_.bind();
+        glPointSize(2.0f);
+        glDrawArrays(GL_POINTS, 0, mapPts_);  // 绘制点数，不是顶点数
+        vaoMap_.release();
+
+        progColorCloud_.release();
+    }
 }
 
 void GLWidget::onTf(const TFMsg &m)
@@ -263,15 +303,45 @@ void GLWidget::onCloud(const CloudMsg &m)
 
 void GLWidget::onMap(const MapCloudMsg &m)
 {
-    std::vector<Eigen::Vector3f> tmp;
-    tmp.reserve(m.points.size());
+    if (m.points.empty()) return;
+
+    // 清理旧数据
+    mapVertices_.clear();
+
+    // 先找出最小和最大高度
+    mapMinZ_ = std::numeric_limits<float>::max();
+    mapMaxZ_ = std::numeric_limits<float>::lowest();
 
     for(const auto &p : m.points){
-        tmp.emplace_back(p.x(), p.y(), p.z());   // 直接拷
+        if (p.z() < mapMinZ_) mapMinZ_ = p.z();
+        if (p.z() > mapMaxZ_) mapMaxZ_ = p.z();
     }
+
+    // 如果所有点高度相同，设置一个小的范围避免除零
+    if (std::abs(mapMaxZ_ - mapMinZ_) < 1e-6f) {
+        mapMaxZ_ = mapMinZ_ + 1.0f;
+    }
+
+    // 准备顶点数据（位置 + 颜色）
+    mapVertices_.reserve(m.points.size() * 2);  // 每个点有位置和颜色
+
+    for(const auto &p : m.points){
+        // 位置
+        mapVertices_.emplace_back(p.x(), p.y(), p.z());
+
+        // 颜色（根据高度）
+        QVector3D color = heightToColor(p.z(), mapMinZ_, mapMaxZ_);
+        mapVertices_.emplace_back(color.x(), color.y(), color.z());
+    }
+
+    // 上传到GPU
+    vaoMap_.bind();
     vboMap_.bind();
-    vboMap_.allocate(tmp.data(), tmp.size()*sizeof(Eigen::Vector3f));
-    mapPts_ = tmp.size();
+    vboMap_.allocate(mapVertices_.data(), mapVertices_.size() * sizeof(Eigen::Vector3f));
+    mapPts_ = m.points.size();  // 注意：这里存储的是点数，不是顶点数
+
+    vaoMap_.release();
+
     update();
 }
 
@@ -382,5 +452,29 @@ void GLWidget::drawSolidArrow(const Eigen::Matrix4d &T, float len, float radius)
     glDrawArrays(GL_TRIANGLES, cylinderVertices, coneVertices);
 
     arrowVao.release();
+}
+
+static inline float clamp01(float v) { return std::max(0.0f, std::min(1.0f, v)); }
+QVector3D GLWidget::heightToColor(float z, float minZ, float maxZ)
+{
+    float n = (z - minZ) / (maxZ - minZ + 1e-6f);
+    n = std::clamp(n, 0.0f, 1.0f);
+
+    // 非线性，增强层次
+    n = std::pow(n, 0.7f);
+
+    // 低->高：黄绿青 -> 蓝紫
+    float hue = 80.0f + n * (300.0f - 80.0f);
+
+    // 饱和度略低
+    float sat = 0.50f;
+
+    // 亮度随高度变化（关键）
+    float val = 0.70f + (1.0f - n) * 0.20f;
+
+    QColor c;
+    c.setHsvF(hue / 360.0f, sat, val);
+
+    return QVector3D(c.redF(), c.greenF(), c.blueF());
 }
 

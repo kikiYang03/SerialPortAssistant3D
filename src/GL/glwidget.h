@@ -92,5 +92,13 @@ private:
 
     void drawSolidArrow(const Eigen::Matrix4d &T, float len, float radius = 0.08f);
 
+    QOpenGLShaderProgram progColorCloud_;  // 新增彩色着色器
+    std::vector<Eigen::Vector3f> mapVertices_;  // 存储地图顶点数据（位置+颜色）
+    float mapMinZ_ = 0.0f;  // 地图点云最小高度
+    float mapMaxZ_ = 0.0f;  // 地图点云最大高度
+
+    // 根据高度生成颜色（类似RViz的HeightMap）
+    QVector3D heightToColor(float z, float minZ, float maxZ);
+
 };
 #endif // GLWIDGET_H
