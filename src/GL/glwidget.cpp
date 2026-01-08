@@ -289,6 +289,7 @@ void GLWidget::onTf(const TFMsg &m)
 
 void GLWidget::onCloud(const CloudMsg &m)
 {
+    qDebug() << "onCloud points =" << m.points.size();
     std::vector<Eigen::Vector3f> tmp;
     tmp.reserve(m.points.size());
 

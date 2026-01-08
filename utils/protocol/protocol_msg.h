@@ -29,6 +29,10 @@ struct Transform {
     QQuaternion q;
 };
 
+Q_DECLARE_METATYPE(TFMsg)
+Q_DECLARE_METATYPE(CloudMsg)
+Q_DECLARE_METATYPE(MapCloudMsg)
+
 
 inline QDebug operator<<(QDebug dbg, const TFMsg &m)
 {

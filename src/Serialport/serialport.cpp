@@ -232,6 +232,7 @@ void SerialPort::onTestTimeout()
 // 数据处理
 void SerialPort::processReceivedData(const QByteArray &recBuf)
 {
+
     recvNum += recBuf.size();
     ui->recvNum->setText(QString("接收字节数量： %1").arg(recvNum));
 

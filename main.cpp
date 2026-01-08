@@ -17,6 +17,11 @@ int main(int argc, char *argv[])
 
     a.setFont(globalFont);
 
+    qRegisterMetaType<TFMsg>("TFMsg");
+    qRegisterMetaType<CloudMsg>("CloudMsg");
+    qRegisterMetaType<MapCloudMsg>("MapCloudMsg");
+
+
 
 //设置中文编码
 #if (QT_VERSION <= QT_VERSION_CHECK(5,0,0))

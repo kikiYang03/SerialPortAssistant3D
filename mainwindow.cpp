@@ -1,15 +1,17 @@
 ﻿#include "mainwindow.h"
 #include "ui_mainwindow.h"
+#include <QThread>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
     , ui(new Ui::MainWindow)
 {
+
+
     ui->setupUi(this);
     // 实例化页面
     serialPort = new SerialPort;
     params = new Params;
-    protocolHandler = new ProtocolRos3D;
     glWidget = new GLWidget;
 
     // 添加子页面
@@ -50,19 +52,32 @@ MainWindow::MainWindow(QWidget *parent)
     toolBar->setMovable(false);
     toolBar->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
 
+    // 1) 创建线程
+    QThread* protoThread = nullptr;
+    protoThread = new QThread(this);
 
+    protocolHandler = new ProtocolRos3D;
+    protocolHandler->moveToThread(protoThread);
 
-    // 连接信号
+    // 2) 线程退出时清理
+    connect(protoThread, &QThread::finished, protocolHandler, &QObject::deleteLater);
+    protoThread->start();
+
+    // 3) 接收数据 -> 协议解析（跨线程 queued）
     connect(serialPort, &SerialPort::rawBytesArrived,
-            protocolHandler, &ProtocolRos3D::onRawBytes);
+            protocolHandler, &ProtocolRos3D::onRawBytes,
+            Qt::QueuedConnection);
 
-    // 把解析到的数据直接转发给渲染器
-    QObject::connect(protocolHandler, &ProtocolRos3D::tfUpdated,
-                     glWidget, &GLWidget::onTf);
-    QObject::connect(protocolHandler, &ProtocolRos3D::cloudUpdated,
-                     glWidget, &GLWidget::onCloud);
-    QObject::connect(protocolHandler, &ProtocolRos3D::mapCloudUpdated,
-                     glWidget, &GLWidget::onMap);
+    // 4) 解析结果 -> 渲染（回主线程 queued）
+    connect(protocolHandler, &ProtocolRos3D::tfUpdated,
+            glWidget, &GLWidget::onTf,
+            Qt::QueuedConnection);
+    connect(protocolHandler, &ProtocolRos3D::cloudUpdated,
+            glWidget, &GLWidget::onCloud,
+            Qt::QueuedConnection);
+    connect(protocolHandler, &ProtocolRos3D::mapCloudUpdated,
+            glWidget, &GLWidget::onMap,
+            Qt::QueuedConnection);
 
     // ----------------------------------------------------------
     // 绑定槽函数——显示页面
