@@ -7,6 +7,25 @@
 #define M_PI 3.14159265358979323846
 #endif
 
+static inline void rotToYPR_ZYX(const Eigen::Matrix3d& R,
+                                double& yaw, double& pitch, double& roll)
+{
+    // ZYX: R = Rz(yaw)*Ry(pitch)*Rx(roll)
+    // yaw   = atan2(R10, R00)
+    // pitch = asin(-R20)   (注意数值夹紧)
+    // roll  = atan2(R21, R22)
+
+    yaw = std::atan2(R(1,0), R(0,0));
+
+    double sp = -R(2,0);
+    if (sp <= -1.0) pitch = -M_PI/2.0;
+    else if (sp >= 1.0) pitch =  M_PI/2.0;
+    else pitch = std::asin(sp);
+
+    roll = std::atan2(R(2,1), R(2,2));
+}
+
+
 GLWidget::GLWidget(QWidget *parent)
     : QOpenGLWidget(parent)
     , distance_(10.0)   // 原来可能是 1.0 或 3.0，改到 10 以上
@@ -307,6 +326,15 @@ void GLWidget::onTf(const TFMsg &m)
 
         trail_.latestTransform   = T_ci_bl;
         trail_.hasValidTransform = true;
+
+
+        // 计算 YPR
+        const Eigen::Matrix3d R = T_ci_bl.block<3,3>(0,0);
+        double yaw, pitch, roll;
+        rotToYPR_ZYX(R, yaw, pitch, roll);
+
+        emit tfInfoChanged(T_ci_bl(0,3), T_ci_bl(1,3), T_ci_bl(2,3),
+                           yaw, pitch, roll);
     }
 }
 
@@ -524,4 +552,38 @@ QVector3D GLWidget::heightToColor(float z, float minZ, float maxZ)
     c.setHsvF(hue / 360.0f, sat, val);
 
     return QVector3D(c.redF(), c.greenF(), c.blueF());
+}
+
+
+// ========操作栏===============
+void GLWidget::clearMap()
+{
+    {
+        QMutexLocker lk(&dataMtx_);
+        mapInterleavedCpu_.clear();
+        mapPts_ = 0;
+        mapDirty_.store(false, std::memory_order_release);
+    }
+
+    // 清空 GPU buffer（主线程 / 当前 context）
+    QMetaObject::invokeMethod(this, [this](){
+        vboMap_.bind();
+        vboMap_.allocate(nullptr, 0);
+        vboMap_.release();
+        update();
+    }, Qt::QueuedConnection);
+}
+
+void GLWidget::resetCamera()
+{
+    yaw_ = 0.0;
+    pitch_ = 0.0;
+    distance_ = 10.0;
+    center_ = QVector3D(0,0,0);
+    update();
+}
+
+void GLWidget::saveMapToFile()
+{
+    qDebug() << "保存地图...";
 }

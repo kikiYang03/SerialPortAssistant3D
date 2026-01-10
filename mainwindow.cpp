@@ -12,12 +12,12 @@ MainWindow::MainWindow(QWidget *parent)
     // 实例化页面
     serialPort = new SerialPort;
     params = new Params;
-    glWidget = new GLWidget;
+    ros3dPage = new Ros3DPage;
 
     // 添加子页面
     ui->stackedWidget->addWidget(serialPort);
     ui->stackedWidget->addWidget(params);
-    ui->stackedWidget->addWidget(glWidget);
+    ui->stackedWidget->addWidget(ros3dPage);
 
     // 设置当前页面
     ui->stackedWidget->setCurrentWidget(serialPort);
@@ -65,7 +65,8 @@ MainWindow::MainWindow(QWidget *parent)
 
     // 固定刷新率驱动渲染（60Hz；如需降低占用可改 33ms=30Hz）
     QTimer* renderTimer = new QTimer(this);
-    connect(renderTimer, &QTimer::timeout, glWidget, QOverload<>::of(&GLWidget::update));
+    connect(renderTimer, &QTimer::timeout,
+            ros3dPage->glWidget(), QOverload<>::of(&GLWidget::update));
     renderTimer->start(16);
 
 
@@ -76,14 +77,13 @@ MainWindow::MainWindow(QWidget *parent)
 
     // 4) 解析结果 -> 渲染（回主线程 queued）
     connect(protocolHandler, &ProtocolRos3D::tfUpdated,
-            glWidget, &GLWidget::onTf,
-            Qt::QueuedConnection);
+            ros3dPage->glWidget(), &GLWidget::onTf, Qt::QueuedConnection);
+
     connect(protocolHandler, &ProtocolRos3D::cloudUpdated,
-            glWidget, &GLWidget::onCloud,
-            Qt::QueuedConnection);
+            ros3dPage->glWidget(), &GLWidget::onCloud, Qt::QueuedConnection);
+
     connect(protocolHandler, &ProtocolRos3D::mapCloudUpdated,
-            glWidget, &GLWidget::onMap,
-            Qt::QueuedConnection);
+            ros3dPage->glWidget(), &GLWidget::onMap, Qt::QueuedConnection);
 
     // ----------------------------------------------------------
     // 绑定槽函数——显示页面

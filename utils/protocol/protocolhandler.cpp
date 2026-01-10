@@ -193,10 +193,6 @@ int ProtocolHandler::getFrameLength(quint8 command, const QByteArray &data)
         return 4; // AA 00 01 0A
     case ProtocolCommand::PARAM_READ:
         return 6; // AA 10 [参数ID] [值高字节] [值低字节] 0A
-    case ProtocolCommand::TF_DATA:
-    case ProtocolCommand::SCAN_DATA:
-    case ProtocolCommand::MAP_DATA:
-        return -1; // 可变长度，需要动态计算
     default:
         return -1;
     }

@@ -28,10 +28,18 @@ public:
     explicit GLWidget(QWidget *parent = nullptr);
     ~GLWidget();
 
+signals:
+    void tfInfoChanged(double x, double y, double z,
+                       double yaw_rad, double pitch_rad, double roll_rad);   //显示TF相关数据
+
 public slots:
     void onTf(const TFMsg &);
     void onCloud(const CloudMsg &);
     void onMap(const MapCloudMsg &);
+
+    void clearMap();        // 清理点云地图
+    void resetCamera();     // 初始化相机位置
+    void saveMapToFile();   // 保存地图
 
 private slots:   // 新增
     void doUploadCloud();   // 在主线程里把 cloudCpu_ 塞进 vboCloud_

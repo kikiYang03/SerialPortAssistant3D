@@ -24,39 +24,9 @@
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QElapsedTimer>
-
 #include <protocolhandler.h>
 #include <tcpclient.h>
 
-
-// 简化ROS消息struct（自定义，非ROS原生类型）
-struct OccupancyGrid {
-    int width, height;
-    float resolution;
-    QVector<float> data;  // 占用值 [-1:未知, 0:空, 100:占用]
-    float origin_x, origin_y;
-};
-
-struct LaserScan {
-    float angle_min, angle_max, angle_increment;
-    QVector<float> ranges;  // 距离数组
-    float range_min, range_max;
-};
-
-// 修改后的 TFMessage 结构体
-struct TFMessage {
-    struct Header {
-        QString frame_id;  // 父坐标系，通常是 "map"
-    };
-
-    struct Transform {
-        Header header;           // 添加 header 字段
-        QString child_frame_id;  // 添加 child_frame_id 字段
-        float x, y, z, yaw;      // 位姿
-    };
-
-    QVector<Transform> transforms;  // 多变换
-};
 
 namespace Ui {
 class SerialPort;
@@ -88,11 +58,9 @@ public:
 protected:
     void findFreePorts();  //查找可用串口
     bool initSerialPort(); //初始化串口连接
-    void sendMsg(const QString &msg); //发送消息（可保留原有功能）
 
 private slots:
     void onTestTimeout();
-    void parseTestData(const QByteArray &frame);
     // 串口通信相关函数
     void on_portSearchBt_clicked();
     void on_portOpenBt_clicked();
@@ -121,8 +89,6 @@ private:
     // 协议数据解析
     void parseProtocolData(const QByteArray &data);
     void processProtocolFrame(const QByteArray &frame);
-    // ROS数据解析
-    // void parseRosData(const QByteArray& recBuf);
     // 数据处理
     void processReceivedData(const QByteArray &recBuf);
 
@@ -130,7 +96,6 @@ private:
     bool isSerialPortConnected;
 
     // WiFi通信相关
-    // QTcpSocket *tcpSocket;
     QUdpSocket *udpSocket;
     bool isTcpConnected;
     bool isUdpBound;

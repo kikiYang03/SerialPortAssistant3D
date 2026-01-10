@@ -25,6 +25,7 @@ SOURCES += \
     main.cpp \
     mainwindow.cpp \
     src/GL/glwidget.cpp \
+    src/GL/ros3dpage.cpp \
     src/Params/params.cpp \
     src/Serialport/serialport.cpp \
     utils/protocol/protocolhandler.cpp \
@@ -37,6 +38,7 @@ HEADERS += \
     src/Coordinate/coordinate.h \
     mainwindow.h \
     src/GL/glwidget.h \
+    src/GL/ros3dpage.h \
     src/Params/params.h \
     src/Serialport/serialport.h \
     stdafx.h \

@@ -12,9 +12,6 @@
 // 协议命令定义
 namespace ProtocolCommand {
     const quint8 TEST = 0x00;        // 通信测试
-    const quint8 TF_DATA = 0x01;     // TF变换数据
-    const quint8 SCAN_DATA = 0x02;   // 激光雷达数据
-    const quint8 MAP_DATA = 0x03;    // 地图数据
     const quint8 PARAM_READ = 0x10;  // 参数读取
     const quint8 PARAM_WRITE = 0x10; // 参数写入
     const quint8 COORD_UART = 0x20;   // 串口坐标帧

@@ -36,8 +36,6 @@ SerialPort::SerialPort(QWidget *parent)
         ui->recvEdit->append(message);
     });
 
-
-
     // 初始化串口
     findFreePorts();
     serialPort = new QSerialPort(this);
@@ -194,6 +192,9 @@ void SerialPort::sendData(const QByteArray &data)
         }
 
         bytesSent = udpSocket->writeDatagram(data, QHostAddress(ip), port);
+    } else{
+        QMessageBox::warning(this, "警告", "请连接模块！");
+        return;
     }
 
     // 发送字节计数并显示
@@ -252,31 +253,6 @@ void SerialPort::processReceivedData(const QByteArray &recBuf)
         }
     } else {
        emit rawBytesArrived(recBuf);
-    }
-}
-
-
-// 测试数据解析函数
-void SerialPort::parseTestData(const QByteArray &frame)
-{
-    // 检查是否为正确的测试回复数据: 0xAA 0x00 0x01 0x0A
-    if (frame.size() == 4 &&
-        static_cast<quint8>(frame.at(0)) == 0xAA &&
-        static_cast<quint8>(frame.at(1)) == 0x00 &&
-        static_cast<quint8>(frame.at(2)) == 0x01 &&
-        static_cast<quint8>(frame.at(3)) == 0x0A) {
-
-        // 设置测试标志
-        testFlag = true;
-
-        // 停止定时器
-        testTimer->stop();
-
-        // 在接收框显示成功信息
-        ui->recvEdit->append("测试成功，模块通讯正常!!");
-
-        // 重置标志位
-        testFlag = false;
     }
 }
 
@@ -340,10 +316,6 @@ void SerialPort::on_wifiConnectBt_clicked()
                     // 处理转换失败，例如使用默认值
                     port = 6666;
                 }
-                // QString ip = "10.42.0.1";
-                // QString ip = "172.27.191.1";
-                // quint16 port = 6666;
-
 
                 if (!ok || port == 0) {
                     // 转换失败或端口号为0的处理

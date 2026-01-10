@@ -190,8 +190,8 @@ QWidget* Params::createValueWidget(const QString &id, const QString &range, int 
 
     if (id == "0x00") {
         QComboBox *comboBox = new QComboBox();
-        comboBox->addItem("N10", 0);
-        comboBox->addItem("N10_P", 1);
+        comboBox->addItem("mid360", 0);
+        comboBox->addItem("unitree_L2", 1);
         comboBox->setCurrentIndex(defaultValue);
         layout->addWidget(comboBox);
     } else if(id == "0x10"){
