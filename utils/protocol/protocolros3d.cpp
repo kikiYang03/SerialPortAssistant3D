@@ -95,6 +95,7 @@ void ProtocolRos3D::parseTF(const QJsonObject& obj)
 /* 点云解析 */
 void ProtocolRos3D::parseCloud(const QJsonObject& obj)
 {
+    // qDebug() << "CloudMsg: " << obj;
     CloudMsg m;
     m.frame_id = obj["frame_id"].toString();
 
@@ -175,6 +176,7 @@ void ProtocolRos3D::parseMap(const QJsonObject& obj)
     }
 
     m.points = extractXYZFromPointCloud2Raw(raw, width, height, point_step, row_step, is_dense);
+    // qDebug() << "MapCloudMsg: " << m.points.size();
 
     emit mapCloudUpdated(m);
 }
@@ -211,8 +213,6 @@ QVector<QVector3D> ProtocolRos3D::extractXYZFromPointCloud2Raw(
     }
     return pts;
 }
-
-
 
 QVector<int8_t> ProtocolRos3D::decompressRLE(const QVector<int8_t>& rle)
 {

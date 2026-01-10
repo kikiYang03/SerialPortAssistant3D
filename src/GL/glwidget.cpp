@@ -159,12 +159,6 @@ void GLWidget::paintGL()
                                static_cast<int>(cloudCpu_.size() * sizeof(Eigen::Vector3f)));
             vboCloud_.release();
         }
-        if (mapDirty_.exchange(false, std::memory_order_acq_rel)) {
-            vboMap_.bind();
-            vboMap_.allocate(mapInterleavedCpu_.data(),
-                             static_cast<int>(mapInterleavedCpu_.size() * sizeof(Eigen::Vector3f)));
-            vboMap_.release();
-        }
     }
 
     // ---------- 1. 计算轨道球 view 矩阵（camera_init 系） ----------
@@ -311,7 +305,7 @@ void GLWidget::onTf(const TFMsg &m)
         trail_.points.push_back(pt);
         while (trail_.points.size() > kMaxTrail) trail_.points.pop_front();
 
-        trail_.latestTransform   = T_ci_b;
+        trail_.latestTransform   = T_ci_bl;
         trail_.hasValidTransform = true;
     }
 }
@@ -320,55 +314,73 @@ void GLWidget::onTf(const TFMsg &m)
 void GLWidget::onCloud(const CloudMsg &m)
 {
     QMutexLocker lk(&dataMtx_);
-
     cloudCpu_.clear();
     cloudCpu_.reserve(m.points.size());
-
-    for (const auto &p : m.points) {
+    for (const auto &p : m.points)
         cloudCpu_.emplace_back(p.x(), p.y(), p.z());
-    }
-
     cloudPts_ = static_cast<int>(cloudCpu_.size());
     cloudDirty_.store(true, std::memory_order_release);
 
-    // 不在这里 update()，由 QTimer 固定刷新驱动
+    QMetaObject::invokeMethod(this, &GLWidget::doUploadCloud, Qt::QueuedConnection);
 }
 
 
+/* ---------- 1. 收到 MapCloudMsg 后只做 CPU 侧缓存 + 抛上传任务 ---------- */
 void GLWidget::onMap(const MapCloudMsg &m)
 {
     if (m.points.empty()) return;
 
     QMutexLocker lk(&dataMtx_);
 
-    // 1) min/max Z
+    /* 1) 统计 Z 范围 */
     mapMinZ_ = std::numeric_limits<float>::max();
     mapMaxZ_ = std::numeric_limits<float>::lowest();
     for (const auto &p : m.points) {
         mapMinZ_ = std::min(mapMinZ_, static_cast<float>(p.z()));
         mapMaxZ_ = std::max(mapMaxZ_, static_cast<float>(p.z()));
     }
-    if (std::abs(mapMaxZ_ - mapMinZ_) < 1e-6f) {
-        mapMaxZ_ = mapMinZ_ + 1.0f;
-    }
+    if (std::abs(mapMaxZ_ - mapMinZ_) < 1e-6f) mapMaxZ_ = mapMinZ_ + 1.0f;
 
-    // 2) interleaved: pos + color（先保留你现有逻辑；后续建议改 shader 上色）
+    /* 2) 组装 interleaved 数据：pos + color */
     mapInterleavedCpu_.clear();
     mapInterleavedCpu_.reserve(m.points.size() * 2);
-
     for (const auto &p : m.points) {
-        // pos
-        mapInterleavedCpu_.emplace_back(p.x(), p.y(), p.z());
-
-        // color
+        mapInterleavedCpu_.emplace_back(p.x(), p.y(), p.z());   // pos
         QVector3D c = heightToColor(static_cast<float>(p.z()), mapMinZ_, mapMaxZ_);
-        mapInterleavedCpu_.emplace_back(c.x(), c.y(), c.z());
+        mapInterleavedCpu_.emplace_back(c.x(), c.y(), c.z());   // color
     }
 
     mapPts_ = static_cast<int>(m.points.size());
     mapDirty_.store(true, std::memory_order_release);
 
-    // 不在这里 update()，由 QTimer 固定刷新驱动
+    /* 3) 立即在主线程上传（OpenGL context 当前） */
+    QMetaObject::invokeMethod(this, &GLWidget::doUploadMap, Qt::QueuedConnection);
+}
+
+/* ---------- 2. 真正的 GPU 上传（主线程执行） ---------- */
+void GLWidget::doUploadCloud()
+{
+    QMutexLocker lk(&dataMtx_);
+    if (!cloudDirty_.load(std::memory_order_acquire)) return;
+    vboCloud_.bind();
+    vboCloud_.allocate(cloudCpu_.data(),
+                       static_cast<int>(cloudCpu_.size() * sizeof(Eigen::Vector3f)));
+    vboCloud_.release();
+    cloudDirty_.store(false, std::memory_order_release);
+    update();          // 通知重绘
+}
+void GLWidget::doUploadMap()
+{
+    QMutexLocker lk(&dataMtx_);
+    if (!mapDirty_.load(std::memory_order_acquire)) return;
+
+    vboMap_.bind();
+    vboMap_.allocate(mapInterleavedCpu_.data(),
+                     static_cast<int>(mapInterleavedCpu_.size() * sizeof(Eigen::Vector3f)));
+    vboMap_.release();
+    mapDirty_.store(false, std::memory_order_release);
+
+    update();   // 通知 Qt 立即重绘
 }
 
 
@@ -445,7 +457,16 @@ void GLWidget::drawSolidArrow(const Eigen::Matrix4d &T, float len, float radius)
     progSimple_.bind();
 
     // 关键：设置正确的MVP矩阵
-    Eigen::Matrix4d mvp = proj_ * view_ * T;
+    // 把箭头几何的局部 +Z 轴旋到局部 +X 轴：Ry(-90°)
+    Eigen::Matrix4d Rfix = Eigen::Matrix4d::Identity();
+    const double a = M_PI / 2.0;
+    Rfix(0,0) =  cos(a);  Rfix(0,2) = sin(a);
+    Rfix(2,0) = -sin(a);  Rfix(2,2) = cos(a);
+
+    // 注意：右乘表示“在箭头局部坐标系里修正轴向”
+    Eigen::Matrix4d T_draw = T * Rfix;
+
+    Eigen::Matrix4d mvp = proj_ * view_ * T_draw;
     progSimple_.setUniformValue("mvp", toQMatrix(mvp));
 
     // 设置箭头颜色

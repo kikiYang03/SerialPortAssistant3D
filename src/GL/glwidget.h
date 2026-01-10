@@ -33,6 +33,10 @@ public slots:
     void onCloud(const CloudMsg &);
     void onMap(const MapCloudMsg &);
 
+private slots:   // 新增
+    void doUploadCloud();   // 在主线程里把 cloudCpu_ 塞进 vboCloud_
+    void doUploadMap();     // 在主线程里把 mapInterleavedCpu_ 塞进 vboMap_
+
 protected:
     void initializeGL() override;
     void resizeGL(int w, int h) override;
