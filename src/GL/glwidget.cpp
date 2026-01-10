@@ -145,28 +145,29 @@ void GLWidget::drawGrid(const Eigen::Matrix4d &T, int cells, float step)
     progSimple_.release();
 }
 
-void GLWidget::drawArrow(const Eigen::Matrix4d &T, float len)
-{
-    Eigen::Vector3f from = T.block<3,1>(0,3).cast<float>();
-    Eigen::Vector3f dir  = (T.block<3,3>(0,0) * Eigen::Vector3d::UnitX()).cast<float>();
-    std::vector<Eigen::Vector3f> pts = { from, from+len*dir };
-    static QOpenGLBuffer vbo; static QOpenGLVertexArrayObject vao;
-    if(!vbo.isCreated()){ vbo.create(); vao.create(); vao.bind(); vbo.bind();
-        glEnableVertexAttribArray(0); glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,0,0); vao.release(); }
-    vbo.allocate(pts.data(), pts.size()*sizeof(Eigen::Vector3f));
-    progSimple_.bind();
-    progSimple_.setUniformValue("mvp", toQMatrix(proj_*view_));
-    progSimple_.setUniformValue("col", QVector3D(1,.5,0));
-    vao.bind(); glDrawArrays(GL_LINES, 0, 2); vao.release();
-    progSimple_.release();
-}
-
 void GLWidget::paintGL()
 {
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     glEnable(GL_DEPTH_TEST);
 
-    /* ---------------- 1. 轨道球视图矩阵（camera_init 系） ---------------- */
+    // ---------- 0. 上传 VBO（保证 OpenGL context current） ----------
+    {
+        QMutexLocker lk(&dataMtx_);
+        if (cloudDirty_.exchange(false, std::memory_order_acq_rel)) {
+            vboCloud_.bind();
+            vboCloud_.allocate(cloudCpu_.data(),
+                               static_cast<int>(cloudCpu_.size() * sizeof(Eigen::Vector3f)));
+            vboCloud_.release();
+        }
+        if (mapDirty_.exchange(false, std::memory_order_acq_rel)) {
+            vboMap_.bind();
+            vboMap_.allocate(mapInterleavedCpu_.data(),
+                             static_cast<int>(mapInterleavedCpu_.size() * sizeof(Eigen::Vector3f)));
+            vboMap_.release();
+        }
+    }
+
+    // ---------- 1. 计算轨道球 view 矩阵（camera_init 系） ----------
     Eigen::Matrix4d view = Eigen::Matrix4d::Identity();
 
     const double ry = yaw_   * M_PI / 180.0;
@@ -191,35 +192,45 @@ void GLWidget::paintGL()
     view = transBack * rotYaw * rotPitch * lookCenter;
     view_ = view;
 
-    /* ---------------- 2. 基础元素（camera_init 系） ---------------- */
-    Eigen::Matrix4d world = Eigen::Matrix4d::Identity(); // 就是 camera_init
-    drawAxis(world, 10.0f);
-    drawGrid(world, 40, 1.0f);
+    // ---------- 2. 世界系（camera_init）基础元素 ----------
+    Eigen::Matrix4d world = Eigen::Matrix4d::Identity();
 
-    /* ---------------- 3. 轨迹线（绿色） ---------------- */
+    // ---------- 3. 把 map 当刚体：用最新 map→camera_init 的逆 ----------
+    Eigen::Matrix4d T_ci_map = T_map_ci__latest_.inverse();
+    drawAxis(T_ci_map, 10.0f);
+    drawGrid(T_ci_map, 40, 1.0f);
+
+    // ---------- 4. 轨迹线（绿色）—— base_link 原点在 camera_init 系 ----------
     if (trail_.points.size() > 1)
     {
+        std::vector<Eigen::Vector3f> trailTmp;
+        trailTmp.reserve(trail_.points.size());
+        for (const auto &p : trail_.points) trailTmp.push_back(p);
+
         progSimple_.bind();
         progSimple_.setUniformValue("mvp", toQMatrix(proj_ * view_));
         progSimple_.setUniformValue("col", QVector3D(0,1,0));
 
-        static QOpenGLVertexArrayObject vao;
-        static QOpenGLBuffer vbo;
-        if (!vao.isCreated()) { vao.create(); vbo.create(); }
-
-        vao.bind();
-        vbo.bind();
-        vbo.allocate(trail_.points.data(),
-                     trail_.points.size() * sizeof(Eigen::Vector3f));
+        static QOpenGLVertexArrayObject vaoTrail;
+        static QOpenGLBuffer            vboTrail(QOpenGLBuffer::VertexBuffer);
+        if (!vaoTrail.isCreated()) {
+            vaoTrail.create();
+            vboTrail.create();
+            vboTrail.setUsagePattern(QOpenGLBuffer::DynamicDraw);
+        }
+        vaoTrail.bind();
+        vboTrail.bind();
+        vboTrail.allocate(trailTmp.data(),
+                          static_cast<int>(trailTmp.size() * sizeof(Eigen::Vector3f)));
         glEnableVertexAttribArray(0);
         glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, nullptr);
         glLineWidth(3.0f);
-        glDrawArrays(GL_LINE_STRIP, 0, trail_.points.size());
-        vao.release();
+        glDrawArrays(GL_LINE_STRIP, 0, static_cast<int>(trailTmp.size()));
+        vaoTrail.release();
         progSimple_.release();
     }
 
-    /* ---------------- 最新箭头（camera_init 系） ---------------- */
+    // ---------- 5. 最新箭头（camera_init 系） ----------
     if (trail_.hasValidTransform)
     {
         progSimple_.bind();
@@ -227,126 +238,141 @@ void GLWidget::paintGL()
         progSimple_.release();
     }
 
-    /* ---------------- 5. 点云（蓝色当前 / 灰色地图） ---------------- */
-    progSimple_.bind();
-    const Eigen::Matrix4d mvp = proj_ * view_;
-    progSimple_.setUniformValue("mvp", toQMatrix(mvp));
+    // ---------- 6. 当前帧点云（蓝色） ----------
+    {
+        progSimple_.bind();
+        const Eigen::Matrix4d mvp = proj_ * view_;
+        progSimple_.setUniformValue("mvp", toQMatrix(mvp));
+        progSimple_.setUniformValue("col", QVector3D(0,0,1));
 
-    // 当前帧点云
-    progSimple_.setUniformValue("col", QVector3D(0,0,1));
-    vaoCloud_.bind();
-    if (cloudPts_ > 0) { glPointSize(3.0f); glDrawArrays(GL_POINTS, 0, cloudPts_); }
-    vaoCloud_.release();
-    progSimple_.release();
+        vaoCloud_.bind();
+        if (cloudPts_ > 0) {
+            glPointSize(3.0f);
+            glDrawArrays(GL_POINTS, 0, cloudPts_);
+        }
+        vaoCloud_.release();
+        progSimple_.release();
+    }
 
-    // 地图点云
-    // progSimple_.setUniformValue("col", QVector3D(0.5f,0.5f,0.5f));
-    // vaoMap_.bind();
-    // if (mapPts_ > 0) { glPointSize(2.0f); glDrawArrays(GL_POINTS, 0, mapPts_); }
-    // vaoMap_.release();
-
-
-
-    // ===== 修改：地图点云使用彩色着色器 =====
-    if (mapPts_ > 0) {
+    // ---------- 7. 地图点云（彩色，高度着色） ----------
+    if (mapPts_ > 0)
+    {
         progColorCloud_.bind();
-        progColorCloud_.setUniformValue("mvp", toQMatrix(mvp));
+        progColorCloud_.setUniformValue("mvp", toQMatrix(proj_ * view_));
 
         vaoMap_.bind();
         glPointSize(2.0f);
-        glDrawArrays(GL_POINTS, 0, mapPts_);  // 绘制点数，不是顶点数
+        glDrawArrays(GL_POINTS, 0, mapPts_);
         vaoMap_.release();
 
         progColorCloud_.release();
     }
 }
 
+// =========== 数据处理
+
+/* -------------- 1. 收 TF：只存最新 -------------- */
 void GLWidget::onTf(const TFMsg &m)
 {
-    /* 1. 照旧存树（方便别处用） */
-    tf_.setTransform(m.frame_id, m.child_frame_id,
-                     Eigen::Vector3d(m.t.x(),m.t.y(),m.t.z()),
-                     Eigen::Quaterniond(m.q.scalar(),m.q.x(),m.q.y(),m.q.z()));
-
-    /* 2. 只要收到 camera_init→body 就记录轨迹 */
-    if (m.frame_id == "camera_init" && m.child_frame_id == "body")
+    // 我们关心的两条边直接存成矩阵，方便后面直接乘
+    if (m.frame_id == "map" && m.child_frame_id == "camera_init")
     {
+        Eigen::Matrix4d T = Eigen::Matrix4d::Identity();
+        T.block<3,3>(0,0) = Eigen::Quaterniond(m.q.scalar(),m.q.x(),m.q.y(),m.q.z()).matrix();
+        T.block<3,1>(0,3) = Eigen::Vector3d(m.t.x(),m.t.y(),m.t.z());
+        T_map_ci__latest_ = T;                 // map→camera_init
+
+        // 更新 TF 树（保留，万一别处要用）
+        tf_.setTransform(m.frame_id, m.child_frame_id,
+                         Eigen::Vector3d(m.t.x(),m.t.y(),m.t.z()),
+                         Eigen::Quaterniond(m.q.scalar(),m.q.x(),m.q.y(),m.q.z()));
+    }
+    else if (m.frame_id == "body" && m.child_frame_id == "base_link")
+    {
+        Eigen::Matrix4d T = Eigen::Matrix4d::Identity();
+        T.block<3,3>(0,0) = Eigen::Quaterniond(m.q.scalar(),m.q.x(),m.q.y(),m.q.z()).matrix();
+        T.block<3,1>(0,3) = Eigen::Vector3d(m.t.x(),m.t.y(),m.t.z());
+        T_body_baselink_latest_ = T;           // body→base_link
+
+        // 更新 TF 树（保留，万一别处要用）
+        tf_.setTransform(m.frame_id, m.child_frame_id,
+                         Eigen::Vector3d(m.t.x(),m.t.y(),m.t.z()),
+                         Eigen::Quaterniond(m.q.scalar(),m.q.x(),m.q.y(),m.q.z()));
+    }
+    else if (m.frame_id == "camera_init" && m.child_frame_id == "body")
+    {
+        // 轨迹只跟 camera_init→body 有关
         Eigen::Matrix4d T_ci_b = Eigen::Matrix4d::Identity();
         T_ci_b.block<3,3>(0,0) = Eigen::Quaterniond(m.q.scalar(),m.q.x(),m.q.y(),m.q.z()).matrix();
         T_ci_b.block<3,1>(0,3) = Eigen::Vector3d(m.t.x(),m.t.y(),m.t.z());
 
-        Eigen::Vector3f pt = T_ci_b.block<3,1>(0,3).cast<float>();
-
+        Eigen::Matrix4d T_ci_bl = T_ci_b * T_body_baselink_latest_;
+        Eigen::Vector3f pt = T_ci_bl.block<3,1>(0,3).cast<float>();
         trail_.points.push_back(pt);
-        if (trail_.points.size() > kMaxTrail) trail_.points.erase(trail_.points.begin());
+        while (trail_.points.size() > kMaxTrail) trail_.points.pop_front();
 
-        trail_.latestTransform   = T_ci_b;   // 箭头也放在 camera_init 系
+        trail_.latestTransform   = T_ci_b;
         trail_.hasValidTransform = true;
-
-        update();          // 请求主线程重绘
     }
 }
+
 
 void GLWidget::onCloud(const CloudMsg &m)
 {
-    qDebug() << "onCloud points =" << m.points.size();
-    std::vector<Eigen::Vector3f> tmp;
-    tmp.reserve(m.points.size());
+    QMutexLocker lk(&dataMtx_);
 
-    for(const auto &p : m.points){
-        tmp.emplace_back(p.x(), p.y(), p.z());   // 直接拷
+    cloudCpu_.clear();
+    cloudCpu_.reserve(m.points.size());
+
+    for (const auto &p : m.points) {
+        cloudCpu_.emplace_back(p.x(), p.y(), p.z());
     }
-    vboCloud_.bind();
-    vboCloud_.allocate(tmp.data(), tmp.size()*sizeof(Eigen::Vector3f));
-    cloudPts_ = tmp.size();
-    update();
+
+    cloudPts_ = static_cast<int>(cloudCpu_.size());
+    cloudDirty_.store(true, std::memory_order_release);
+
+    // 不在这里 update()，由 QTimer 固定刷新驱动
 }
+
 
 void GLWidget::onMap(const MapCloudMsg &m)
 {
     if (m.points.empty()) return;
 
-    // 清理旧数据
-    mapVertices_.clear();
+    QMutexLocker lk(&dataMtx_);
 
-    // 先找出最小和最大高度
+    // 1) min/max Z
     mapMinZ_ = std::numeric_limits<float>::max();
     mapMaxZ_ = std::numeric_limits<float>::lowest();
-
-    for(const auto &p : m.points){
-        if (p.z() < mapMinZ_) mapMinZ_ = p.z();
-        if (p.z() > mapMaxZ_) mapMaxZ_ = p.z();
+    for (const auto &p : m.points) {
+        mapMinZ_ = std::min(mapMinZ_, static_cast<float>(p.z()));
+        mapMaxZ_ = std::max(mapMaxZ_, static_cast<float>(p.z()));
     }
-
-    // 如果所有点高度相同，设置一个小的范围避免除零
     if (std::abs(mapMaxZ_ - mapMinZ_) < 1e-6f) {
         mapMaxZ_ = mapMinZ_ + 1.0f;
     }
 
-    // 准备顶点数据（位置 + 颜色）
-    mapVertices_.reserve(m.points.size() * 2);  // 每个点有位置和颜色
+    // 2) interleaved: pos + color（先保留你现有逻辑；后续建议改 shader 上色）
+    mapInterleavedCpu_.clear();
+    mapInterleavedCpu_.reserve(m.points.size() * 2);
 
-    for(const auto &p : m.points){
-        // 位置
-        mapVertices_.emplace_back(p.x(), p.y(), p.z());
+    for (const auto &p : m.points) {
+        // pos
+        mapInterleavedCpu_.emplace_back(p.x(), p.y(), p.z());
 
-        // 颜色（根据高度）
-        QVector3D color = heightToColor(p.z(), mapMinZ_, mapMaxZ_);
-        mapVertices_.emplace_back(color.x(), color.y(), color.z());
+        // color
+        QVector3D c = heightToColor(static_cast<float>(p.z()), mapMinZ_, mapMaxZ_);
+        mapInterleavedCpu_.emplace_back(c.x(), c.y(), c.z());
     }
 
-    // 上传到GPU
-    vaoMap_.bind();
-    vboMap_.bind();
-    vboMap_.allocate(mapVertices_.data(), mapVertices_.size() * sizeof(Eigen::Vector3f));
-    mapPts_ = m.points.size();  // 注意：这里存储的是点数，不是顶点数
+    mapPts_ = static_cast<int>(m.points.size());
+    mapDirty_.store(true, std::memory_order_release);
 
-    vaoMap_.release();
-
-    update();
+    // 不在这里 update()，由 QTimer 固定刷新驱动
 }
 
 
+// ===========交互处理
 void GLWidget::mousePressEvent(QMouseEvent* e)
 {
     lastMousePos_ = e->pos();
@@ -478,4 +504,3 @@ QVector3D GLWidget::heightToColor(float z, float minZ, float maxZ)
 
     return QVector3D(c.redF(), c.greenF(), c.blueF());
 }
-

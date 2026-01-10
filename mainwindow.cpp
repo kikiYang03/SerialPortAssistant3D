@@ -63,6 +63,12 @@ MainWindow::MainWindow(QWidget *parent)
     connect(protoThread, &QThread::finished, protocolHandler, &QObject::deleteLater);
     protoThread->start();
 
+    // 固定刷新率驱动渲染（60Hz；如需降低占用可改 33ms=30Hz）
+    QTimer* renderTimer = new QTimer(this);
+    connect(renderTimer, &QTimer::timeout, glWidget, QOverload<>::of(&GLWidget::update));
+    renderTimer->start(16);
+
+
     // 3) 接收数据 -> 协议解析（跨线程 queued）
     connect(serialPort, &SerialPort::rawBytesArrived,
             protocolHandler, &ProtocolRos3D::onRawBytes,

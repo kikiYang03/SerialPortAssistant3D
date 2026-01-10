@@ -37,8 +37,8 @@ void TfTree::setTransform(const QString &parent,
         T_map_camInit_ = T;
     } else if (parent == "camera_init" && child == "body") {
         T_camInit_body_ = T;
-    } else if (parent == "body" && child == "camera_init") {
-        T_camInit_body_ = T.inverse();
+    } else if (parent == "body" && child == "base_link") {
+        T_body_baselink = T;
     }
 }
 

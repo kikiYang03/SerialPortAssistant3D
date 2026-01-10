@@ -48,5 +48,6 @@ private:
     // 新增：只存最新
     std::optional<Mat4> T_map_camInit_;      // map -> camera_init
     std::optional<Mat4> T_camInit_body_;     // camera_init -> body
+    std::optional<Mat4> T_body_baselink;     // body -> base_link
 };
 #endif // TFTREE_H
