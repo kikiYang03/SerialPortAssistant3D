@@ -27,7 +27,7 @@ QByteArray ProtocolHandler::buildCurParameterFrame()
     return frame;
 }
 // 写入参数
-QByteArray ProtocolHandler::buildParameterFrame(quint8 command, quint8 paramId, quint16 value)
+QByteArray ProtocolHandler::buildParameterFrame(quint8 command, quint8 paramId, qint16  value)
 {
     QByteArray frame;
     frame.append(static_cast<char>(FRAME_HEADER));
@@ -35,10 +35,11 @@ QByteArray ProtocolHandler::buildParameterFrame(quint8 command, quint8 paramId, 
     frame.append(static_cast<char>(paramId));
 
     if (command == ProtocolCommand::PARAM_WRITE) {
-        frame.append(static_cast<char>((value >> 8) & 0xFF)); // 值高字节
-        frame.append(static_cast<char>(value & 0xFF));        // 值低字节
+        // 保证值在 16-bit 有符号范围内
+        value = qBound<int>(-32768, value, 32767);
+        frame.append(static_cast<char>((value >> 8) & 0xFF)); // 高
+        frame.append(static_cast<char>(value & 0xFF));        // 低
     }
-
     frame.append(static_cast<char>(FRAME_TAIL));
     return frame;
 }
@@ -108,17 +109,17 @@ bool ProtocolHandler::parseTestResponse(const QByteArray &frame)
 }
 
 // 解析参数响应
-bool ProtocolHandler::parseParameterResponse(const QByteArray &frame, quint8 &paramId, quint16 &value)
+bool ProtocolHandler::parseParameterResponse(const QByteArray &frame,
+                                             quint8 &paramId,
+                                             qint16 &value)   // 匹配头文件
 {
     if (!validateFrame(frame) || frame.size() != 6) return false;
-
-    quint8 command = getCommandType(frame);
-    if (command != ProtocolCommand::PARAM_READ) {
-        return false;
-    }
+    if (getCommandType(frame) != ProtocolCommand::PARAM_READ) return false;
 
     paramId = static_cast<quint8>(frame.at(2));
-    value = (static_cast<quint8>(frame.at(3)) << 8) | static_cast<quint8>(frame.at(4));
+    // 16-bit 有符号拼接
+    value = static_cast<qint16>((static_cast<quint8>(frame.at(3)) << 8)
+                                | static_cast<quint8>(frame.at(4)));
     return true;
 }
 

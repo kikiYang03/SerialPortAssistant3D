@@ -5,15 +5,15 @@
 #include <QDebug>
 
 const QVector<Parameter> Params::s_parameters = {
-    {"0x00", "雷达型号", "0-1", "0=mid360, 1=unitree_L2", 0},
+    {"0x00", "雷达型号", "0~1", "0=mid360, 1=unitree_L2", 0},
     {"-", "雷达放置位置", "-", "雷达安装位置相对于机器人中心的位置，即tf树中：base_link->laser_link，坐标系遵循FLU（x为前，Y为左，Z为上）", 0},
-    {"0x01", "X坐标", "0-65535", "雷达位置X坐标值，单位厘米", 0},
-    {"0x02", "Y坐标", "0-65535", "雷达位置Y坐标值，单位厘米", 0},
-    {"0x03", "Z坐标", "0-65535", "雷达位置Z坐标值，单位厘米", 0},
-    {"0x04", "Roll角度", "0-360", "雷达滚转角，单位度", 0},
-    {"0x05", "Pitch角度", "0-360", "雷达俯仰角，单位度", 0},
-    {"0x06", "Yaw角度", "0-360", "雷达偏航角，单位度", 0},
-    {"0x10", "建图or定位模式", "0-1", "0=建图模式，1=定位模式，保存地图后可以设置为定位模式，重启模块后则会调用保存的地图进行定位", 0},
+    {"0x01", "X坐标", "-100~100", "雷达位置X坐标值，单位厘米", 0},
+    {"0x02", "Y坐标", "-100~100", "雷达位置Y坐标值，单位厘米", 0},
+    {"0x03", "Z坐标", "-100~100", "雷达位置Z坐标值，单位厘米", 0},
+    {"0x04", "Roll角度", "-180~180", "雷达滚转角，单位度", 0},
+    {"0x05", "Pitch角度", "-180~180", "雷达俯仰角，单位度", 0},
+    {"0x06", "Yaw角度", "-180~180", "雷达偏航角，单位度", 0},
+    {"0x10", "建图or定位模式", "0~1", "0=建图模式，1=定位模式，保存地图后可以设置为定位模式，重启模块后则会调用保存的地图进行定位", 0},
     };
 
 Params::Params(QWidget *parent)
@@ -206,7 +206,7 @@ QWidget* Params::createValueWidget(const QString &id, const QString &range, int 
     }
     else {
         QSpinBox *spinBox = new QSpinBox();
-        QStringList rangeParts = range.split("-");
+        QStringList rangeParts = range.split("~");
         if (rangeParts.size() == 2) {
             spinBox->setRange(rangeParts[0].toInt(), rangeParts[1].toInt());
         }
@@ -335,7 +335,7 @@ void Params::processSingleFrame(const QByteArray &frame)
     // 处理参数响应帧
     if (command == ProtocolCommand::PARAM_READ) {
         quint8 paramId;
-        quint16 value;
+        qint16  value;
         if (m_protocolHandler->parseParameterResponse(frame, paramId, value)) {
             QString paramIdStr = QString("0x%1").arg(paramId, 2, 16, QLatin1Char('0')).toUpper();
             updateParameterValue(paramIdStr, value);

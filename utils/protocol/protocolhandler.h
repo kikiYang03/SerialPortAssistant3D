@@ -27,7 +27,7 @@ public:
     // 帧构建方法
     static QByteArray buildTestFrame();                                   // 通信测试帧
     static QByteArray buildCurParameterFrame();                                   // 读取参数帧
-    static QByteArray buildParameterFrame(quint8 command, quint8 paramId, quint16 value = 0); // 参数配置帧
+    static QByteArray buildParameterFrame(quint8 command, quint8 paramId, qint16  value = 0); // 参数配置帧
     static QByteArray buildRosFrame(quint8 topicId, const QJsonObject &data); // ROS数据帧
     static QByteArray buildSaveMapFrame();        //保存地图帧
 
@@ -38,7 +38,7 @@ public:
 
     // 特定帧解析
     static bool parseTestResponse(const QByteArray &frame);              // 解析测试响应
-    static bool parseParameterResponse(const QByteArray &frame, quint8 &paramId, quint16 &value); // 解析参数响应
+    static bool parseParameterResponse(const QByteArray &frame, quint8 &paramId, qint16 &value); // 解析参数响应
     static QJsonObject parseRosData(const QByteArray &payload);          // 解析ROS数据
 
     // 数据流处理
