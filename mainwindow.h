@@ -15,6 +15,7 @@
 #include <protocolros3d.h>
 #include <glwidget.h>
 #include <ros3dpage.h>
+#include <protocolrouter.h>
 
 QT_BEGIN_NAMESPACE
 namespace Ui {
@@ -34,7 +35,9 @@ public:
     Coordinate * coordinate;
     Params * params;
     ProtocolRos3D * protocolHandler;
-    Ros3DPage *ros3dPage ;
+    Ros3DPage *ros3dPage;
+
+    ProtocolRouter *router;
 
 private:
     Ui::MainWindow *ui;

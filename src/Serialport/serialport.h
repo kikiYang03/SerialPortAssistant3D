@@ -26,7 +26,7 @@
 #include <QElapsedTimer>
 #include <protocolhandler.h>
 #include <tcpclient.h>
-
+#include <protocolrouter.h>
 
 namespace Ui {
 class SerialPort;
@@ -59,6 +59,9 @@ protected:
     void findFreePorts();  //查找可用串口
     bool initSerialPort(); //初始化串口连接
 
+public slots:
+    void handleTestFrame(const QByteArray &frame, bool isResponse);
+
 private slots:
     void onTestTimeout();
     // 串口通信相关函数
@@ -90,7 +93,7 @@ private:
     void parseProtocolData(const QByteArray &data);
     void processProtocolFrame(const QByteArray &frame);
     // 数据处理
-    void processReceivedData(const QByteArray &recBuf);
+    void processReceivedData(QByteArray &recBuf);
 
     // 串口连接状态
     bool isSerialPortConnected;
@@ -114,10 +117,10 @@ private:
     bool m_reconnectWarningShown = false;
     void tryExtractUartFrame();          // 从 recvBuffer 拆 10 B 定长帧
     void handleUartFrame(const QByteArray& frame); // 解析测试/参数命令
-
+    void setupConnections();
 
 signals:
-    void rawBytesArrived(const QByteArray& data);
+    void rawBytesArrived(QByteArray& data, bool isSerialPortMode);
 
     void coordinatesUpdated(qint16 x, qint16 y, qint16 z, qint16 yaw);
 
@@ -127,6 +130,8 @@ signals:
     void parameterResponseReceived(const QByteArray &data);  // 参数响应信号
     // 清理绘图视图
     void requestClearVisualization();
+
+
 
 };
 

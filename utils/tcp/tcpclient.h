@@ -39,7 +39,7 @@ signals:
     void connectionError(const QString &errorString);
 
     // 数据接收信号
-    void dataReceived(const QByteArray &data);
+    void dataReceived(QByteArray &data);
 
     // 状态变化信号（供UI更新）
     void connectionStatusChanged(bool connected);

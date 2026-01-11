@@ -14,6 +14,8 @@ MainWindow::MainWindow(QWidget *parent)
     params = new Params;
     ros3dPage = new Ros3DPage;
 
+    ProtocolRouter* router = ProtocolRouter::instance();
+
     // 添加子页面
     ui->stackedWidget->addWidget(serialPort);
     ui->stackedWidget->addWidget(params);
@@ -69,11 +71,33 @@ MainWindow::MainWindow(QWidget *parent)
             ros3dPage->glWidget(), QOverload<>::of(&GLWidget::update));
     renderTimer->start(16);
 
+    //==========================================================
+    // SerialPort只负责原始数据收发
+    connect(serialPort, &SerialPort::rawBytesArrived,
+            router, &ProtocolRouter::processDataStream,
+            Qt::QueuedConnection);
+
+    // 测试指令处理
+    connect(router, &ProtocolRouter::testFrameReceived,
+            serialPort, &SerialPort::handleTestFrame);
+
+    // ROS数据交给ProtocolRos3D处理
+    connect(router, &ProtocolRouter::ros3dDataReceived,
+            protocolHandler, &ProtocolRos3D::onRawBytes);
+
+    // todo 参数数据
+    // connect(router, &ProtocolRouter::parameterFrameReceived,
+    //         params, &Params::updateParameter);
+
+    // 统计
+    // connect(router, &ProtocolRouter::frameCountUpdated,
+    //         serialPort, &SerialPort::updateStatistics);
+    //==========================================================
 
     // 3) 接收数据 -> 协议解析（跨线程 queued）
-    connect(serialPort, &SerialPort::rawBytesArrived,
-            protocolHandler, &ProtocolRos3D::onRawBytes,
-            Qt::QueuedConnection);
+    // connect(serialPort, &SerialPort::rawBytesArrived,
+    //         protocolHandler, &ProtocolRos3D::onRawBytes,
+    //         Qt::QueuedConnection);  //todo 这里要改成协议路由类
 
     // 4) 解析结果 -> 渲染（回主线程 queued）
     connect(protocolHandler, &ProtocolRos3D::tfUpdated,

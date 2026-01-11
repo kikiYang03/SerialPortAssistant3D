@@ -183,8 +183,13 @@ void SerialPort::sendData(const QByteArray &data)
         bytesSent = tcpClient->sendData(data);
     } else if (isUdpBound) {
         qDebug() << "使用UDP发送测试数据...";
-        QString ip = "192.168.200.1";
-        quint16 port = 12312;
+        QString ip = Config::instance().value("Network/tcp_ip", "127.0.0.1").toString();
+        bool ok = false;
+        quint16 port = Config::instance().value("Network/tcp_port", "6666").toString().toUShort(&ok);
+        if (!ok) {
+            // 处理转换失败，例如使用默认值
+            port = 6666;
+        }
 
         if (ip.isEmpty() || port == 0) {
             QMessageBox::warning(this, "警告", "请输入有效的目标IP和端口");
@@ -220,18 +225,18 @@ void SerialPort::on_sendBt_clicked()
 }
 
 // 测试超时处理函数
-void SerialPort::onTestTimeout()
-{
-    if (!testFlag) {
-        QString timestamp = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss >> 测试操作: ");
-        ui->recvEdit->append(timestamp + " 测试失败!!!");
-        testFlag = false;
-    }
-}
+// void SerialPort::onTestTimeout()
+// {
+//     if (!testFlag) {
+//         QString timestamp = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss >> 测试操作: ");
+//         ui->recvEdit->append(timestamp + " 测试失败!!!");
+//         testFlag = false;
+//     }
+// }
 
 // 数据处理/////////////////////////////////////////////////////////////////
 // 数据处理
-void SerialPort::processReceivedData(const QByteArray &recBuf)
+void SerialPort::processReceivedData(QByteArray &recBuf)
 {
 
     recvNum += recBuf.size();
@@ -252,7 +257,7 @@ void SerialPort::processReceivedData(const QByteArray &recBuf)
             if (!line.isEmpty()) ui->recvEdit->append(line);
         }
     } else {
-       emit rawBytesArrived(recBuf);
+       emit rawBytesArrived(recBuf,isSerialPortConnected);
     }
 }
 
@@ -282,6 +287,61 @@ void SerialPort::onStatsTimeout()
     tfCount = 0;
     scanCount = 0;
     mapCount = 0;
+}
+
+
+void SerialPort::setupConnections()
+{
+    // 连接ProtocolRouter的测试帧信号
+    connect(ProtocolRouter::instance(), &ProtocolRouter::testFrameReceived,
+            this, &SerialPort::handleTestFrame);
+}
+
+void SerialPort::handleTestFrame(const QByteArray &frame, bool isResponse)
+{
+    if (isResponse) {
+        // 测试响应
+        testFlag = true;
+        testTimer->stop();  // 停止超时计时器
+
+        QString timestamp = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss >> ");
+        ui->recvEdit->append(timestamp + "测试成功！收到模块响应");
+
+        // 显示原始响应数据
+        QString hexStr = frame.toHex(' ').toUpper();
+        ui->recvEdit->append("响应数据：" + hexStr);
+    } else {
+        // 这是其他设备发来的测试请求（不是对我们请求的响应）
+        qDebug() << "收到测试请求，自动回复响应";
+
+        // 自动构建测试响应帧
+        QByteArray response = ProtocolRouter::instance()->buildFrame(
+            0x00, {
+                {"sub_cmd", 0x01},
+                {"is_request", false}  // 标记为响应
+            }
+            );
+
+        // 回复对方
+        sendData(response);
+    }
+}
+
+// 超时处理
+void SerialPort::onTestTimeout()
+{
+    if (!testFlag) {
+        QString timestamp = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss >> ");
+        ui->recvEdit->append(timestamp + "测试失败！！！未收到模块响应");
+        testFlag = false;
+
+        // 可以在这里触发重试或其他错误处理
+        QMessageBox::warning(this, "测试超时",
+                             "未在3秒内收到模块响应，请检查：\n"
+                             "1. 模块是否开机\n"
+                             "2. 连接是否正常\n"
+                             "3. 模块端协议是否正确");
+    }
 }
 
 

@@ -30,6 +30,7 @@ SOURCES += \
     src/Serialport/serialport.cpp \
     utils/protocol/protocolhandler.cpp \
     utils/protocol/protocolros3d.cpp \
+    utils/protocol/protocolrouter.cpp \
     utils/protocol/tftree.cpp \
     utils/tcp/tcpclient.cpp \
     utils/config/config.cpp
@@ -45,6 +46,7 @@ HEADERS += \
     utils/protocol/protocol_msg.h \
     utils/protocol/protocolhandler.h \
     utils/protocol/protocolros3d.h \
+    utils/protocol/protocolrouter.h \
     utils/protocol/tftree.h \
     utils/tcp/tcpclient.h \
     utils/config/config.h
