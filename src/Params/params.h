@@ -32,7 +32,7 @@ public:
     ~Params();
 
 public slots:
-    void onParameterResponseReceived(const QByteArray &data);  // 参数响应处理
+    void updateParameter(quint8 paramIdRaw, qint16 value);
 
 private slots:
     void onFoldButtonClicked();

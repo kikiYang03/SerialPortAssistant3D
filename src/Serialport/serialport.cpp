@@ -257,7 +257,7 @@ void SerialPort::processReceivedData(QByteArray &recBuf)
             if (!line.isEmpty()) ui->recvEdit->append(line);
         }
     } else {
-       emit rawBytesArrived(recBuf,isSerialPortConnected);
+       emit rawBytesArrived(recBuf,false);
     }
 }
 

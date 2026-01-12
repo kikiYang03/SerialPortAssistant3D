@@ -235,10 +235,12 @@ void ProtocolRouter::handleControlFrame(const QByteArray &frame)
         break;
 
     case 0x02: // 保存地图指令
+        qDebug() << "保存地图指令";
         emit saveMapCommandReceived();
         break;
 
     case 0x03: // 读取参数指令
+        qDebug() << "读取参数指令";
         emit readParamCommandReceived();
         break;
 

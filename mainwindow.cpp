@@ -86,8 +86,9 @@ MainWindow::MainWindow(QWidget *parent)
             protocolHandler, &ProtocolRos3D::onRawBytes);
 
     // todo 参数数据
-    // connect(router, &ProtocolRouter::parameterFrameReceived,
-    //         params, &Params::updateParameter);
+    connect(router, &ProtocolRouter::parameterFrameReceived,
+            params, &Params::updateParameter);
+
 
     // 统计
     // connect(router, &ProtocolRouter::frameCountUpdated,

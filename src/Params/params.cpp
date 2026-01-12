@@ -34,7 +34,7 @@ Params::Params(QWidget *parent)
 
     // 连接TCP客户端的数据接收信号
     TcpClient* tcpClient = TcpClient::getInstance();
-    connect(tcpClient, &TcpClient::dataReceived, this, &Params::onParameterResponseReceived);
+    // connect(tcpClient, &TcpClient::dataReceived, this, &Params::onParameterResponseReceived);
 }
 
 Params::~Params()
@@ -309,17 +309,33 @@ void Params::parseParameterResponse(const QByteArray &data)
     }
 }
 
-void Params::onParameterResponseReceived(const QByteArray &data)
+// 更新参数
+void Params::updateParameter(quint8 paramIdRaw, qint16 value)
 {
-    // 将数据添加到缓冲区
-    m_receiveBuffer.append(data);
+    // 统一转成 "0xXX" 格式字符串，方便匹配表格第 1 列
+    const QString idStr = QString("0x%1").arg(paramIdRaw, 2, 16, QLatin1Char('0')).toUpper();
 
-    // 使用协议处理器提取完整帧
-    QList<QByteArray> frames = m_protocolHandler->extractFramesFromBuffer(m_receiveBuffer);
+    for (int row = 0; row < ui->tableWidget->rowCount(); ++row) {
+        QTableWidgetItem *idItem = ui->tableWidget->item(row, 1);
+        if (!idItem || idItem->text().compare(idStr, Qt::CaseInsensitive) != 0)
+            continue;                       // ID 不匹配就继续找
 
-    // 处理每个完整帧
-    for (const QByteArray &frame : frames) {
-        processSingleFrame(frame);
+        QWidget *valWidget = valueWidgets.at(row);
+        if (!valWidget) break;
+
+        QLayout *lay = valWidget->layout();
+        if (!lay || lay->count() == 0) break;
+
+        QWidget *editor = lay->itemAt(0)->widget();
+        if (auto *box = qobject_cast<QComboBox *>(editor)) {
+            int idx = box->findData(value);      // 雷达型号/工作模式 用 userData 保存
+            if (idx >= 0) box->setCurrentIndex(idx);
+        } else if (auto *spin = qobject_cast<QSpinBox *>(editor)) {
+            spin->setValue(value);
+        }
+
+        qDebug() << "[Params] 刷新界面参数" << idStr << "=" << value;
+        break;                                  // 找到就结束
     }
 }
 
