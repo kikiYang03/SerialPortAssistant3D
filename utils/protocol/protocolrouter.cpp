@@ -37,15 +37,15 @@ void ProtocolRouter::initDefaultHandlers()
     });
 
     registerHandler(0x01, [this](const QByteArray &frame) {
-        handleRos3dData(frame);
+        handleRos3dData(0x01, frame);
     });
 
     registerHandler(0x02, [this](const QByteArray &frame) {
-        handleRos3dData(frame);
+        handleRos3dData(0x02, frame);
     });
 
     registerHandler(0x03, [this](const QByteArray &frame) {
-        handleRos3dData(frame);
+        handleRos3dData(0x03, frame);
     });
 }
 
@@ -54,7 +54,7 @@ void ProtocolRouter::registerHandler(quint8 commandType, std::function<void(cons
     handlers[commandType] = handler;
 }
 
-void ProtocolRouter::processDataStream(QByteArray &buffer, bool isSerialPortMode)
+void ProtocolRouter::processDataStream(QByteArray buffer, bool isSerialPortMode)
 {
     if (isSerialPortMode) {
         // 串口模式：处理10字节定长UART帧
@@ -101,12 +101,38 @@ void ProtocolRouter::processUartFrame(const QByteArray &frame)
     emit uartFrameReceived(x, y, z, yaw);
 }
 
+// 直接替换掉原来的 processProtocolFrames 实现
 void ProtocolRouter::processProtocolFrames(QByteArray &buffer)
 {
-    QList<QByteArray> frames = extractProtocolFrames(buffer);
+    m_parseBuf.append(buffer);          // 1. 把新字节喂进来
+    buffer.clear();                     // 2. 外部 buffer 清掉，避免重复处理
 
-    for (const QByteArray &frame : frames) {
-        dispatchFrame(frame);
+    while (true) {
+        switch (m_parseState) {
+        case ParseState::WaitHead:
+        {
+            int pos = m_parseBuf.indexOf(char(0xAA));
+            if (pos < 0) {              // 一整包都没找到头
+                m_parseBuf.clear();     // 全扔掉
+                return;
+            }
+            m_parseBuf.remove(0, pos);  // 把 0xAA 前面的废数据清掉
+            m_parseState = ParseState::WaitPayload;
+            break;
+        }
+
+        case ParseState::WaitPayload:
+        {
+            int tail = m_parseBuf.indexOf(char(0x0A), 1); // 从第2字节找尾
+            if (tail < 0) return;        // 还没收全，继续等
+
+            QByteArray frame = m_parseBuf.left(tail + 1); // 包含头尾的完整帧
+            m_parseBuf.remove(0, tail + 1);              // 把这帧清掉
+            dispatchFrame(frame);        // 立刻分发（老逻辑不变）
+            m_parseState = ParseState::WaitHead;
+            break;
+        }
+        }
     }
 }
 
@@ -183,7 +209,7 @@ void ProtocolRouter::dispatchFrameBySignal(const QByteArray &frame, quint8 comma
     case 0x01: // TF数据
     case 0x02: // 点云数据
     case 0x03: // 地图数据
-        handleRos3dData(frame);
+        handleRos3dData(command, frame);
         break;
 
     default:
@@ -237,14 +263,14 @@ void ProtocolRouter::handleParameterFrame(const QByteArray &frame)
 }
 
 // 处理ROS数据
-void ProtocolRouter::handleRos3dData(const QByteArray &frame)
+void ProtocolRouter::handleRos3dData(quint8 cmd,const QByteArray &frame)
 {
     if (frame.size() <= 3) return;
 
     // 提取JSON数据（去掉AA 01和0A）
     QByteArray jsonData = frame.mid(2, frame.size() - 3);
-
-    emit ros3dDataReceived(jsonData);
+    // qDebug() << "解析ROS数据";
+    emit ros3dDataReceived(cmd, jsonData);
 }
 
 QByteArray ProtocolRouter::buildFrame(quint8 command, const QVariantMap &params)

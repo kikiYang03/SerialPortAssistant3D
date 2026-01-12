@@ -120,7 +120,7 @@ private:
     void setupConnections();
 
 signals:
-    void rawBytesArrived(QByteArray& data, bool isSerialPortMode);
+    void rawBytesArrived(QByteArray data, bool isSerialPortMode);
 
     void coordinatesUpdated(qint16 x, qint16 y, qint16 z, qint16 yaw);
 

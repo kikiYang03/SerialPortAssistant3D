@@ -11,7 +11,7 @@ public:
     explicit ProtocolRos3D(QObject* parent = nullptr);
 
 public slots:
-    void onRawBytes(const QByteArray& data);
+    void onRawBytes(quint8 cmd,const QByteArray& data);
 
 signals:
     void tfUpdated(const TFMsg& msg);
@@ -19,7 +19,6 @@ signals:
     void mapCloudUpdated(const MapCloudMsg& m);
 
 private:
-    QByteArray buffer_;
 
     void tryParseFrame();
     void parseJsonFrame(uint8_t cmd, const QJsonObject& obj);

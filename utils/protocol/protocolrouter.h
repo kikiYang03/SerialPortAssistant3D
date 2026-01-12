@@ -19,7 +19,7 @@ public:
                          std::function<void(const QByteArray&)> handler);
 
     // 处理原始数据流
-    void processDataStream(QByteArray &buffer, bool isSerialPortMode);
+    void processDataStream(QByteArray buffer, bool isSerialPortMode);
 
     // 构建指令帧
     QByteArray buildFrame(quint8 command,
@@ -48,7 +48,7 @@ signals:
     void parameterFrameReceived(quint8 paramId, qint16 value);
 
     // ros3D数据
-    void ros3dDataReceived(const QByteArray &jsonData);
+    void ros3dDataReceived(quint8 cmd,const QByteArray &jsonData);
 
     // void tfDataReceived(const QByteArray &jsonData);
     // void cloudDataReceived(const QByteArray &jsonData);
@@ -76,13 +76,19 @@ private:
     void handleParameterFrame(const QByteArray &frame);
 
     // 处理ros数据
-    void handleRos3dData(const QByteArray &frame);
+    void handleRos3dData(quint8 cmd,const QByteArray &frame);
     // void handleTFData(const QByteArray &frame);
     // void handleCloudData(const QByteArray &frame);
     // void handleMapData(const QByteArray &frame);
 
     static ProtocolRouter* m_instance;
     QMap<quint8, std::function<void(const QByteArray&)>> handlers;
+
+
+    // protocolrouter.h 里 private 区增加：
+    enum class ParseState { WaitHead, WaitPayload };
+    ParseState m_parseState = ParseState::WaitHead;
+    QByteArray m_parseBuf;   // 状态机内部缓冲
 };
 
 #endif // PROTOCOLROUTER_H
