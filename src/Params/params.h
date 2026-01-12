@@ -8,7 +8,7 @@
 #include <QComboBox>
 #include <QMessageBox>
 #include "tcpclient.h"  // 添加TCP客户端头文件
-#include "protocolhandler.h"
+
 
 // 定义参数数据
 struct Parameter {
@@ -50,10 +50,8 @@ private:
     bool m_isGroupFolded;
     QList<QWidget*> valueWidgets;
     static const QVector<Parameter> s_parameters;
-    // SerialPort *m_serialPort;  // 通信接口指针
 
     QByteArray m_receiveBuffer;  // 数据接收缓冲区
-    ProtocolHandler *m_protocolHandler;  // 协议处理器
     // 添加TCP客户端访问方法
     TcpClient* getTcpClient() { return TcpClient::getInstance(); }
 
@@ -64,12 +62,8 @@ private:
     void restoreDefaultValues();
 
     // 参数通信相关方法
-    void sendParameterReadRequest(const QString &paramId);
     void sendParameterWriteRequest(const QString &paramId, int value);
-    QByteArray buildParameterFrame(quint8 command, const QString &paramId, int value = 0);
-    void parseParameterResponse(const QByteArray &data);
 
-    void processSingleFrame(const QByteArray &frame);
     void updateParameterValue(const QString &paramId, int value);
 
     int m_expectedParamCount = 8; // 根据实际参数数量设置

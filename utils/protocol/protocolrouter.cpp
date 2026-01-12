@@ -233,23 +233,13 @@ void ProtocolRouter::handleControlFrame(const QByteArray &frame)
             emit testFrameReceived(frame, isResponse);
         }
         break;
-
-    case 0x02: // 保存地图指令
-        qDebug() << "保存地图指令";
-        emit saveMapCommandReceived();
-        break;
-
-    case 0x03: // 读取参数指令
-        qDebug() << "读取参数指令";
-        emit readParamCommandReceived();
-        break;
-
     default:
         qWarning() << "未知控制子命令：" << subCmd;
         break;
     }
 }
 
+// 参数配置
 void ProtocolRouter::handleParameterFrame(const QByteArray &frame)
 {
     if (frame.size() != 6) { // AA 10 ID VALUE_H VALUE_L 0A
@@ -264,6 +254,7 @@ void ProtocolRouter::handleParameterFrame(const QByteArray &frame)
     emit parameterFrameReceived(paramId, value);
 }
 
+
 // 处理ROS数据
 void ProtocolRouter::handleRos3dData(quint8 cmd,const QByteArray &frame)
 {
@@ -275,6 +266,7 @@ void ProtocolRouter::handleRos3dData(quint8 cmd,const QByteArray &frame)
     emit ros3dDataReceived(cmd, jsonData);
 }
 
+// 构建指令
 QByteArray ProtocolRouter::buildFrame(quint8 command, const QVariantMap &params)
 {
     QByteArray frame;

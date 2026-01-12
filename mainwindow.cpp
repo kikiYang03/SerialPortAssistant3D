@@ -66,10 +66,10 @@ MainWindow::MainWindow(QWidget *parent)
     protoThread->start();
 
     // 固定刷新率驱动渲染（60Hz；如需降低占用可改 33ms=30Hz）
-    QTimer* renderTimer = new QTimer(this);
-    connect(renderTimer, &QTimer::timeout,
-            ros3dPage->glWidget(), QOverload<>::of(&GLWidget::update));
-    renderTimer->start(16);
+    // QTimer* renderTimer = new QTimer(this);
+    // connect(renderTimer, &QTimer::timeout,
+    //         ros3dPage->glWidget(), QOverload<>::of(&GLWidget::update));
+    // renderTimer->start(16);
 
     //==========================================================
     // SerialPort只负责原始数据收发
@@ -85,7 +85,7 @@ MainWindow::MainWindow(QWidget *parent)
     connect(router, &ProtocolRouter::ros3dDataReceived,
             protocolHandler, &ProtocolRos3D::onRawBytes);
 
-    // todo 参数数据
+    // 参数数据
     connect(router, &ProtocolRouter::parameterFrameReceived,
             params, &Params::updateParameter);
 
@@ -125,6 +125,8 @@ MainWindow::MainWindow(QWidget *parent)
 
     // 连接Params的消息信号到SerialPort的显示槽
     connect(params, &Params::appendMessage, serialPort, &SerialPort::appendMessage);
+    // 连接解析数据的频率到SerialPort
+    connect(protocolHandler, &ProtocolRos3D::appendMessage, serialPort, &SerialPort::appendMessage);
 
 }
 

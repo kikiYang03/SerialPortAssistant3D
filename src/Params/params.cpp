@@ -1,6 +1,6 @@
 ﻿#include "params.h"
 #include "ui_params.h"
-
+#include "protocolrouter.h"
 #include <QHBoxLayout>
 #include <QDebug>
 
@@ -23,18 +23,11 @@ Params::Params(QWidget *parent)
 {
     ui->setupUi(this);
 
-    // 初始化协议处理器
-    m_protocolHandler = new ProtocolHandler(this);
-
     // 设置表格属性
     setupTable();
 
     // 初始化参数
     setupParameters();
-
-    // 连接TCP客户端的数据接收信号
-    TcpClient* tcpClient = TcpClient::getInstance();
-    // connect(tcpClient, &TcpClient::dataReceived, this, &Params::onParameterResponseReceived);
 }
 
 Params::~Params()
@@ -235,7 +228,7 @@ void Params::sendParameterWriteRequest(const QString &paramId, int value)
         return;
     }
 
-    QByteArray frame = m_protocolHandler->buildParameterFrame(ProtocolCommand::PARAM_WRITE, paramByte, value);
+    QByteArray frame =  ProtocolRouter::buildWriteParamFrame(paramByte, value);
     if (frame.isEmpty()) {
         QMessageBox::warning(this, "错误", "构建写入帧失败");
         return;
@@ -244,69 +237,9 @@ void Params::sendParameterWriteRequest(const QString &paramId, int value)
     // 使用TCP客户端发送数据
     tcpClient->sendData(frame);
 
-    qDebug() << "发送参数写入请求:" << paramId << "值:" << value << "数据:" << frame.toHex(' ');
+    // qDebug() << "发送参数写入请求:" << paramId << "值:" << value << "数据:" << frame.toHex(' ');
     QString timestamp = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss >> 用户操作: ");
     emit appendMessage(timestamp + "写入参数");
-}
-// 解析参数响应帧
-void Params::parseParameterResponse(const QByteArray &data)
-{
-    // 读取响应格式: AA 10 [参数ID] [值高字节] [值低字节] 0A
-    // 写入响应格式: AA 11 [参数ID] [值高字节] [值低字节] 0A
-
-    if (data.size() != 6) {
-        // qWarning() << "参数响应帧长度错误，期望6字节，实际:" << data.size();
-        return;
-    }
-
-    quint8 header = static_cast<quint8>(data.at(0));
-    quint8 command = static_cast<quint8>(data.at(1));
-    quint8 paramId = static_cast<quint8>(data.at(2));
-    quint8 valueHigh = static_cast<quint8>(data.at(3));
-    quint8 valueLow = static_cast<quint8>(data.at(4));
-    quint8 tail = static_cast<quint8>(data.at(5));
-
-    if (header != 0xAA || tail != 0x0A) {
-        qWarning() << "参数响应帧头尾错误";
-        return;
-    }
-
-    if (command != 0x10 && command != 0x11) {
-        qWarning() << "未知的命令类型:" << command;
-        return;
-    }
-
-    // 提取参数值（2字节，大端序）
-    int value = (valueHigh << 8) | valueLow;
-
-    QString paramIdStr = QString("0x%1").arg(paramId, 2, 16, QLatin1Char('0')).toUpper();
-
-    qDebug() << "收到参数响应: 命令=" << command << "参数=" << paramIdStr << "值=" << value;
-
-    // 更新界面显示
-    for (int row = 0; row < ui->tableWidget->rowCount(); ++row) {
-        QTableWidgetItem *idItem = ui->tableWidget->item(row, 1);
-        if (idItem && idItem->text().compare(paramIdStr, Qt::CaseInsensitive) == 0) {
-            QWidget *widget = valueWidgets[row];
-            QLayout *layout = widget->layout();
-            if (layout && layout->count() > 0) {
-                QWidget *valueControl = layout->itemAt(0)->widget();
-                if (QComboBox *comboBox = qobject_cast<QComboBox*>(valueControl)) {
-                    // 对于雷达型号参数，直接设置索引
-                    if (paramIdStr == "0x00") {
-                        comboBox->setCurrentIndex(value);
-                    } else {
-                        // 其他参数使用组合框的情况
-                        comboBox->setCurrentIndex(value);
-                    }
-                } else if (QSpinBox *spinBox = qobject_cast<QSpinBox*>(valueControl)) {
-                    spinBox->setValue(value);
-                }
-            }
-            qDebug() << "更新界面参数:" << paramIdStr << "=" << value;
-            break;
-        }
-    }
 }
 
 // 更新参数
@@ -334,42 +267,9 @@ void Params::updateParameter(quint8 paramIdRaw, qint16 value)
             spin->setValue(value);
         }
 
-        qDebug() << "[Params] 刷新界面参数" << idStr << "=" << value;
+        // qDebug() << "[Params] 刷新界面参数" << idStr << "=" << value;
         break;                                  // 找到就结束
     }
-}
-
-void Params::processSingleFrame(const QByteArray &frame)
-{
-    if (!m_protocolHandler->validateFrame(frame)) {
-        qWarning() << "无效的帧格式";
-        return;
-    }
-
-    quint8 command = m_protocolHandler->getCommandType(frame);
-
-    // 处理参数响应帧
-    if (command == ProtocolCommand::PARAM_READ) {
-        quint8 paramId;
-        qint16  value;
-        if (m_protocolHandler->parseParameterResponse(frame, paramId, value)) {
-            QString paramIdStr = QString("0x%1").arg(paramId, 2, 16, QLatin1Char('0')).toUpper();
-            updateParameterValue(paramIdStr, value);
-            m_receivedParamCount++;
-
-            // 如果收到了所有预期的参数响应
-            if (m_receivedParamCount >= m_expectedParamCount) {
-                qDebug() << "所有参数读取完成，共收到" << m_receivedParamCount << "个参数";
-                QString timestamp = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss >> 用户操作: ");
-                emit appendMessage(timestamp + QString("参数读取完成"));
-                ui->optLabel->setText(QString("参数读取完成"));
-                ui->optLabel->setStyleSheet("color: green;");
-
-                m_receivedParamCount = 0;
-            }
-        }
-    }
-    // 可以添加其他命令类型的处理
 }
 
 void Params::updateParameterValue(const QString &paramId, int value)
@@ -413,7 +313,7 @@ void Params::on_readButton_clicked()
     ui->optLabel->setStyleSheet("color: blue;");
 
     // 构建统一读取命令: AA 00 03 0A
-    QByteArray frame = m_protocolHandler->buildCurParameterFrame();
+    QByteArray frame = ProtocolRouter::buildReadParamFrame(0xFF);
 
     // 发送统一读取命令
     tcpClient->sendData(frame);

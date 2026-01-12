@@ -53,34 +53,6 @@ quint8 ProtocolRos3D::crc8(const QByteArray& data)
     return crc;
 }
 
-// void ProtocolRos3D::tryParseFrame()
-// {
-//     while (buffer_.contains('\n')) {
-//         int eol = buffer_.indexOf('\n');          // 0x0A
-//         QByteArray line = buffer_.left(eol);      // 不含 0x0A
-//         buffer_.remove(0, eol + 1);               // 把这行扔掉
-
-//         if (line.size() < 4) continue;
-
-//         /* 只验头 */
-//         if (!line.startsWith(QByteArray("\xAA", 1))) {
-//             qWarning() << "头标记异常，丢弃行:" << line.toHex(' ');
-//             continue;
-//         }
-//         /* 取命令字 */
-//         uint8_t cmd = static_cast<uint8_t>(line.at(1));
-//         /* 取 JSON 部分 */
-//         QByteArray jsonBytes = line.mid(2);
-//         QJsonParseError err;
-//         QJsonDocument doc = QJsonDocument::fromJson(jsonBytes, &err);
-//         if (err.error != QJsonParseError::NoError) {
-//             qWarning() << "JSON 解析失败:" << err.errorString();
-//             continue;
-//         }
-//         parseJsonFrame(cmd, doc.object());
-//     }
-// }
-
 /* 根据 cmd 分发 */
 void ProtocolRos3D::parseJsonFrame(uint8_t cmd, const QJsonObject& obj)
 {

@@ -18,9 +18,11 @@ signals:
     void cloudUpdated(const CloudMsg& msg);
     void mapCloudUpdated(const MapCloudMsg& m);
 
+    // 添加消息显示信号
+    void appendMessage(const QString &message);
+
 private:
 
-    void tryParseFrame();
     void parseJsonFrame(uint8_t cmd, const QJsonObject& obj);
 
     void parseTF(const QJsonObject& obj);

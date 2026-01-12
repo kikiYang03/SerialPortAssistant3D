@@ -102,6 +102,27 @@ private:
     // TF关系链
     Eigen::Matrix4d T_map_ci__latest_      = Eigen::Matrix4d::Identity(); // map→camera_init
     Eigen::Matrix4d T_body_baselink_latest_= Eigen::Matrix4d::Identity(); // body→base_link
+
+
+    // 放在 private 段
+    QOpenGLBuffer vboAxis_;
+    QOpenGLVertexArrayObject vaoAxis_;
+
+    QOpenGLBuffer vboGrid_;
+    QOpenGLVertexArrayObject vaoGrid_;
+
+    QOpenGLBuffer vboTrail_;
+    QOpenGLVertexArrayObject vaoTrail_;
+
+    QOpenGLBuffer vboArrow_;
+    QOpenGLVertexArrayObject vaoArrow_;
+
+    void createArrowGeometry();
+    void createTrailVAO();
+    void createAxisGeometry();
+    void createGridGeometry();
+
+    bool glReady_ = false;
 };
 
 #endif // GLWIDGET_H

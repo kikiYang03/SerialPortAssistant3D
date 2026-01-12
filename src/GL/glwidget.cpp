@@ -98,6 +98,14 @@ void GLWidget::initializeGL()
     // tf_.setTransform("map","camera_init", Eigen::Vector3d::Zero(), Eigen::Quaterniond::Identity());
     tf_.setTransform("body","base_link", Eigen::Vector3d::Zero(), Eigen::Quaterniond::Identity());
 
+    // 初始化静态几何体 VAO/VBO
+    createAxisGeometry();
+    createGridGeometry();
+    createTrailVAO();
+    createArrowGeometry();
+
+    glReady_ = true;
+
 }
 
 void GLWidget::resizeGL(int w,int h)
@@ -126,41 +134,133 @@ QMatrix4x4 GLWidget::toQMatrix(const Eigen::Matrix4d &m)
     return q;
 }
 
+/* ---------- 坐标轴 ---------- */
+void GLWidget::createAxisGeometry()
+{
+    static const std::array<Eigen::Vector3f,6> pts{{
+        {0,0,0},{1,0,0}, {0,0,0},{0,1,0}, {0,0,0},{0,0,1}
+    }};
+
+    vboAxis_.create();  vaoAxis_.create();
+    vaoAxis_.bind();
+    vboAxis_.setUsagePattern(QOpenGLBuffer::StaticDraw);
+    vboAxis_.bind();
+    vboAxis_.allocate(pts.data(), pts.size()*sizeof(Eigen::Vector3f));
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,0,nullptr);
+    vaoAxis_.release();
+}
+
 void GLWidget::drawAxis(const Eigen::Matrix4d &T, float len)
 {
-    static std::vector<Eigen::Vector3f> pts = {
-        {0,0,0},{len,0,0}, {0,0,0},{0,len,0}, {0,0,0},{0,0,len}
-    };
-    static QOpenGLBuffer vbo; static QOpenGLVertexArrayObject vao;
-    if(!vbo.isCreated()){ vbo.create(); vao.create(); vao.bind(); vbo.bind();
-        vbo.allocate(pts.data(), pts.size()*sizeof(Eigen::Vector3f));
-        glEnableVertexAttribArray(0); glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,0,0); vao.release(); }
     progSimple_.bind();
     progSimple_.setUniformValue("mvp", toQMatrix(proj_*view_*T));
-    vao.bind();
+    vaoAxis_.bind();
     progSimple_.setUniformValue("col", QVector3D(1,0,0)); glDrawArrays(GL_LINES,0,2);
     progSimple_.setUniformValue("col", QVector3D(0,1,0)); glDrawArrays(GL_LINES,2,2);
     progSimple_.setUniformValue("col", QVector3D(0,0,1)); glDrawArrays(GL_LINES,4,2);
-    vao.release(); progSimple_.release();
+    vaoAxis_.release();
+    progSimple_.release();
 }
 
-void GLWidget::drawGrid(const Eigen::Matrix4d &T, int cells, float step)
+/* ---------- 网格 ---------- */
+void GLWidget::createGridGeometry()
 {
+    constexpr int cells = 40;
+    constexpr float step = 1.0f;
     std::vector<Eigen::Vector3f> lines;
-    float ext = cells*step*.5f;
-    for(int i=0;i<=cells;i++){
+    lines.reserve(cells*4*2);
+    float ext = cells*step*0.5f;
+    for(int i=0;i<=cells;++i){
         float x = -ext + i*step;
-        lines.emplace_back(x,-ext,0); lines.emplace_back(x,ext,0);
-        lines.emplace_back(-ext,x,0); lines.emplace_back(ext,x,0);
+        lines.emplace_back(x,-ext,0); lines.emplace_back(x, ext,0);
+        lines.emplace_back(-ext,x,0); lines.emplace_back( ext,x,0);
     }
-    static QOpenGLBuffer vbo; static QOpenGLVertexArrayObject vao;
-    if(!vbo.isCreated()){ vbo.create(); vao.create(); vao.bind(); vbo.bind();
-        glEnableVertexAttribArray(0); glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,0,0); vao.release(); }
-    vbo.allocate(lines.data(), lines.size()*sizeof(Eigen::Vector3f));
+
+    vboGrid_.create();  vaoGrid_.create();
+    vaoGrid_.bind();
+    vboGrid_.setUsagePattern(QOpenGLBuffer::StaticDraw);
+    vboGrid_.bind();
+    vboGrid_.allocate(lines.data(), lines.size()*sizeof(Eigen::Vector3f));
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,0,nullptr);
+    vaoGrid_.release();
+}
+
+void GLWidget::drawGrid(const Eigen::Matrix4d &T, int /*cells*/, float /*step*/)
+{
     progSimple_.bind();
     progSimple_.setUniformValue("mvp", toQMatrix(proj_*view_*T));
     progSimple_.setUniformValue("col", QVector3D(.4,.4,.4));
-    vao.bind(); glDrawArrays(GL_LINES, 0, lines.size()); vao.release();
+    vaoGrid_.bind();
+    glDrawArrays(GL_LINES, 0, 40*4*2);   // 固定 40*4*2 条线段
+    vaoGrid_.release();
+    progSimple_.release();
+}
+
+/* ---------- 轨迹 ---------- */
+void GLWidget::createTrailVAO()
+{
+    vboTrail_.create();  vaoTrail_.create();
+    vaoTrail_.bind();
+    vboTrail_.setUsagePattern(QOpenGLBuffer::DynamicDraw);
+    vboTrail_.bind();
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,0,nullptr);
+    vaoTrail_.release();
+}
+
+/* ---------- 箭头 ---------- */
+void GLWidget::createArrowGeometry()
+{
+    constexpr int seg = 16;
+    constexpr float len   = 1.0f;
+    constexpr float radius= 0.08f;
+    const float shaftLen = len*0.65f, headLen=len-shaftLen, headRad=radius*2.0f;
+
+    std::vector<Eigen::Vector3f> vtx;
+    /* 圆柱杆 */
+    for(int i=0;i<=seg;++i){
+        float a = 2.0f*M_PI*i/seg;
+        float x=cosf(a)*radius, y=sinf(a)*radius;
+        vtx.emplace_back(x,y,0); vtx.emplace_back(x,y,shaftLen);
+    }
+    /* 圆锥头 */
+    for(int i=0;i<seg;++i){
+        float a0=2.0f*M_PI*i/seg, a1=2.0f*M_PI*(i+1)/seg;
+        float x0=cosf(a0)*headRad, y0=sinf(a0)*headRad;
+        float x1=cosf(a1)*headRad, y1=sinf(a1)*headRad;
+        vtx.emplace_back(0,0,shaftLen+headLen);  // 尖
+        vtx.emplace_back(x1,y1,shaftLen);
+        vtx.emplace_back(x0,y0,shaftLen);
+    }
+
+    vboArrow_.create();  vaoArrow_.create();
+    vaoArrow_.bind();
+    vboArrow_.setUsagePattern(QOpenGLBuffer::StaticDraw);
+    vboArrow_.bind();
+    vboArrow_.allocate(vtx.data(), vtx.size()*sizeof(Eigen::Vector3f));
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,0,nullptr);
+    vaoArrow_.release();
+}
+
+void GLWidget::drawSolidArrow(const Eigen::Matrix4d &T, float len, float radius)
+{
+    progSimple_.bind();
+    Eigen::Matrix4d Rfix = Eigen::Matrix4d::Identity();
+    double a = M_PI/2.0;
+    Rfix(0,0)=cos(a); Rfix(0,2)= sin(a);
+    Rfix(2,0)=-sin(a); Rfix(2,2)=cos(a);
+    Eigen::Matrix4d mvp = proj_*view_*T*Rfix;
+    progSimple_.setUniformValue("mvp", toQMatrix(mvp));
+    progSimple_.setUniformValue("col", QVector3D(1.0f,0.5f,0.0f));
+
+    vaoArrow_.bind();
+    int cylinderVerts = (16+1)*2;
+    glDrawArrays(GL_QUAD_STRIP, 0, cylinderVerts);
+    glDrawArrays(GL_TRIANGLES, cylinderVerts, 16*3);
+    vaoArrow_.release();
     progSimple_.release();
 }
 
@@ -216,30 +316,21 @@ void GLWidget::paintGL()
     // ---------- 4. 轨迹线（绿色）—— base_link 原点在 camera_init 系 ----------
     if (trail_.points.size() > 1)
     {
-        std::vector<Eigen::Vector3f> trailTmp;
-        trailTmp.reserve(trail_.points.size());
-        for (const auto &p : trail_.points) trailTmp.push_back(p);
+        /* deque -> vector 拿到连续内存 */
+        std::vector<Eigen::Vector3f> tmp(trail_.points.begin(),
+                                         trail_.points.end());
 
         progSimple_.bind();
         progSimple_.setUniformValue("mvp", toQMatrix(proj_ * view_));
         progSimple_.setUniformValue("col", QVector3D(0,1,0));
 
-        static QOpenGLVertexArrayObject vaoTrail;
-        static QOpenGLBuffer            vboTrail(QOpenGLBuffer::VertexBuffer);
-        if (!vaoTrail.isCreated()) {
-            vaoTrail.create();
-            vboTrail.create();
-            vboTrail.setUsagePattern(QOpenGLBuffer::DynamicDraw);
-        }
-        vaoTrail.bind();
-        vboTrail.bind();
-        vboTrail.allocate(trailTmp.data(),
-                          static_cast<int>(trailTmp.size() * sizeof(Eigen::Vector3f)));
-        glEnableVertexAttribArray(0);
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, nullptr);
+        vaoTrail_.bind();
+        vboTrail_.bind();
+        vboTrail_.allocate(tmp.data(),
+                           tmp.size() * sizeof(Eigen::Vector3f));
         glLineWidth(3.0f);
-        glDrawArrays(GL_LINE_STRIP, 0, static_cast<int>(trailTmp.size()));
-        vaoTrail.release();
+        glDrawArrays(GL_LINE_STRIP, 0, tmp.size());
+        vaoTrail_.release();
         progSimple_.release();
     }
 
@@ -341,6 +432,7 @@ void GLWidget::onTf(const TFMsg &m)
 
 void GLWidget::onCloud(const CloudMsg &m)
 {
+    if (!glReady_) return;
     QMutexLocker lk(&dataMtx_);
     cloudCpu_.clear();
     cloudCpu_.reserve(m.points.size());
@@ -356,6 +448,7 @@ void GLWidget::onCloud(const CloudMsg &m)
 /* ---------- 1. 收到 MapCloudMsg 后只做 CPU 侧缓存 + 抛上传任务 ---------- */
 void GLWidget::onMap(const MapCloudMsg &m)
 {
+    if (!glReady_) return;
     if (m.points.empty()) return;
 
     QMutexLocker lk(&dataMtx_);
@@ -447,88 +540,88 @@ void GLWidget::wheelEvent(QWheelEvent* e)
     update();
 }
 
-void GLWidget::drawSolidArrow(const Eigen::Matrix4d &T, float len, float radius)
-{
-    // 1. 创建箭头几何数据
-    const int seg = 16;
-    const float shaftLen = len * 0.65f;
-    const float headLen = len - shaftLen;
-    const float headRad = radius * 2.0f;
+// void GLWidget::drawSolidArrow(const Eigen::Matrix4d &T, float len, float radius)
+// {
+//     // 1. 创建箭头几何数据
+//     const int seg = 16;
+//     const float shaftLen = len * 0.65f;
+//     const float headLen = len - shaftLen;
+//     const float headRad = radius * 2.0f;
 
-    std::vector<Eigen::Vector3f> vertices;
+//     std::vector<Eigen::Vector3f> vertices;
 
-    // 2. 圆柱杆（四边形带）
-    for (int i = 0; i <= seg; ++i) {
-        float a = 2.0f * M_PI * i / seg;
-        float x = cosf(a) * radius;
-        float y = sinf(a) * radius;
-        vertices.emplace_back(x, y, 0);            // 起点
-        vertices.emplace_back(x, y, shaftLen);     // 终点
-    }
+//     // 2. 圆柱杆（四边形带）
+//     for (int i = 0; i <= seg; ++i) {
+//         float a = 2.0f * M_PI * i / seg;
+//         float x = cosf(a) * radius;
+//         float y = sinf(a) * radius;
+//         vertices.emplace_back(x, y, 0);            // 起点
+//         vertices.emplace_back(x, y, shaftLen);     // 终点
+//     }
 
-    // 3. 圆锥头（三角形）
-    for (int i = 0; i < seg; ++i) {
-        float a0 = 2.0f * M_PI * i / seg;
-        float a1 = 2.0f * M_PI * (i+1) / seg;
-        float x0 = cosf(a0) * headRad;
-        float y0 = sinf(a0) * headRad;
-        float x1 = cosf(a1) * headRad;
-        float y1 = sinf(a1) * headRad;
+//     // 3. 圆锥头（三角形）
+//     for (int i = 0; i < seg; ++i) {
+//         float a0 = 2.0f * M_PI * i / seg;
+//         float a1 = 2.0f * M_PI * (i+1) / seg;
+//         float x0 = cosf(a0) * headRad;
+//         float y0 = sinf(a0) * headRad;
+//         float x1 = cosf(a1) * headRad;
+//         float y1 = sinf(a1) * headRad;
 
-        // 三个顶点组成一个三角形
-        vertices.emplace_back(0, 0, shaftLen + headLen);  // 尖
-        vertices.emplace_back(x1, y1, shaftLen);          // 底边1
-        vertices.emplace_back(x0, y0, shaftLen);          // 底边0
-    }
+//         // 三个顶点组成一个三角形
+//         vertices.emplace_back(0, 0, shaftLen + headLen);  // 尖
+//         vertices.emplace_back(x1, y1, shaftLen);          // 底边1
+//         vertices.emplace_back(x0, y0, shaftLen);          // 底边0
+//     }
 
-    // 4. 使用着色器绘制
-    progSimple_.bind();
+//     // 4. 使用着色器绘制
+//     progSimple_.bind();
 
-    // 关键：设置正确的MVP矩阵
-    // 把箭头几何的局部 +Z 轴旋到局部 +X 轴：Ry(-90°)
-    Eigen::Matrix4d Rfix = Eigen::Matrix4d::Identity();
-    const double a = M_PI / 2.0;
-    Rfix(0,0) =  cos(a);  Rfix(0,2) = sin(a);
-    Rfix(2,0) = -sin(a);  Rfix(2,2) = cos(a);
+//     // 关键：设置正确的MVP矩阵
+//     // 把箭头几何的局部 +Z 轴旋到局部 +X 轴：Ry(-90°)
+//     Eigen::Matrix4d Rfix = Eigen::Matrix4d::Identity();
+//     const double a = M_PI / 2.0;
+//     Rfix(0,0) =  cos(a);  Rfix(0,2) = sin(a);
+//     Rfix(2,0) = -sin(a);  Rfix(2,2) = cos(a);
 
-    // 注意：右乘表示“在箭头局部坐标系里修正轴向”
-    Eigen::Matrix4d T_draw = T * Rfix;
+//     // 注意：右乘表示“在箭头局部坐标系里修正轴向”
+//     Eigen::Matrix4d T_draw = T * Rfix;
 
-    Eigen::Matrix4d mvp = proj_ * view_ * T_draw;
-    progSimple_.setUniformValue("mvp", toQMatrix(mvp));
+//     Eigen::Matrix4d mvp = proj_ * view_ * T_draw;
+//     progSimple_.setUniformValue("mvp", toQMatrix(mvp));
 
-    // 设置箭头颜色
-    progSimple_.setUniformValue("col", QVector3D(1.0f, 0.5f, 0.0f));  // 橙色
+//     // 设置箭头颜色
+//     progSimple_.setUniformValue("col", QVector3D(1.0f, 0.5f, 0.0f));  // 橙色
 
-    // 创建VAO/VBO
-    static QOpenGLVertexArrayObject arrowVao;
-    static QOpenGLBuffer arrowVbo;
+//     // 创建VAO/VBO
+//     static QOpenGLVertexArrayObject arrowVao;
+//     static QOpenGLBuffer arrowVbo;
 
-    if (!arrowVao.isCreated()) {
-        arrowVao.create();
-        arrowVbo.create();
-    }
+//     if (!arrowVao.isCreated()) {
+//         arrowVao.create();
+//         arrowVbo.create();
+//     }
 
-    arrowVao.bind();
-    arrowVbo.bind();
+//     arrowVao.bind();
+//     arrowVbo.bind();
 
-    // 上传顶点数据
-    arrowVbo.allocate(vertices.data(), vertices.size() * sizeof(Eigen::Vector3f));
+//     // 上传顶点数据
+//     arrowVbo.allocate(vertices.data(), vertices.size() * sizeof(Eigen::Vector3f));
 
-    // 设置顶点属性
-    glEnableVertexAttribArray(0);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, nullptr);
+//     // 设置顶点属性
+//     glEnableVertexAttribArray(0);
+//     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, nullptr);
 
-    // 绘制圆柱杆（GL_QUAD_STRIP）
-    int cylinderVertices = (seg + 1) * 2;
-    glDrawArrays(GL_QUAD_STRIP, 0, cylinderVertices);
+//     // 绘制圆柱杆（GL_QUAD_STRIP）
+//     int cylinderVertices = (seg + 1) * 2;
+//     glDrawArrays(GL_QUAD_STRIP, 0, cylinderVertices);
 
-    // 绘制圆锥头（GL_TRIANGLES）
-    int coneVertices = vertices.size() - cylinderVertices;
-    glDrawArrays(GL_TRIANGLES, cylinderVertices, coneVertices);
+//     // 绘制圆锥头（GL_TRIANGLES）
+//     int coneVertices = vertices.size() - cylinderVertices;
+//     glDrawArrays(GL_TRIANGLES, cylinderVertices, coneVertices);
 
-    arrowVao.release();
-}
+//     arrowVao.release();
+// }
 
 static inline float clamp01(float v) { return std::max(0.0f, std::min(1.0f, v)); }
 QVector3D GLWidget::heightToColor(float z, float minZ, float maxZ)

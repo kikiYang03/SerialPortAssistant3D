@@ -22,14 +22,14 @@ public:
     void processDataStream(QByteArray buffer, bool isSerialPortMode);
 
     // 构建指令帧
-    QByteArray buildFrame(quint8 command,
+    static QByteArray buildFrame(quint8 command,
                           const QVariantMap &params = QVariantMap());
 
     // 便捷方法
     QByteArray buildTestFrame(bool isResponse = false);
     QByteArray buildSaveMapFrame();
-    QByteArray buildReadParamFrame(quint8 paramId = 0xFF); // 0xFF=读取所有
-    QByteArray buildWriteParamFrame(quint8 paramId, qint16 value);
+    static QByteArray buildReadParamFrame(quint8 paramId = 0xFF); // 0xFF=读取所有
+    static QByteArray buildWriteParamFrame(quint8 paramId, qint16 value);
     QByteArray buildRosFrame(quint8 topicId, const QJsonObject &data);
 
     // 工具方法
@@ -49,10 +49,6 @@ signals:
 
     // ros3D数据
     void ros3dDataReceived(quint8 cmd,const QByteArray &jsonData);
-
-    // void tfDataReceived(const QByteArray &jsonData);
-    // void cloudDataReceived(const QByteArray &jsonData);
-    // void mapDataReceived(const QByteArray &jsonData);
 
     void uartFrameReceived(qint16 x, qint16 y, qint16 z, qint16 yaw);
 
@@ -89,6 +85,9 @@ private:
     enum class ParseState { WaitHead, WaitPayload };
     ParseState m_parseState = ParseState::WaitHead;
     QByteArray m_parseBuf;   // 状态机内部缓冲
+
+    static const quint8 FRAME_HEADER = 0xAA;
+    static const quint8 FRAME_TAIL = 0x0A;
 };
 
 #endif // PROTOCOLROUTER_H
