@@ -182,7 +182,11 @@ void GLWidget::createAxisGeometry()
 void GLWidget::drawAxis(const Eigen::Matrix4d &T, float len)
 {
     progSimple_.bind();
-    progSimple_.setUniformValue("mvp", toQMatrix(proj_*view_*T));
+    Eigen::Matrix4d S = Eigen::Matrix4d::Identity();
+    S(0,0) = S(1,1) = S(2,2) = len;   // 统一缩放
+    Eigen::Matrix4d mvp = proj_ * view_ * T * S;
+    progSimple_.setUniformValue("mvp", toQMatrix(mvp));
+
     vaoAxis_.bind();
     progSimple_.setUniformValue("col", QVector3D(1,0,0)); glDrawArrays(GL_LINES,0,2);
     progSimple_.setUniformValue("col", QVector3D(0,1,0)); glDrawArrays(GL_LINES,2,2);
