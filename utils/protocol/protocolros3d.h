@@ -12,6 +12,7 @@ public:
 
 public slots:
     void onRawBytes(quint8 cmd,const QByteArray& data);
+    void setLinkAlive(bool alive) { m_linkAlive = alive; }
 
 signals:
     void tfUpdated(const TFMsg& msg);
@@ -47,6 +48,7 @@ private:
     quint32 m_mapLast  = 0;
 
     QTimer *m_hzTimer = nullptr;
+    bool m_linkAlive = false;
 
 private slots:
     void calcHz();          // 1 s 定时算频率

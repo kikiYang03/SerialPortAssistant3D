@@ -127,7 +127,7 @@ signals:
     // 清理绘图视图
     void requestClearVisualization();
 
-
+    void tcpConnectionChanged(bool connected);
 
 };
 

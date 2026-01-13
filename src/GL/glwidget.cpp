@@ -307,6 +307,16 @@ void GLWidget::paintGL()
             vboCloud_.release();
         }
     }
+    {
+        QMutexLocker lk(&dataMtx_);
+        if (mapDirty_.exchange(false, std::memory_order_acq_rel)) {
+            vboMap_.bind();
+            vboMap_.allocate(mapInterleavedCpu_.data(),
+                             static_cast<int>(mapInterleavedCpu_.size() * sizeof(Eigen::Vector3f)));
+            vboMap_.release();
+        }
+    }
+
 
     // ---------- 1. 计算轨道球 view 矩阵（camera_init 系） ----------
     Eigen::Matrix4d view = Eigen::Matrix4d::Identity();
@@ -466,23 +476,24 @@ void GLWidget::onTf(const TFMsg &m)
 
 void GLWidget::onCloud(const CloudMsg &m)
 {
-    if (!glReady_) return;
     QMutexLocker lk(&dataMtx_);
     cloudCpu_.clear();
     cloudCpu_.reserve(m.points.size());
     for (const auto &p : m.points)
         cloudCpu_.emplace_back(p.x(), p.y(), p.z());
+
     cloudPts_ = static_cast<int>(cloudCpu_.size());
     cloudDirty_.store(true, std::memory_order_release);
 
-    QMetaObject::invokeMethod(this, &GLWidget::doUploadCloud, Qt::QueuedConnection);
+    if (glReady_) update();   // 已显示时请求重绘；未显示时不重要
 }
+
 
 
 /* ---------- 1. 收到 MapCloudMsg 后只做 CPU 侧缓存 + 抛上传任务 ---------- */
 void GLWidget::onMap(const MapCloudMsg &m)
 {
-    if (!glReady_) return;
+    // if (!glReady_) return;
     if (m.points.empty()) return;
 
     QMutexLocker lk(&dataMtx_);
@@ -507,9 +518,10 @@ void GLWidget::onMap(const MapCloudMsg &m)
 
     mapPts_ = static_cast<int>(m.points.size());
     mapDirty_.store(true, std::memory_order_release);
+    if (glReady_) update();
 
     /* 3) 立即在主线程上传（OpenGL context 当前） */
-    QMetaObject::invokeMethod(this, &GLWidget::doUploadMap, Qt::QueuedConnection);
+    // QMetaObject::invokeMethod(this, &GLWidget::doUploadMap, Qt::QueuedConnection);
 }
 
 /* ---------- 2. 真正的 GPU 上传（主线程执行） ---------- */

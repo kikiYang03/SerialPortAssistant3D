@@ -70,6 +70,7 @@ SerialPort::SerialPort(QWidget *parent)
                 statsTimer->start();
                 elapsedTimer.restart();
             }
+
         } else {
             ui->lblWifiState->setText("尝试自动重连");
             ui->lblWifiState->setStyleSheet("color:red");
@@ -79,6 +80,7 @@ SerialPort::SerialPort(QWidget *parent)
                 statsTimer->stop();
             }
         }
+        emit tcpConnectionChanged(connected);
     });
 
     // 初始化WiFi UDP

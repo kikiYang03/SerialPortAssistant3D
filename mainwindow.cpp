@@ -123,6 +123,9 @@ MainWindow::MainWindow(QWidget *parent)
         ui->stackedWidget->setCurrentIndex(2);
     });
 
+    connect(serialPort, &SerialPort::tcpConnectionChanged,
+            protocolHandler, &ProtocolRos3D::setLinkAlive);
+
     // 连接Params的消息信号到SerialPort的显示槽
     connect(params, &Params::appendMessage, serialPort, &SerialPort::appendMessage);
     // 连接解析数据的频率到SerialPort

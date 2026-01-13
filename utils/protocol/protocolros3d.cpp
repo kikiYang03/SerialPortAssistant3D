@@ -82,7 +82,6 @@ void ProtocolRos3D::parseTF(const QJsonObject& obj)
                       obj["qz"].toDouble());
     // qDebug() << "TF数据解析成TFMsg："<< m;
     if (m.frame_id == "camera_init" && m.child_frame_id == "body"){
-        qDebug() << "TF计数";
         ++m_tfCnt;          // 计数
     }
     emit tfUpdated(m);
@@ -225,7 +224,7 @@ QVector<int8_t> ProtocolRos3D::decompressRLE(const QVector<int8_t>& rle)
 
 void ProtocolRos3D::calcHz()
 {
-
+    if (!m_linkAlive) return;
     constexpr double WIN = 10.0;
     double tfHz   = (m_tfCnt   - m_tfLast)   / WIN;
     double scanHz = (m_cloudCnt - m_cloudLast) / WIN;
