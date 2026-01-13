@@ -62,7 +62,7 @@ private:
     TfTree tf_;
     // 点云大小
     float cloudPtSize_ = 3.0f;
-    float mapPtSize_   = 4.0f;
+    float mapPtSize_   = 3.0f;
 
     // ---------------- CPU 缓存 + dirty 标志 ----------------
     QMutex dataMtx_;

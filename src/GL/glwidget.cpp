@@ -44,7 +44,8 @@ void GLWidget::initializeGL()
     glDepthFunc(GL_LESS);
 
     // RViz 点云观感关键：开启混合（软边/透明叠加）
-    glEnable(GL_BLEND);
+    glDepthMask(GL_TRUE);
+    glDisable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
     // 建议开启多重采样（需要你的 QSurfaceFormat 也设置 samples）
@@ -378,7 +379,8 @@ void GLWidget::paintGL()
         progSimple_.bind();
         const Eigen::Matrix4d mvp = proj_ * view_;
         progSimple_.setUniformValue("mvp", toQMatrix(mvp));
-        progSimple_.setUniformValue("col", QVector3D(1,0,0));
+        progSimple_.setUniformValue("col", QVector3D(0.35f, 0.85f, 0.95f));
+
 
         vaoCloud_.bind();
         if (cloudPts_ > 0) {
@@ -401,7 +403,7 @@ void GLWidget::paintGL()
         // vaoMap_.release();
         progColorCloud_.bind();
         progColorCloud_.setUniformValue("mvp", toQMatrix(proj_ * view_));
-        progColorCloud_.setUniformValue("uPointSize", 4.0f); // 建议 3~6
+        progColorCloud_.setUniformValue("uPointSize", mapPtSize_); // 建议 3~6
         progColorCloud_.setUniformValue("uAlpha", 1.0f);                  // 可试 0.8
         progColorCloud_.setUniformValue("uSoftEdge", 0.35f);              // 0.25~0.45
 
