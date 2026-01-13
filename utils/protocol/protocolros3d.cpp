@@ -5,6 +5,7 @@
 #include <QtEndian>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QTimer>
 
 
 static const uint8_t CMD_TF   = 0x01;
@@ -14,6 +15,10 @@ static const uint8_t CMD_MAP  = 0x03;
 ProtocolRos3D::ProtocolRos3D(QObject* parent)
     : QObject(parent)
 {
+    m_hzTimer = new QTimer(this);
+    m_hzTimer->setInterval(10000);   // 1 s
+    connect(m_hzTimer, &QTimer::timeout, this, &ProtocolRos3D::calcHz);
+    m_hzTimer->start();
 }
 
 void ProtocolRos3D::onRawBytes(quint8 cmd, const QByteArray& data)
@@ -76,6 +81,10 @@ void ProtocolRos3D::parseTF(const QJsonObject& obj)
                       obj["qy"].toDouble(),
                       obj["qz"].toDouble());
     // qDebug() << "TF数据解析成TFMsg："<< m;
+    if (m.frame_id == "camera_init" && m.child_frame_id == "body"){
+        qDebug() << "TF计数";
+        ++m_tfCnt;          // 计数
+    }
     emit tfUpdated(m);
 }
 
@@ -126,6 +135,7 @@ void ProtocolRos3D::parseCloud(const QJsonObject& obj)
     //     qDebug() << "p" << i << m.points[i];
 
     // qDebug() << "CloudMsg: " << m;
+    ++m_cloudCnt;
     emit cloudUpdated(m);
 }
 
@@ -165,7 +175,7 @@ void ProtocolRos3D::parseMap(const QJsonObject& obj)
 
     m.points = extractXYZFromPointCloud2Raw(raw, width, height, point_step, row_step, is_dense);
     // qDebug() << "MapCloudMsg: " << m.points.size();
-
+    ++m_mapCnt;
     emit mapCloudUpdated(m);
 }
 
@@ -211,4 +221,25 @@ QVector<int8_t> ProtocolRos3D::decompressRLE(const QVector<int8_t>& rle)
         for (int k = 0; k < cnt; ++k) out.append(val);
     }
     return out;
+}
+
+void ProtocolRos3D::calcHz()
+{
+
+    constexpr double WIN = 10.0;
+    double tfHz   = (m_tfCnt   - m_tfLast)   / WIN;
+    double scanHz = (m_cloudCnt - m_cloudLast) / WIN;
+    double mapHz  = (m_mapCnt  - m_mapLast)  / WIN;
+
+    m_tfLast    = m_tfCnt;
+    m_cloudLast = m_cloudCnt;
+    m_mapLast   = m_mapCnt;
+
+    QString msg = QStringLiteral("%1 >> 话题统计:  /tf = %2 Hz, /cloud = %3 Hz, /map_cloud = %4 Hz")
+                      .arg(QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss"))
+                      .arg(tfHz,   0, 'f', 2)
+                      .arg(scanHz, 0, 'f', 2)
+                      .arg(mapHz,  0, 'f', 2);
+
+    emit appendMessage(msg);
 }

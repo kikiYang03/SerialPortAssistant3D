@@ -10,10 +10,6 @@
 static inline void rotToYPR_ZYX(const Eigen::Matrix3d& R,
                                 double& yaw, double& pitch, double& roll)
 {
-    // ZYX: R = Rz(yaw)*Ry(pitch)*Rx(roll)
-    // yaw   = atan2(R10, R00)
-    // pitch = asin(-R20)   (注意数值夹紧)
-    // roll  = atan2(R21, R22)
 
     yaw = std::atan2(R(1,0), R(0,0));
 
@@ -394,13 +390,6 @@ void GLWidget::paintGL()
     // ---------- 7. 地图点云（彩色，高度着色） ----------
     if (mapPts_ > 0)
     {
-        // progColorCloud_.bind();
-        // progColorCloud_.setUniformValue("mvp", toQMatrix(proj_ * view_));
-
-        // vaoMap_.bind();
-        // glPointSize(mapPtSize_);
-        // glDrawArrays(GL_POINTS, 0, mapPts_);
-        // vaoMap_.release();
         progColorCloud_.bind();
         progColorCloud_.setUniformValue("mvp", toQMatrix(proj_ * view_));
         progColorCloud_.setUniformValue("uPointSize", mapPtSize_); // 建议 3~6
@@ -622,43 +611,6 @@ QVector3D GLWidget::heightToColor(float z, float minZ, float maxZ)
     c.setHsvF(hue / 360.0f, sat, val);
     return QVector3D(c.redF(), c.greenF(), c.blueF());
 
-    // 蓝色-黄色
-    // float t = (z - minZ) / (maxZ - minZ + 1e-6f);
-    // t = std::pow(t, 0.5f);          // 中间调提亮
-    // QColor c;
-    // c.setHsvF(0.60f - t*0.55f,     // 0.60→0.05  蓝→黄
-    //           0.9f,                // 饱和度高
-    //           0.25f + t*0.75f);    // 亮度 0.25→1.0
-    // return QVector3D(c.redF(), c.greenF(), c.blueF());
-
-    //灰色
-    // float t = (z - minZ) / (maxZ - minZ + 1e-6f);
-    // t = std::pow(t, 0.35f);              // 伽马<1，暗部提亮
-    // int steps = 8;
-    // float v = std::floor(t * steps) / steps;  // 量化成 8 级台阶
-    // return QVector3D(v, v, v);
-
-    // 黑白红
-    // float t = (z - minZ) / (maxZ - minZ + 1e-6f);
-    // t = std::pow(t, 0.4f);
-    // t = std::round(t * 5) / 5;   // 只留 6 个离散值
-    // if (t < 0.2f) return {0,0,0};          // 黑
-    // if (t < 0.4f) return {0.6f,0,0.8f};    // 深洋红
-    // if (t < 0.6f) return {1,0.2f,1};       // 亮洋红
-    // if (t < 0.8f) return {1,0.8f,1};       // 淡粉
-    // return {1,1,1};                        // 白
-
-    // float n = (z - minZ) / (maxZ - minZ + 1e-6f);
-    // n = clamp01(n);
-
-    // n = std::pow(n, 0.7f);          // 低区拉伸，高区压缩
-
-    // float hue = 240.f - n * 240.f;  // 240°蓝 → 0°红
-    // float sat = 0.55f + 0.25f * std::sin(n * M_PI);  // 两端 0.55，中间 0.8
-    // float val = 0.65f + 0.25f * std::sin(n * M_PI);  // 两端 0.65，中间 0.9
-
-    // QColor c = QColor::fromHsvF(hue / 360.f, sat, val);
-    // return QVector3D(c.redF(), c.greenF(), c.blueF());
 }
 
 QVector3D GLWidget::normalToColor(const Eigen::Vector3f& n)

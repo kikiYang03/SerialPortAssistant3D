@@ -22,7 +22,6 @@ signals:
     void appendMessage(const QString &message);
 
 private:
-
     void parseJsonFrame(uint8_t cmd, const QJsonObject& obj);
 
     void parseTF(const QJsonObject& obj);
@@ -37,6 +36,21 @@ private:
         bool is_dense);
 
     static QVector<int8_t> decompressRLE(const QVector<int8_t>& rle);
+    // 计数器
+    quint32 m_tfCnt   = 0;
+    quint32 m_cloudCnt= 0;
+    quint32 m_mapCnt  = 0;
+
+    // 上一周期计数
+    quint32 m_tfLast   = 0;
+    quint32 m_cloudLast= 0;
+    quint32 m_mapLast  = 0;
+
+    QTimer *m_hzTimer = nullptr;
+
+private slots:
+    void calcHz();          // 1 s 定时算频率
+
 };
 
 #endif // PROTOCOLROS3D_H

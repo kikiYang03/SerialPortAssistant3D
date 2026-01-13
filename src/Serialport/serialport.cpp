@@ -69,10 +69,6 @@ SerialPort::SerialPort(QWidget *parent)
             if (!statsTimer->isActive()) {
                 statsTimer->start();
                 elapsedTimer.restart();
-                // 重置计数器
-                tfCount = 0;
-                scanCount = 0;
-                mapCount = 0;
             }
         } else {
             ui->lblWifiState->setText("尝试自动重连");
@@ -122,7 +118,6 @@ SerialPort::SerialPort(QWidget *parent)
     // 初始化统计定时器
     statsTimer = new QTimer(this);
     statsTimer->setInterval(10000); // 10秒
-    connect(statsTimer, &QTimer::timeout, this, &SerialPort::onStatsTimeout);
 
     connect(tcpClient, &TcpClient::reconnectTimeout, this, [this](){
         if (!m_reconnectWarningShown) {
@@ -224,16 +219,6 @@ void SerialPort::on_sendBt_clicked()
     testTimer->start(3000); // 3秒超时
 }
 
-// 测试超时处理函数
-// void SerialPort::onTestTimeout()
-// {
-//     if (!testFlag) {
-//         QString timestamp = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss >> 测试操作: ");
-//         ui->recvEdit->append(timestamp + " 测试失败!!!");
-//         testFlag = false;
-//     }
-// }
-
 // 数据处理/////////////////////////////////////////////////////////////////
 // 数据处理
 void SerialPort::processReceivedData(QByteArray &recBuf)
@@ -259,34 +244,6 @@ void SerialPort::processReceivedData(QByteArray &recBuf)
     } else {
        emit rawBytesArrived(recBuf,false);
     }
-}
-
-// 定时任务
-void SerialPort::onStatsTimeout()
-{
-    // 固定10秒时间窗口
-    static const double TIME_WINDOW = 10.0;
-
-    // 计算频率
-    double tfFreq = tfCount / TIME_WINDOW;
-    double scanFreq = scanCount / TIME_WINDOW;
-    double mapFreq = mapCount / TIME_WINDOW;
-
-    // 获取当前时间
-    QString timestamp = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss >> 话题统计: ");
-
-    QString stats = QString("%1 /tf = %2 Hz, /scan = %3 Hz   /map = %4 Hz")
-                        .arg(timestamp)
-                        .arg(tfFreq, 0, 'f', 2)
-                        .arg(scanFreq, 0, 'f', 2)
-                        .arg(mapFreq, 0, 'f', 2);
-
-    ui->recvEdit->append(stats);
-
-    // 重置计数器
-    tfCount = 0;
-    scanCount = 0;
-    mapCount = 0;
 }
 
 
@@ -423,10 +380,6 @@ void SerialPort::on_wifiConnectBt_clicked()
                     if (!statsTimer->isActive()) {
                         statsTimer->start();
                         elapsedTimer.restart();
-                        // 重置计数器
-                        tfCount = 0;
-                        scanCount = 0;
-                        mapCount = 0;
                     }
                 } else {
                     QMessageBox::warning(this, "错误", "UDP绑定失败");
@@ -445,11 +398,6 @@ void SerialPort::on_wifiConnectBt_clicked()
         if (statsTimer->isActive()) {
             statsTimer->stop();
         }
-
-        // 重置统计计数器
-        tfCount = 0;
-        scanCount = 0;
-        mapCount = 0;
         ui->wifiConnectBt->setText("打开连接");
         ui->serialBox->setEnabled(true);
         if (protocol == "TCP"){

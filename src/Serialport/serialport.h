@@ -106,13 +106,9 @@ private:
     // 添加TCP客户端单例访问
     TcpClient* getTcpClient() { return TcpClient::getInstance(); }
 
-    // 统计相关变量
-    int tfCount = 0;
-    int scanCount = 0;
-    int mapCount = 0;
+    // 断连重试定时器
     QTimer* statsTimer;
     QElapsedTimer elapsedTimer;
-    void onStatsTimeout();
 
     bool m_reconnectWarningShown = false;
     void tryExtractUartFrame();          // 从 recvBuffer 拆 10 B 定长帧
