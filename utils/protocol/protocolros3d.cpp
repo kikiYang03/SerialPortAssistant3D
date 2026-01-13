@@ -29,9 +29,6 @@ void ProtocolRos3D::onRawBytes(quint8 cmd, const QByteArray& data)
         qWarning() << "JSON 不是对象";
         return;
     }
-    // 命令字节在 Router 层已经用掉了，这里需要再补一个“伪命令”
-    // 建议：Router 在 emit ros3dDataReceived 时把 cmd 一并带出来
-    // 临时方案：把 cmd 写在 JSON 里，例如 {"cmd":1,"frame_id":"map",...}
     QJsonObject obj = doc.object();
     // int cmd = obj.value("cmd").toInt(-1);
     if (cmd < 0) {

@@ -28,6 +28,12 @@ public:
     explicit GLWidget(QWidget *parent = nullptr);
     ~GLWidget();
 
+    // 换成法线配色
+    QVector3D normalToColor(const Eigen::Vector3f& n);
+    // 实时切换方案
+    enum ColorMode { Height, Normal };
+    void setColorMode(ColorMode m) { colorMode_ = m; update(); }
+
 signals:
     void tfInfoChanged(double x, double y, double z,
                        double yaw_rad, double pitch_rad, double roll_rad);   //显示TF相关数据
@@ -51,7 +57,12 @@ protected:
     void paintGL() override;
 
 private:
+
+    ColorMode colorMode_ = Height;
     TfTree tf_;
+    // 点云大小
+    float cloudPtSize_ = 3.0f;
+    float mapPtSize_   = 4.0f;
 
     // ---------------- CPU 缓存 + dirty 标志 ----------------
     QMutex dataMtx_;

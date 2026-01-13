@@ -41,6 +41,21 @@ void GLWidget::initializeGL()
     initializeOpenGLFunctions();
     glClearColor(.1f,.1f,.15f,1.f);
     glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LESS);
+
+    // RViz 点云观感关键：开启混合（软边/透明叠加）
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+    // 建议开启多重采样（需要你的 QSurfaceFormat 也设置 samples）
+    glEnable(GL_MULTISAMPLE);
+    glEnable(GL_PROGRAM_POINT_SIZE);
+    glEnable(GL_POINT_SPRITE);
+
+
+    // （可选）如果你后面用了 gl_PointCoord 的圆点shader，不需要 GL_POINT_SMOOTH
+    // glDisable(GL_POINT_SMOOTH);
+
 
     progSimple_.addShaderFromSourceCode(QOpenGLShader::Vertex,
                                         "#version 330 core\n"
@@ -57,21 +72,37 @@ void GLWidget::initializeGL()
     progColorCloud_.addShaderFromSourceCode(QOpenGLShader::Vertex,
                                             "#version 330 core\n"
                                             "layout(location=0) in vec3 aPos;\n"
-                                            "layout(location=1) in vec3 aColor;\n"  // 新增颜色属性
+                                            "layout(location=1) in vec3 aColor;\n"
                                             "out vec3 vColor;\n"
                                             "uniform mat4 mvp;\n"
+                                            "uniform float uPointSize;\n"
                                             "void main() {\n"
                                             "    vColor = aColor;\n"
-                                            "    gl_Position = mvp * vec4(aPos,1);\n"
+                                            "    gl_Position = mvp * vec4(aPos,1.0);\n"
+                                            "    gl_PointSize = uPointSize;\n"
                                             "}\n");
+
 
     progColorCloud_.addShaderFromSourceCode(QOpenGLShader::Fragment,
                                             "#version 330 core\n"
                                             "in vec3 vColor;\n"
                                             "out vec4 fragCol;\n"
+                                            "uniform float uAlpha;\n"
+                                            "uniform float uSoftEdge;\n" // 0.0~0.5，越大越柔
                                             "void main() {\n"
-                                            "    fragCol = vec4(vColor,1);\n"
+                                            "    vec2 p = gl_PointCoord * 2.0 - 1.0;\n"
+                                            "    float r2 = dot(p,p);\n"
+                                            "    if (r2 > 1.0) discard;\n"
+                                            "    float a = 1.0;\n"
+                                            "    if (uSoftEdge > 0.0) {\n"
+                                            "        // r2: 0中心 -> 1边缘，soft edge 做衰减\n"
+                                            "        float edge0 = 1.0;\n"
+                                            "        float edge1 = 1.0 - uSoftEdge;\n"
+                                            "        a = smoothstep(edge0, edge1, r2);\n"
+                                            "    }\n"
+                                            "    fragCol = vec4(vColor, uAlpha * a);\n"
                                             "}\n");
+
     progColorCloud_.link();
     // ===== 结束新增 =====
 
@@ -342,16 +373,16 @@ void GLWidget::paintGL()
         progSimple_.release();
     }
 
-    // ---------- 6. 当前帧点云（蓝色） ----------
+    // ---------- 6. 当前帧点云（红色） ----------
     {
         progSimple_.bind();
         const Eigen::Matrix4d mvp = proj_ * view_;
         progSimple_.setUniformValue("mvp", toQMatrix(mvp));
-        progSimple_.setUniformValue("col", QVector3D(0,0,1));
+        progSimple_.setUniformValue("col", QVector3D(1,0,0));
 
         vaoCloud_.bind();
         if (cloudPts_ > 0) {
-            glPointSize(3.0f);
+            glPointSize(cloudPtSize_);
             glDrawArrays(GL_POINTS, 0, cloudPts_);
         }
         vaoCloud_.release();
@@ -361,13 +392,25 @@ void GLWidget::paintGL()
     // ---------- 7. 地图点云（彩色，高度着色） ----------
     if (mapPts_ > 0)
     {
+        // progColorCloud_.bind();
+        // progColorCloud_.setUniformValue("mvp", toQMatrix(proj_ * view_));
+
+        // vaoMap_.bind();
+        // glPointSize(mapPtSize_);
+        // glDrawArrays(GL_POINTS, 0, mapPts_);
+        // vaoMap_.release();
         progColorCloud_.bind();
         progColorCloud_.setUniformValue("mvp", toQMatrix(proj_ * view_));
+        progColorCloud_.setUniformValue("uPointSize", 4.0f); // 建议 3~6
+        progColorCloud_.setUniformValue("uAlpha", 1.0f);                  // 可试 0.8
+        progColorCloud_.setUniformValue("uSoftEdge", 0.35f);              // 0.25~0.45
 
         vaoMap_.bind();
-        glPointSize(2.0f);
         glDrawArrays(GL_POINTS, 0, mapPts_);
         vaoMap_.release();
+
+        progColorCloud_.release();
+
 
         progColorCloud_.release();
     }
@@ -409,22 +452,22 @@ void GLWidget::onTf(const TFMsg &m)
         Eigen::Matrix4d T_ci_b = Eigen::Matrix4d::Identity();
         T_ci_b.block<3,3>(0,0) = Eigen::Quaterniond(m.q.scalar(),m.q.x(),m.q.y(),m.q.z()).matrix();
         T_ci_b.block<3,1>(0,3) = Eigen::Vector3d(m.t.x(),m.t.y(),m.t.z());
-
-        Eigen::Matrix4d T_ci_bl = T_ci_b * T_body_baselink_latest_;
-        Eigen::Vector3f pt = T_ci_bl.block<3,1>(0,3).cast<float>();
+        // 如果需要关系转化，则把下面的T_ci_b改为T_ci_bl
+        // Eigen::Matrix4d T_ci_bl = T_ci_b * T_body_baselink_latest_;
+        Eigen::Vector3f pt = T_ci_b.block<3,1>(0,3).cast<float>();
         trail_.points.push_back(pt);
         while (trail_.points.size() > kMaxTrail) trail_.points.pop_front();
 
-        trail_.latestTransform   = T_ci_bl;
+        trail_.latestTransform   = T_ci_b;
         trail_.hasValidTransform = true;
 
 
         // 计算 YPR
-        const Eigen::Matrix3d R = T_ci_bl.block<3,3>(0,0);
+        const Eigen::Matrix3d R = T_ci_b.block<3,3>(0,0);
         double yaw, pitch, roll;
         rotToYPR_ZYX(R, yaw, pitch, roll);
 
-        emit tfInfoChanged(T_ci_bl(0,3), T_ci_bl(1,3), T_ci_bl(2,3),
+        emit tfInfoChanged(T_ci_b(0,3), T_ci_b(1,3), T_ci_b(2,3),
                            yaw, pitch, roll);
     }
 }
@@ -540,113 +583,88 @@ void GLWidget::wheelEvent(QWheelEvent* e)
     update();
 }
 
-// void GLWidget::drawSolidArrow(const Eigen::Matrix4d &T, float len, float radius)
-// {
-//     // 1. 创建箭头几何数据
-//     const int seg = 16;
-//     const float shaftLen = len * 0.65f;
-//     const float headLen = len - shaftLen;
-//     const float headRad = radius * 2.0f;
-
-//     std::vector<Eigen::Vector3f> vertices;
-
-//     // 2. 圆柱杆（四边形带）
-//     for (int i = 0; i <= seg; ++i) {
-//         float a = 2.0f * M_PI * i / seg;
-//         float x = cosf(a) * radius;
-//         float y = sinf(a) * radius;
-//         vertices.emplace_back(x, y, 0);            // 起点
-//         vertices.emplace_back(x, y, shaftLen);     // 终点
-//     }
-
-//     // 3. 圆锥头（三角形）
-//     for (int i = 0; i < seg; ++i) {
-//         float a0 = 2.0f * M_PI * i / seg;
-//         float a1 = 2.0f * M_PI * (i+1) / seg;
-//         float x0 = cosf(a0) * headRad;
-//         float y0 = sinf(a0) * headRad;
-//         float x1 = cosf(a1) * headRad;
-//         float y1 = sinf(a1) * headRad;
-
-//         // 三个顶点组成一个三角形
-//         vertices.emplace_back(0, 0, shaftLen + headLen);  // 尖
-//         vertices.emplace_back(x1, y1, shaftLen);          // 底边1
-//         vertices.emplace_back(x0, y0, shaftLen);          // 底边0
-//     }
-
-//     // 4. 使用着色器绘制
-//     progSimple_.bind();
-
-//     // 关键：设置正确的MVP矩阵
-//     // 把箭头几何的局部 +Z 轴旋到局部 +X 轴：Ry(-90°)
-//     Eigen::Matrix4d Rfix = Eigen::Matrix4d::Identity();
-//     const double a = M_PI / 2.0;
-//     Rfix(0,0) =  cos(a);  Rfix(0,2) = sin(a);
-//     Rfix(2,0) = -sin(a);  Rfix(2,2) = cos(a);
-
-//     // 注意：右乘表示“在箭头局部坐标系里修正轴向”
-//     Eigen::Matrix4d T_draw = T * Rfix;
-
-//     Eigen::Matrix4d mvp = proj_ * view_ * T_draw;
-//     progSimple_.setUniformValue("mvp", toQMatrix(mvp));
-
-//     // 设置箭头颜色
-//     progSimple_.setUniformValue("col", QVector3D(1.0f, 0.5f, 0.0f));  // 橙色
-
-//     // 创建VAO/VBO
-//     static QOpenGLVertexArrayObject arrowVao;
-//     static QOpenGLBuffer arrowVbo;
-
-//     if (!arrowVao.isCreated()) {
-//         arrowVao.create();
-//         arrowVbo.create();
-//     }
-
-//     arrowVao.bind();
-//     arrowVbo.bind();
-
-//     // 上传顶点数据
-//     arrowVbo.allocate(vertices.data(), vertices.size() * sizeof(Eigen::Vector3f));
-
-//     // 设置顶点属性
-//     glEnableVertexAttribArray(0);
-//     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, nullptr);
-
-//     // 绘制圆柱杆（GL_QUAD_STRIP）
-//     int cylinderVertices = (seg + 1) * 2;
-//     glDrawArrays(GL_QUAD_STRIP, 0, cylinderVertices);
-
-//     // 绘制圆锥头（GL_TRIANGLES）
-//     int coneVertices = vertices.size() - cylinderVertices;
-//     glDrawArrays(GL_TRIANGLES, cylinderVertices, coneVertices);
-
-//     arrowVao.release();
-// }
-
 static inline float clamp01(float v) { return std::max(0.0f, std::min(1.0f, v)); }
 QVector3D GLWidget::heightToColor(float z, float minZ, float maxZ)
 {
+    // // 紫色-绿色
+    // float n = (z - minZ) / (maxZ - minZ + 1e-6f);
+    // n = std::clamp(n, 0.0f, 1.0f);
+
+    // // 非线性，增强层次
+    // n = std::pow(n, 0.7f);
+
+    // // 低->高：黄绿青 -> 蓝紫
+    // float hue = 80.0f + n * (300.0f - 80.0f);
+
+    // // 饱和度略低
+    // float sat = 0.50f;
+
+    // // 亮度随高度变化（关键）
+    // float val = 0.70f + (1.0f - n) * 0.20f;
+
+    // QColor c;
+    // c.setHsvF(hue / 360.0f, sat, val);
+
+    // return QVector3D(c.redF(), c.greenF(), c.blueF());
+
     float n = (z - minZ) / (maxZ - minZ + 1e-6f);
     n = std::clamp(n, 0.0f, 1.0f);
 
-    // 非线性，增强层次
-    n = std::pow(n, 0.7f);
-
-    // 低->高：黄绿青 -> 蓝紫
+    // 先不要 pow，避免压暗
     float hue = 80.0f + n * (300.0f - 80.0f);
 
-    // 饱和度略低
-    float sat = 0.50f;
-
-    // 亮度随高度变化（关键）
-    float val = 0.70f + (1.0f - n) * 0.20f;
+    float sat = 1.0f;
+    float val = 1.0f;
 
     QColor c;
     c.setHsvF(hue / 360.0f, sat, val);
-
     return QVector3D(c.redF(), c.greenF(), c.blueF());
+
+    // 蓝色-黄色
+    // float t = (z - minZ) / (maxZ - minZ + 1e-6f);
+    // t = std::pow(t, 0.5f);          // 中间调提亮
+    // QColor c;
+    // c.setHsvF(0.60f - t*0.55f,     // 0.60→0.05  蓝→黄
+    //           0.9f,                // 饱和度高
+    //           0.25f + t*0.75f);    // 亮度 0.25→1.0
+    // return QVector3D(c.redF(), c.greenF(), c.blueF());
+
+    //灰色
+    // float t = (z - minZ) / (maxZ - minZ + 1e-6f);
+    // t = std::pow(t, 0.35f);              // 伽马<1，暗部提亮
+    // int steps = 8;
+    // float v = std::floor(t * steps) / steps;  // 量化成 8 级台阶
+    // return QVector3D(v, v, v);
+
+    // 黑白红
+    // float t = (z - minZ) / (maxZ - minZ + 1e-6f);
+    // t = std::pow(t, 0.4f);
+    // t = std::round(t * 5) / 5;   // 只留 6 个离散值
+    // if (t < 0.2f) return {0,0,0};          // 黑
+    // if (t < 0.4f) return {0.6f,0,0.8f};    // 深洋红
+    // if (t < 0.6f) return {1,0.2f,1};       // 亮洋红
+    // if (t < 0.8f) return {1,0.8f,1};       // 淡粉
+    // return {1,1,1};                        // 白
+
+    // float n = (z - minZ) / (maxZ - minZ + 1e-6f);
+    // n = clamp01(n);
+
+    // n = std::pow(n, 0.7f);          // 低区拉伸，高区压缩
+
+    // float hue = 240.f - n * 240.f;  // 240°蓝 → 0°红
+    // float sat = 0.55f + 0.25f * std::sin(n * M_PI);  // 两端 0.55，中间 0.8
+    // float val = 0.65f + 0.25f * std::sin(n * M_PI);  // 两端 0.65，中间 0.9
+
+    // QColor c = QColor::fromHsvF(hue / 360.f, sat, val);
+    // return QVector3D(c.redF(), c.greenF(), c.blueF());
 }
 
+QVector3D GLWidget::normalToColor(const Eigen::Vector3f& n)
+{
+    // 把 nx/ny/nz 直接当 r/g/b，[-1,1]→[0,1]
+    auto c = (n.normalized().array() + 1.f) * 0.5f;
+    return QVector3D(c.x(), c.y(), c.z());
+}
 
 // ========操作栏===============
 void GLWidget::clearMap()
