@@ -44,6 +44,8 @@ public slots:
     void onMap(const MapCloudMsg &);
 
     void clearMap();        // 清理点云地图
+    void clearTrail();  // 新增
+    void clearCloud();  // 新增
     void resetCamera();     // 初始化相机位置
     void saveMapToFile();   // 保存地图
 

@@ -123,7 +123,6 @@ void GLWidget::initializeGL()
     vaoMap_.release();
 
     // 静态 TF
-    // tf_.setTransform("map","camera_init", Eigen::Vector3d::Zero(), Eigen::Quaterniond::Identity());
     tf_.setTransform("body","base_link", Eigen::Vector3d::Zero(), Eigen::Quaterniond::Identity());
 
     // 初始化静态几何体 VAO/VBO
@@ -151,6 +150,17 @@ void GLWidget::resizeGL(int w,int h)
     proj_(3,2) = -1.0;
     proj_(2,3) = (2.0 * zFar * zNear) / (zNear - zFar);
     proj_(3,3) = 0.0;
+
+    // ========== 修正：逆时针旋转 +90°，让 X 朝北 ==========
+    Eigen::Matrix4d rotateToNorth = Eigen::Matrix4d::Identity();
+    const double rotAngle = M_PI / 2.0;  // 正数表示逆时针，X朝北
+    rotateToNorth(0,0) = std::cos(rotAngle);
+    rotateToNorth(0,1) = -std::sin(rotAngle);
+    rotateToNorth(1,0) = std::sin(rotAngle);
+    rotateToNorth(1,1) = std::cos(rotAngle);
+
+    proj_ = proj_ * rotateToNorth;
+    // ========== 结束修正 ==========
 }
 
 QMatrix4x4 GLWidget::toQMatrix(const Eigen::Matrix4d &m)
@@ -286,7 +296,8 @@ void GLWidget::drawSolidArrow(const Eigen::Matrix4d &T, float len, float radius)
     Rfix(2,0)=-sin(a); Rfix(2,2)=cos(a);
     Eigen::Matrix4d mvp = proj_*view_*T*Rfix;
     progSimple_.setUniformValue("mvp", toQMatrix(mvp));
-    progSimple_.setUniformValue("col", QVector3D(1.0f,0.5f,0.0f));
+    // progSimple_.setUniformValue("col", QVector3D(1.0f,0.5f,0.0f));
+    progSimple_.setUniformValue("col", QVector3D(1.0f,0.0f,0.0f));
 
     vaoArrow_.bind();
     int cylinderVerts = (16+1)*2;
@@ -590,7 +601,6 @@ void GLWidget::wheelEvent(QWheelEvent* e)
     update();
 }
 
-static inline float clamp01(float v) { return std::max(0.0f, std::min(1.0f, v)); }
 QVector3D GLWidget::heightToColor(float z, float minZ, float maxZ)
 {
     // // 紫色-绿色
@@ -639,6 +649,7 @@ QVector3D GLWidget::normalToColor(const Eigen::Vector3f& n)
 // ========操作栏===============
 void GLWidget::clearMap()
 {
+    // 清理地图点云
     {
         QMutexLocker lk(&dataMtx_);
         mapInterleavedCpu_.clear();
@@ -646,11 +657,48 @@ void GLWidget::clearMap()
         mapDirty_.store(false, std::memory_order_release);
     }
 
-    // 清空 GPU buffer（主线程 / 当前 context）
+    // 清理轨迹
+    clearTrail();
+
+    // 清理实时点云
+    clearCloud();
+
+    // 清空GPU buffer（主线程 / 当前 context）
     QMetaObject::invokeMethod(this, [this](){
+        // 清空地图buffer
         vboMap_.bind();
         vboMap_.allocate(nullptr, 0);
         vboMap_.release();
+
+        // 清空点云buffer
+        vboCloud_.bind();
+        vboCloud_.allocate(nullptr, 0);
+        vboCloud_.release();
+
+        update();
+    }, Qt::QueuedConnection);
+}
+
+// 在GLWidget类中添加以下方法：
+void GLWidget::clearTrail()
+{
+    trail_.points.clear();
+    trail_.hasValidTransform = false;
+    update();
+}
+
+void GLWidget::clearCloud()
+{
+    QMutexLocker lk(&dataMtx_);
+    cloudCpu_.clear();
+    cloudPts_ = 0;
+    cloudDirty_.store(false, std::memory_order_release);
+
+    // 清空GPU buffer
+    QMetaObject::invokeMethod(this, [this](){
+        vboCloud_.bind();
+        vboCloud_.allocate(nullptr, 0);
+        vboCloud_.release();
         update();
     }, Qt::QueuedConnection);
 }
