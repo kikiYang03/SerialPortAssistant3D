@@ -572,24 +572,43 @@ void GLWidget::mousePressEvent(QMouseEvent* e)
     lastMousePos_ = e->pos();
 }
 
+// 右键鼠标移动
 void GLWidget::mouseMoveEvent(QMouseEvent* e)
 {
     QPoint delta = e->pos() - lastMousePos_;
     lastMousePos_ = e->pos();
 
     if (e->buttons() & Qt::LeftButton) {
-        // 旋转视角
-        yaw_ += delta.x() * 0.5f;
-        pitch_ += delta.y() * 0.5f;
-        pitch_ = std::max(-89.0f, std::min(89.0f, pitch_));  // 限制范围
+        // 旋转视角 - 补偿视图的90°旋转
+        // 视图旋转90°后：X朝北，Y朝西
+        // 所以：垂直鼠标移动应该控制偏航（绕Z轴），水平移动应该控制俯仰（绕X轴）
+        yaw_ -= delta.y() * 0.5f;    // 垂直移动控制偏航
+        pitch_ += delta.x() * 0.5f;  // 水平移动控制俯仰
+        pitch_ = std::max(-89.0f, std::min(89.0f, pitch_));
     }
     else if (e->buttons() & Qt::RightButton) {
-        // 平移视角中心
+        // 平移视角中心 - 补偿视图的90°旋转
         float sensitivity = 0.01f * distance_;
-        center_.setX(center_.x() + delta.x() * sensitivity);
-        center_.setY(center_.y() - delta.y() * sensitivity);
+
+        // 视图旋转了90°，所以：
+        // 鼠标水平移动 -> 在旋转后的坐标系中是Y方向（西/东）
+        // 鼠标垂直移动 -> 在旋转后的坐标系中是X方向（北/南）
+        center_.setX(center_.x() - delta.y() * sensitivity);  // 注意负号：鼠标向下，场景向北
+        center_.setY(center_.y() - delta.x() * sensitivity);  // 注意负号：鼠标向右，场景向东
     }
 
+    update();
+}
+
+void GLWidget::addYaw(int degrees)
+{
+    yaw_ += degrees;
+    update();
+}
+void GLWidget::addPitch(int degrees)
+{
+    pitch_ += degrees;
+    pitch_ = qBound(-89.0f, pitch_, 89.0f);
     update();
 }
 

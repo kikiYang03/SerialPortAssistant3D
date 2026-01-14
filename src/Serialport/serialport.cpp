@@ -245,7 +245,6 @@ void SerialPort::handleTestFrame(const QByteArray &frame, bool isResponse)
 
         // 显示原始响应数据
         QString hexStr = frame.toHex(' ').toUpper();
-        ui->recvEdit->append("响应数据：" + hexStr);
     } else {
         // 这是其他设备发来的测试请求（不是对我们请求的响应）
         qDebug() << "收到测试请求，自动回复响应";
