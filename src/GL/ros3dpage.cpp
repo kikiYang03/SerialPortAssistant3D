@@ -11,6 +11,7 @@
 #include <QFileDialog>
 #include <QtMath>
 #include <QTimer>
+#include <QCheckBox>
 
 Ros3DPage::Ros3DPage(QWidget* parent)
     : QWidget(parent)
@@ -21,11 +22,6 @@ Ros3DPage::Ros3DPage(QWidget* parent)
     auto* side = new QFrame(this);
     side->setFrameShape(QFrame::StyledPanel);
     side->setFixedWidth(280);
-
-    auto* btnClear = new QPushButton(tr("清理地图"), side);
-    auto* btnReset = new QPushButton(tr("初始化相机"), side);
-    auto* btnSave  = new QPushButton(tr("保存地图"), side);
-    btnSave->setEnabled(false);
 
     // TF group
     auto* tfBox = new QGroupBox(tr("机器人坐标"), side);
@@ -44,6 +40,21 @@ Ros3DPage::Ros3DPage(QWidget* parent)
     form->addRow("pitch", labPitch_);
     form->addRow("roll",  labRoll_);
 
+    // 操作按钮栏
+    auto* controlBox = new QGroupBox(tr("操作按钮"), side);
+    auto* btnClear = new QPushButton(tr("清理地图"), controlBox);
+    auto* btnReset = new QPushButton(tr("初始化相机"), controlBox);
+    auto* btnSave  = new QPushButton(tr("保存地图"), controlBox);
+
+
+    auto* controlLay = new QVBoxLayout(controlBox);
+    controlLay->addWidget(btnClear);
+    controlLay->addWidget(btnReset);
+    controlLay->addWidget(btnSave);
+    controlLay->addStretch();   // 把按钮顶到上面
+
+    btnSave->setEnabled(false);
+
     // 新增：视角旋转按钮组
     auto* rotBox = new QGroupBox(tr("视角旋转"), side);
     auto* yawLeft   = new QPushButton(tr("左转 ◀"), rotBox);
@@ -57,14 +68,27 @@ Ros3DPage::Ros3DPage(QWidget* parent)
     rotLay->addWidget(yawRight,  1, 1);
     rotLay->addWidget(pitchDown, 2, 0, 1, 2);
 
+    // ---------- 新增：点云显隐开关 ----------
+    auto* cloudBox = new QGroupBox(tr("点云显示"), side);
+    auto* ckRealtime = new QCheckBox(tr("实时点云"), cloudBox);
+    auto* ckMap       = new QCheckBox(tr("地图点云"), cloudBox);
+    ckRealtime->setChecked(true);
+    ckMap->setChecked(true);
+
+    auto* cloudLay = new QVBoxLayout(cloudBox);
+    cloudLay->addWidget(ckRealtime);
+    cloudLay->addWidget(ckMap);
+
+
     auto* sideLay = new QVBoxLayout(side);
     sideLay->addWidget(tfBox);
     sideLay->addSpacing(10);
     sideLay->addWidget(rotBox);
     sideLay->addSpacing(10);
-    sideLay->addWidget(btnClear);
-    sideLay->addWidget(btnReset);
-    sideLay->addWidget(btnSave);
+    sideLay->addWidget(cloudBox);
+    sideLay->addSpacing(10);
+    sideLay->addWidget(controlBox);
+    sideLay->addSpacing(10);
     sideLay->addStretch(1);
 
     // ---------- 主布局 ----------
@@ -115,4 +139,8 @@ Ros3DPage::Ros3DPage(QWidget* parent)
                 labPitch_->setText(QString::number(qRadiansToDegrees(pitch),'f', 1));
                 labRoll_->setText(QString::number(qRadiansToDegrees(roll), 'f', 1));
             });
+
+    // 信号连接
+    connect(ckRealtime, &QCheckBox::toggled, gl_, &GLWidget::setShowRealtimeCloud);
+    connect(ckMap,      &QCheckBox::toggled, gl_, &GLWidget::setShowMapCloud);
 }

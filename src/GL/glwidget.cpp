@@ -366,7 +366,7 @@ void GLWidget::paintGL()
     drawAxis(T_ci_map, 10.0f);
     drawGrid(T_ci_map, 40, 1.0f);
 
-    // ---------- 4. 轨迹线（绿色）—— base_link 原点在 camera_init 系 ----------
+    // ---------- 4. 轨迹线（红色）—— base_link 原点在 camera_init 系 ----------
     if (trail_.points.size() > 1)
     {
         /* deque -> vector 拿到连续内存 */
@@ -375,7 +375,7 @@ void GLWidget::paintGL()
 
         progSimple_.bind();
         progSimple_.setUniformValue("mvp", toQMatrix(proj_ * view_));
-        progSimple_.setUniformValue("col", QVector3D(0,1,0));
+        progSimple_.setUniformValue("col", QVector3D(1,0,0));
 
         vaoTrail_.bind();
         vboTrail_.bind();
@@ -395,39 +395,29 @@ void GLWidget::paintGL()
         progSimple_.release();
     }
 
-    // ---------- 6. 当前帧点云（红色） ----------
-    {
+    // ---------- 6. 当前帧点云 ----------
+    if (showRealtimeCloud_ && cloudPts_ > 0) {
         progSimple_.bind();
         const Eigen::Matrix4d mvp = proj_ * view_;
         progSimple_.setUniformValue("mvp", toQMatrix(mvp));
         progSimple_.setUniformValue("col", QVector3D(0.35f, 0.85f, 0.95f));
-
-
         vaoCloud_.bind();
-        if (cloudPts_ > 0) {
-            glPointSize(cloudPtSize_);
-            glDrawArrays(GL_POINTS, 0, cloudPts_);
-        }
+        glPointSize(cloudPtSize_);
+        glDrawArrays(GL_POINTS, 0, cloudPts_);
         vaoCloud_.release();
         progSimple_.release();
     }
 
     // ---------- 7. 地图点云（彩色，高度着色） ----------
-    if (mapPts_ > 0)
-    {
+    if (showMapCloud_ && mapPts_ > 0) {
         progColorCloud_.bind();
         progColorCloud_.setUniformValue("mvp", toQMatrix(proj_ * view_));
-        progColorCloud_.setUniformValue("uPointSize", mapPtSize_); // 建议 3~6
-        progColorCloud_.setUniformValue("uAlpha", 1.0f);                  // 可试 0.8
-        progColorCloud_.setUniformValue("uSoftEdge", 0.35f);              // 0.25~0.45
-
+        progColorCloud_.setUniformValue("uPointSize", mapPtSize_);
+        progColorCloud_.setUniformValue("uAlpha", 1.0f);
+        progColorCloud_.setUniformValue("uSoftEdge", 0.35f);
         vaoMap_.bind();
         glDrawArrays(GL_POINTS, 0, mapPts_);
         vaoMap_.release();
-
-        progColorCloud_.release();
-
-
         progColorCloud_.release();
     }
 }
@@ -609,6 +599,20 @@ void GLWidget::addPitch(int degrees)
 {
     pitch_ += degrees;
     pitch_ = qBound(-89.0f, pitch_, 89.0f);
+    update();
+}
+
+void GLWidget::setShowRealtimeCloud(bool show)
+{
+    if (showRealtimeCloud_ == show) return;
+    showRealtimeCloud_ = show;
+    update();
+}
+
+void GLWidget::setShowMapCloud(bool show)
+{
+    if (showMapCloud_ == show) return;
+    showMapCloud_ = show;
     update();
 }
 

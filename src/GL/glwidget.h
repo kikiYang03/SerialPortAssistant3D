@@ -34,6 +34,10 @@ public:
     enum ColorMode { Height, Normal };
     void setColorMode(ColorMode m) { colorMode_ = m; update(); }
 
+    void setShowRealtimeCloud(bool show);   // 实时点云开关
+    void setShowMapCloud(bool show);        // 地图点云开关
+
+
 signals:
     void tfInfoChanged(double x, double y, double z,
                        double yaw_rad, double pitch_rad, double roll_rad);   //显示TF相关数据
@@ -140,6 +144,9 @@ private:
     void createGridGeometry();
 
     bool glReady_ = false;
+
+    bool showRealtimeCloud_ = true;         // 默认显示
+    bool showMapCloud_      = true;
 };
 
 #endif // GLWIDGET_H
