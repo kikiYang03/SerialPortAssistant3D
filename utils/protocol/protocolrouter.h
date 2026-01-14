@@ -52,8 +52,9 @@ signals:
 
     void uartFrameReceived(qint16 x, qint16 y, qint16 z, qint16 yaw);
 
-    // 统计信号
-    // void frameCountUpdated(quint8 type, int count);
+    // 串口接收信息信号
+    void uart14BFrameReceived(qint16 x, qint16 y, qint16 z,
+                              qint16 roll, qint16 pitch, qint16 yaw);
 
 private:
     explicit ProtocolRouter(QObject *parent = nullptr);
@@ -76,6 +77,9 @@ private:
     // void handleTFData(const QByteArray &frame);
     // void handleCloudData(const QByteArray &frame);
     // void handleMapData(const QByteArray &frame);
+
+    // 串口解析数据
+    void processUart14BFrame(const QByteArray &fr);
 
     static ProtocolRouter* m_instance;
     QMap<quint8, std::function<void(const QByteArray&)>> handlers;

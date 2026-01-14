@@ -3,6 +3,15 @@
 #include <QDateTime>
 #include <QtEndian>
 
+static int frameType(const QByteArray &buf)
+{
+    if (buf.size() < 3)                    return -1;
+    if (quint8(buf[0]) != 0xAA)            return -1;
+    if (buf.size() >= 14 && quint8(buf[13]) == 0x0A) return 0;   // 串口
+    if (quint8(buf.back()) == 0x0A)        return 1;             // 网络
+    return -1;
+}
+
 ProtocolRouter* ProtocolRouter::m_instance = nullptr;
 
 ProtocolRouter::ProtocolRouter(QObject *parent)
@@ -57,7 +66,7 @@ void ProtocolRouter::registerHandler(quint8 commandType, std::function<void(cons
 void ProtocolRouter::processDataStream(QByteArray buffer, bool isSerialPortMode)
 {
     if (isSerialPortMode) {
-        // 串口模式：处理10字节定长UART帧
+        // 串口模式：处理14字节定长UART帧
         processUartFrames(buffer);
     } else {
         // WiFi模式：处理协议帧
@@ -67,20 +76,17 @@ void ProtocolRouter::processDataStream(QByteArray buffer, bool isSerialPortMode)
 
 void ProtocolRouter::processUartFrames(QByteArray &buffer)
 {
-    while (buffer.size() >= 10) {
+    while (buffer.size() >= 14) {
         int head = buffer.indexOf(char(0xAA));
-        if (head < 0 || buffer.size() - head < 10) break;
+        if (head < 0 || buffer.size() - head < 14) break;
 
-        QByteArray frame = buffer.mid(head, 10);
-
-        // 验证帧格式
-        if (quint8(frame[0]) != 0xAA || quint8(frame[9]) != 0x0A) {
-            buffer.remove(head, 1);
+        QByteArray frame = buffer.mid(head, 14);
+        if (quint8(frame[0]) != 0xAA || quint8(frame[13]) != 0x0A) {
+            buffer.remove(head, 1);          // 滑窗
             continue;
         }
-
-        buffer.remove(head, 10);
-        processUartFrame(frame);
+        buffer.remove(head, 14);
+        processUart14BFrame(frame);          // 解析 + 发信号
     }
 }
 
@@ -101,7 +107,6 @@ void ProtocolRouter::processUartFrame(const QByteArray &frame)
     emit uartFrameReceived(x, y, z, yaw);
 }
 
-// 直接替换掉原来的 processProtocolFrames 实现
 void ProtocolRouter::processProtocolFrames(QByteArray &buffer)
 {
     m_parseBuf.append(buffer);          // 1. 把新字节喂进来
@@ -320,6 +325,20 @@ QByteArray ProtocolRouter::buildFrame(quint8 command, const QVariantMap &params)
              << "长度：" << frame.size() << "字节";
 
     return frame;
+}
+
+// 新增解析串口数据函数
+void ProtocolRouter::processUart14BFrame(const QByteArray &fr)
+{
+    auto i16 = [&](int off){ return qFromBigEndian<qint16>(
+                                  reinterpret_cast<const uchar*>(fr.constData()+off)); };
+    qint16 x    = i16(1);
+    qint16 y    = i16(3);
+    qint16 z    = i16(5);
+    qint16 roll = i16(7);
+    qint16 pitch= i16(9);
+    qint16 yaw  = i16(11);
+    emit uart14BFrameReceived(x,y,z,roll,pitch,yaw);
 }
 
 QByteArray ProtocolRouter::buildTestFrame(bool isResponse)

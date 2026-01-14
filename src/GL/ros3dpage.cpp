@@ -24,9 +24,10 @@ Ros3DPage::Ros3DPage(QWidget* parent)
     auto* btnClear = new QPushButton(tr("清理地图"), side);
     auto* btnReset = new QPushButton(tr("初始化相机"), side);
     auto* btnSave  = new QPushButton(tr("保存地图"), side);
+    btnSave->setEnabled(false);
 
     // TF group
-    auto* tfBox = new QGroupBox(tr("TF (camera_init -> base_link)"), side);
+    auto* tfBox = new QGroupBox(tr("机器人坐标"), side);
     labX_   = new QLabel("-", tfBox);
     labY_   = new QLabel("-", tfBox);
     labZ_   = new QLabel("-", tfBox);

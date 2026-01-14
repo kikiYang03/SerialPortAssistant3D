@@ -4,24 +4,6 @@
 #include <QDataStream>
 #include <QTimer>
 
-// 10 字节帧 → 打印字符串
-static QString uartFrameToText(const QByteArray &fr)
-{
-    if (fr.size() != 10 || quint8(fr[0]) != 0xAA || quint8(fr[9]) != 0x0A)
-        return {};
-
-    auto i16 = [&](int off) -> qint16 {
-        return qFromBigEndian<qint16>(reinterpret_cast<const uchar*>(fr.constData() + off));
-    };
-    qint16 x  = i16(1);
-    qint16 y  = i16(3);
-    qint16 z  = i16(5);
-    qint16 yaw= i16(7);
-
-    QString ts = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss >> 串口接收数据: ");
-    return ts + QStringLiteral("x=%1cm  y=%2cm  z=%3cm  yaw=%4°")
-                    .arg(x).arg(y).arg(z).arg(double(yaw), 0, 'f', 1);
-}
 
 // 初始化ui界面
 SerialPort::SerialPort(QWidget *parent)
@@ -137,6 +119,13 @@ SerialPort::SerialPort(QWidget *parent)
     });
 
     elapsedTimer.start();
+    // 串口数据解析
+    connect(ProtocolRouter::instance(), &ProtocolRouter::uart14BFrameReceived,
+            this, [this](qint16 x, qint16 y, qint16 z, qint16 r, qint16 p, qint16 yaw){
+                QString ts = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss >> 串口接收数据: ");
+                ui->recvEdit->append(ts + QString("x=%1 y=%2 z=%3 roll=%4 pitch=%5 yaw=%6")
+                                              .arg(x).arg(y).arg(z).arg(r).arg(p).arg(yaw));
+            });
 }
 
 // 析构函数
@@ -230,19 +219,7 @@ void SerialPort::processReceivedData(QByteArray &recBuf)
     ui->recvNum->setText(QString("接收字节数量： %1").arg(recvNum));
 
     if (isSerialPortConnected) {
-        recvBuffer.append(recBuf);
-        while (recvBuffer.size() >= 10) {
-            int head = recvBuffer.indexOf(char(0xAA));
-            if (head < 0 || recvBuffer.size() - head < 10) break;
-            QByteArray frame = recvBuffer.mid(head, 10);
-            if (quint8(frame[0]) != 0xAA || quint8(frame[9]) != 0x0A) {
-                recvBuffer.remove(head, 1);
-                continue;
-            }
-            recvBuffer.remove(head, 10);
-            QString line = uartFrameToText(frame);
-            if (!line.isEmpty()) ui->recvEdit->append(line);
-        }
+        emit rawBytesArrived(recBuf,true);
     } else {
        emit rawBytesArrived(recBuf,false);
     }

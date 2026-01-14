@@ -13,7 +13,8 @@ const QVector<Parameter> Params::s_parameters = {
     {"0x04", "Roll角度", "-180~180", "雷达滚转角，单位度", 0},
     {"0x05", "Pitch角度", "-180~180", "雷达俯仰角，单位度", 0},
     {"0x06", "Yaw角度", "-180~180", "雷达偏航角，单位度", 0},
-    {"0x10", "建图or定位模式", "0~1", "0=建图模式，1=定位模式，保存地图后可以设置为定位模式，重启模块后则会调用保存的地图进行定位", 0},
+    // {"0x10", "建图or定位模式", "0~1", "0=建图模式，1=定位模式，保存地图后可以设置为定位模式，重启模块后则会调用保存的地图进行定位", 0},
+    {"0x11", "输出方式", "0~1", "0=串口输出坐标，1=mavlink格式输出可连接px4飞控", 0},
     };
 
 Params::Params(QWidget *parent)
@@ -193,7 +194,15 @@ QWidget* Params::createValueWidget(const QString &id, const QString &range, int 
         comboBox->addItem("定位模式", 1);
         comboBox->setCurrentIndex(defaultValue);
         layout->addWidget(comboBox);
-    }else if(id == "-")
+    }
+    else if(id == "0x11"){
+        QComboBox *comboBox = new QComboBox();
+        comboBox->addItem("串口输出坐标", 0);
+        comboBox->addItem("mavlink格式输出", 1);
+        comboBox->setCurrentIndex(defaultValue);
+        layout->addWidget(comboBox);
+    }
+    else if(id == "-")
     {
 
     }
@@ -401,7 +410,7 @@ void Params::onFoldButtonClicked()
         m_isGroupFolded = true;
     }
 }
-
+// 点击恢复默认参数按钮
 void Params::on_defaultButton_clicked()
 {
     restoreDefaultValues();
