@@ -208,8 +208,8 @@ void GLWidget::drawAxis(const Eigen::Matrix4d &T, float len)
 /* ---------- 网格 ---------- */
 void GLWidget::createGridGeometry()
 {
-    constexpr int cells = 40;
-    constexpr float step = 1.0f;
+    constexpr int cells = 80;
+    constexpr float step = 0.5f;
     std::vector<Eigen::Vector3f> lines;
     lines.reserve(cells*4*2);
     float ext = cells*step*0.5f;
@@ -375,7 +375,8 @@ void GLWidget::paintGL()
 
         progSimple_.bind();
         progSimple_.setUniformValue("mvp", toQMatrix(proj_ * view_));
-        progSimple_.setUniformValue("col", QVector3D(1,0,0));
+        // progSimple_.setUniformValue("col", QVector3D(0.31f, 0.82f, 0.57f));
+        progSimple_.setUniformValue("col", QVector3D(1.0f, 1.0f, 1.0f));
 
         vaoTrail_.bind();
         vboTrail_.bind();
@@ -569,12 +570,9 @@ void GLWidget::mouseMoveEvent(QMouseEvent* e)
     lastMousePos_ = e->pos();
 
     if (e->buttons() & Qt::LeftButton) {
-        // 旋转视角 - 补偿视图的90°旋转
-        // 视图旋转90°后：X朝北，Y朝西
-        // 所以：垂直鼠标移动应该控制偏航（绕Z轴），水平移动应该控制俯仰（绕X轴）
-        yaw_ -= delta.y() * 0.5f;    // 垂直移动控制偏航
-        pitch_ += delta.x() * 0.5f;  // 水平移动控制俯仰
-        pitch_ = std::max(-89.0f, std::min(89.0f, pitch_));
+        pitch_ -= delta.y() * 0.5f;   // 鼠标上下 → 俯仰
+        yaw_   += delta.x() * 0.5f;   // 鼠标左右 → 偏航
+        pitch_ = qBound(-89.0f, pitch_, 89.0f);
     }
     else if (e->buttons() & Qt::RightButton) {
         // 平移视角中心 - 补偿视图的90°旋转
