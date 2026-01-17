@@ -44,16 +44,16 @@ Ros3DPage::Ros3DPage(QWidget* parent)
     auto* controlBox = new QGroupBox(tr("操作按钮"), side);
     auto* btnClear = new QPushButton(tr("清理地图"), controlBox);
     auto* btnReset = new QPushButton(tr("初始化相机"), controlBox);
-    auto* btnSave  = new QPushButton(tr("保存地图"), controlBox);
+    // auto* btnSave  = new QPushButton(tr("保存地图"), controlBox);
 
 
     auto* controlLay = new QVBoxLayout(controlBox);
     controlLay->addWidget(btnClear);
     controlLay->addWidget(btnReset);
-    controlLay->addWidget(btnSave);
+    // controlLay->addWidget(btnSave);
     controlLay->addStretch();   // 把按钮顶到上面
 
-    btnSave->setEnabled(false);
+    // btnSave->setEnabled(false);
 
     // 新增：视角旋转按钮组
     auto* rotBox = new QGroupBox(tr("视角旋转"), side);
@@ -79,6 +79,18 @@ Ros3DPage::Ros3DPage(QWidget* parent)
     cloudLay->addWidget(ckRealtime);
     cloudLay->addWidget(ckMap);
 
+    // ---------- 操作说明 ----------
+    auto* instBox = new QGroupBox(tr("操作说明"), side);
+    auto* labInstructions = new QLabel(
+        tr("1. 左键旋转视角<br>2. 右键移动视角<br>3. 滚轮缩放"),
+        instBox);
+    labInstructions->setWordWrap(true);
+    labInstructions->setStyleSheet("QLabel { font-size: 18px; }");
+
+    auto* instLay = new QVBoxLayout(instBox);
+    instLay->addWidget(labInstructions);
+    instLay->addStretch();
+
 
     auto* sideLay = new QVBoxLayout(side);
     sideLay->addWidget(tfBox);
@@ -88,6 +100,8 @@ Ros3DPage::Ros3DPage(QWidget* parent)
     sideLay->addWidget(cloudBox);
     sideLay->addSpacing(10);
     sideLay->addWidget(controlBox);
+    sideLay->addSpacing(10);
+    sideLay->addWidget(instBox);
     sideLay->addSpacing(10);
     sideLay->addStretch(1);
 
@@ -99,8 +113,8 @@ Ros3DPage::Ros3DPage(QWidget* parent)
 
     // ---------- 连接原有按钮 ----------
     connect(btnClear, &QPushButton::clicked, gl_, &GLWidget::clearMap);
-    connect(btnReset, &QPushButton::clicked, gl_, &GLWidget::resetCamera);
-    connect(btnSave,  &QPushButton::clicked, this, [this](){ gl_->saveMapToFile(); });
+    connect(btnReset, &QPushButton::clicked, gl_, &GLWidget::setCamera);
+    // connect(btnSave,  &QPushButton::clicked, this, [this](){ gl_->saveMapToFile(); });
 
     // ---------- 长按连发定时器 ----------
     auto* repeatTimer = new QTimer(this);

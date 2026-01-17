@@ -24,10 +24,6 @@ static inline void rotToYPR_ZYX(const Eigen::Matrix3d& R,
 
 GLWidget::GLWidget(QWidget *parent)
     : QOpenGLWidget(parent)
-    , distance_(10.0)   // 原来可能是 1.0 或 3.0，改到 10 以上
-    , yaw_(0)
-    , pitch_(0)
-    , center_(0,0,0)
 {
 }
 GLWidget::~GLWidget() {}
@@ -48,10 +44,6 @@ void GLWidget::initializeGL()
     glEnable(GL_MULTISAMPLE);
     glEnable(GL_PROGRAM_POINT_SIZE);
     glEnable(GL_POINT_SPRITE);
-
-
-    // （可选）如果你后面用了 gl_PointCoord 的圆点shader，不需要 GL_POINT_SMOOTH
-    // glDisable(GL_POINT_SMOOTH);
 
 
     progSimple_.addShaderFromSourceCode(QOpenGLShader::Vertex,
@@ -130,6 +122,7 @@ void GLWidget::initializeGL()
     createGridGeometry();
     createTrailVAO();
     createArrowGeometry();
+    setCamera();
 
     glReady_ = true;
 
@@ -151,16 +144,6 @@ void GLWidget::resizeGL(int w,int h)
     proj_(2,3) = (2.0 * zFar * zNear) / (zNear - zFar);
     proj_(3,3) = 0.0;
 
-    // ========== 修正：逆时针旋转 +90°，让 X 朝北 ==========
-    Eigen::Matrix4d rotateToNorth = Eigen::Matrix4d::Identity();
-    const double rotAngle = M_PI / 2.0;  // 正数表示逆时针，X朝北
-    rotateToNorth(0,0) = std::cos(rotAngle);
-    rotateToNorth(0,1) = -std::sin(rotAngle);
-    rotateToNorth(1,0) = std::sin(rotAngle);
-    rotateToNorth(1,1) = std::cos(rotAngle);
-
-    proj_ = proj_ * rotateToNorth;
-    // ========== 结束修正 ==========
 }
 
 QMatrix4x4 GLWidget::toQMatrix(const Eigen::Matrix4d &m)
@@ -198,9 +181,16 @@ void GLWidget::drawAxis(const Eigen::Matrix4d &T, float len)
     progSimple_.setUniformValue("mvp", toQMatrix(mvp));
 
     vaoAxis_.bind();
+
+    // 加粗坐标轴线
+    glLineWidth(3.0f);  // 设置线条宽度为3像素
+
     progSimple_.setUniformValue("col", QVector3D(1,0,0)); glDrawArrays(GL_LINES,0,2);
     progSimple_.setUniformValue("col", QVector3D(0,1,0)); glDrawArrays(GL_LINES,2,2);
     progSimple_.setUniformValue("col", QVector3D(0,0,1)); glDrawArrays(GL_LINES,4,2);
+
+    glLineWidth(1.0f);  // 恢复默认线条宽度
+
     vaoAxis_.release();
     progSimple_.release();
 }
@@ -209,7 +199,7 @@ void GLWidget::drawAxis(const Eigen::Matrix4d &T, float len)
 void GLWidget::createGridGeometry()
 {
     constexpr int cells = 80;
-    constexpr float step = 0.5f;
+    constexpr float step = 1.0f;
     std::vector<Eigen::Vector3f> lines;
     lines.reserve(cells*4*2);
     float ext = cells*step*0.5f;
@@ -355,7 +345,7 @@ void GLWidget::paintGL()
     lookCenter(1,3) = -center_.y();
     lookCenter(2,3) = -center_.z();
 
-    view = transBack * rotYaw * rotPitch * lookCenter;
+    view = transBack * rotPitch * rotYaw * lookCenter;
     view_ = view;
 
     // ---------- 2. 世界系（camera_init）基础元素 ----------
@@ -363,7 +353,7 @@ void GLWidget::paintGL()
 
     // ---------- 3. 把 map 当刚体：用最新 map→camera_init 的逆 ----------
     Eigen::Matrix4d T_ci_map = T_map_ci__latest_.inverse();
-    drawAxis(T_ci_map, 10.0f);
+    drawAxis(T_ci_map, 3.0f);
     drawGrid(T_ci_map, 40, 1.0f);
 
     // ---------- 4. 轨迹线（红色）—— base_link 原点在 camera_init 系 ----------
@@ -570,19 +560,39 @@ void GLWidget::mouseMoveEvent(QMouseEvent* e)
     lastMousePos_ = e->pos();
 
     if (e->buttons() & Qt::LeftButton) {
-        pitch_ -= delta.y() * 0.5f;   // 鼠标上下 → 俯仰
+        pitch_ += delta.y() * 0.5f;   // 鼠标上下 → 俯仰
         yaw_   += delta.x() * 0.5f;   // 鼠标左右 → 偏航
         pitch_ = qBound(-89.0f, pitch_, 89.0f);
     }
     else if (e->buttons() & Qt::RightButton) {
-        // 平移视角中心 - 补偿视图的90°旋转
-        float sensitivity = 0.01f * distance_;
+        // 平移视角中心 - 基于当前相机视角方向
+        float sensitivity = 0.02f; // 降低基础灵敏度，可配合distance_使用：0.005f * distance_
 
-        // 视图旋转了90°，所以：
-        // 鼠标水平移动 -> 在旋转后的坐标系中是Y方向（西/东）
-        // 鼠标垂直移动 -> 在旋转后的坐标系中是X方向（北/南）
-        center_.setX(center_.x() - delta.y() * sensitivity);  // 注意负号：鼠标向下，场景向北
-        center_.setY(center_.y() - delta.x() * sensitivity);  // 注意负号：鼠标向右，场景向东
+        // 从当前的yaw和pitch计算相机坐标系的基向量在世界坐标系中的表示
+        double yawRad = yaw_ * M_PI / 180.0;
+        double pitchRad = pitch_ * M_PI / 180.0;
+
+        double cosYaw = cos(yawRad);
+        double sinYaw = sin(yawRad);
+        double cosPitch = cos(pitchRad);
+        double sinPitch = sin(pitchRad);
+
+        // 相机右向量（世界坐标系）
+        Eigen::Vector3d right(cosYaw, -sinYaw, 0);
+
+        // 相机上向量（世界坐标系）
+        Eigen::Vector3d up(sinYaw * cosPitch, cosYaw * cosPitch, -sinPitch);
+
+        // 转换鼠标delta到世界坐标系的移动
+        // 注意：delta.y()需要取负号，因为Qt的y坐标向下增长，而相机坐标系向上为正
+        Eigen::Vector3d deltaWorld =
+            right * (delta.x() * sensitivity) -
+            up * (delta.y() * sensitivity);
+
+        // 更新相机中心
+        center_.setX(center_.x() - deltaWorld.x());
+        center_.setY(center_.y() - deltaWorld.y());
+        center_.setZ(center_.z() - deltaWorld.z());
     }
 
     update();
@@ -724,9 +734,9 @@ void GLWidget::clearCloud()
     }, Qt::QueuedConnection);
 }
 
-void GLWidget::resetCamera()
+void GLWidget::setCamera()
 {
-    yaw_ = 0.0;
+    yaw_ = 90.0;
     pitch_ = 0.0;
     distance_ = 10.0;
     center_ = QVector3D(0,0,0);
