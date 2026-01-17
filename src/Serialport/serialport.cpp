@@ -126,6 +126,16 @@ SerialPort::SerialPort(QWidget *parent)
                 ui->recvEdit->append(ts + QString("x=%1 y=%2 z=%3 roll=%4 pitch=%5 yaw=%6")
                                               .arg(x).arg(y).arg(z).arg(r).arg(p).arg(yaw));
             });
+
+    connect(ProtocolRouter::instance(), &ProtocolRouter::printFrame,
+            this, [this](const QByteArray &frame){
+                QString t = QDateTime::currentDateTime()
+                .toString(Qt::ISODateWithMs)
+                    .replace('T', ' ');
+                QString hex = frame.toHex(' ');          // 先转成 QString
+                ui->recvEdit->append(
+                    QString("%1  原始数据: %2").arg(t, hex));   // C++14 起支持多参数 arg
+            });
 }
 
 // 析构函数

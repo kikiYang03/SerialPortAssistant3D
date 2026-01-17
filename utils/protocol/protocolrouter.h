@@ -56,12 +56,15 @@ signals:
     void uart14BFrameReceived(qint16 x, qint16 y, qint16 z,
                               qint16 roll, qint16 pitch, qint16 yaw);
 
+    // 打印原来数据
+    void printFrame(const QByteArray &frame);
+
 private:
     explicit ProtocolRouter(QObject *parent = nullptr);
     ~ProtocolRouter();
 
     void initDefaultHandlers();
-    void processUartFrames(QByteArray &buffer);
+    void processUartFrames();
     void processProtocolFrames(QByteArray &buffer);
     QList<QByteArray> extractProtocolFrames(QByteArray &buffer);
     void dispatchFrame(const QByteArray &frame);
@@ -89,6 +92,7 @@ private:
     enum class ParseState { WaitHead, WaitPayload };
     ParseState m_parseState = ParseState::WaitHead;
     QByteArray m_parseBuf;   // 状态机内部缓冲
+    QByteArray m_uartBuffer;    // 【新增】串口模式累积缓冲区
 
     static const quint8 FRAME_HEADER = 0xAA;
     static const quint8 FRAME_TAIL = 0x0A;

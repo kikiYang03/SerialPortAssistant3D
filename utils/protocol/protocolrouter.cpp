@@ -66,45 +66,46 @@ void ProtocolRouter::registerHandler(quint8 commandType, std::function<void(cons
 void ProtocolRouter::processDataStream(QByteArray buffer, bool isSerialPortMode)
 {
     if (isSerialPortMode) {
-        // 串口模式：处理14字节定长UART帧
-        processUartFrames(buffer);
+        // 将新数据追加到累积缓冲区
+        m_uartBuffer.append(buffer);
+        processUartFrames();
     } else {
         // WiFi模式：处理协议帧
         processProtocolFrames(buffer);
     }
 }
 
-void ProtocolRouter::processUartFrames(QByteArray &buffer)
+void ProtocolRouter::processUartFrames()
 {
-    while (buffer.size() >= 14) {
-        int head = buffer.indexOf(char(0xAA));
-        if (head < 0 || buffer.size() - head < 14) break;
+    // emit printFrame(m_uartBuffer);  // 打印累积缓冲区数据
 
-        QByteArray frame = buffer.mid(head, 14);
+    while (m_uartBuffer.size() >= 14) {
+        int head = m_uartBuffer.indexOf(char(0xAA));
+        if (head < 0 || m_uartBuffer.size() - head < 14) {
+            // 如果没找到头或剩余数据不足14字节，保留数据等待下次
+            break;
+        }
+
+        // 提取14字节候选帧
+        QByteArray frame = m_uartBuffer.mid(head, 14);
+
+        // 验证帧头帧尾
         if (quint8(frame[0]) != 0xAA || quint8(frame[13]) != 0x0A) {
-            buffer.remove(head, 1);          // 滑窗
+            // 格式错误，移除帧头，滑窗继续查找
+            m_uartBuffer.remove(head, 1);
             continue;
         }
-        buffer.remove(head, 14);
-        processUart14BFrame(frame);          // 解析 + 发信号
+
+        // 解析成功
+        processUart14BFrame(frame);
+        m_uartBuffer.remove(head, 14);
     }
-}
 
-void ProtocolRouter::processUartFrame(const QByteArray &frame)
-{
-    if (frame.size() != 10) return;
-
-    // 解析10字节UART帧：AA x y z yaw 0A
-    qint16 x = qFromBigEndian<qint16>(
-        reinterpret_cast<const uchar*>(frame.constData() + 1));
-    qint16 y = qFromBigEndian<qint16>(
-        reinterpret_cast<const uchar*>(frame.constData() + 3));
-    qint16 z = qFromBigEndian<qint16>(
-        reinterpret_cast<const uchar*>(frame.constData() + 5));
-    qint16 yaw = qFromBigEndian<qint16>(
-        reinterpret_cast<const uchar*>(frame.constData() + 7));
-
-    emit uartFrameReceived(x, y, z, yaw);
+    // 防止缓冲区无限增长：如果缓冲区太大且没有有效帧头，清空
+    if (m_uartBuffer.size() > 1024 && !m_uartBuffer.contains(0xAA)) {
+        qWarning() << "串口缓冲区无有效帧头，清空:" << m_uartBuffer.size() << "字节";
+        m_uartBuffer.clear();
+    }
 }
 
 void ProtocolRouter::processProtocolFrames(QByteArray &buffer)
@@ -330,6 +331,9 @@ QByteArray ProtocolRouter::buildFrame(quint8 command, const QVariantMap &params)
 // 新增解析串口数据函数
 void ProtocolRouter::processUart14BFrame(const QByteArray &fr)
 {
+    if (fr.size() != 14 || quint8(fr[0]) != 0xAA || quint8(fr[13]) != 0x0A)
+        return ;
+
     auto i16 = [&](int off){ return qFromBigEndian<qint16>(
                                   reinterpret_cast<const uchar*>(fr.constData()+off)); };
     qint16 x    = i16(1);
