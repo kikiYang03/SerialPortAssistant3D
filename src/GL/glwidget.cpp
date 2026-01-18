@@ -7,6 +7,27 @@
 #define M_PI 3.14159265358979323846
 #endif
 
+/* ============= 新增：去重工具 ============= */
+namespace {
+constexpr float VOXEL_RES = 0.1f;          // 10 cm 体素
+
+inline std::tuple<int32_t,int32_t,int32_t> posToVoxel(const Eigen::Vector3f& p)
+{
+    return { int32_t(p.x() / VOXEL_RES),
+            int32_t(p.y() / VOXEL_RES),
+            int32_t(p.z() / VOXEL_RES) };
+}
+
+inline uint64_t voxelHash(int32_t x, int32_t y, int32_t z)
+{
+    auto pair = [](uint64_t a, uint64_t b){
+        return (a + b) * (a + b + 1) / 2 + b;
+    };
+    return pair(pair(uint64_t(x), uint64_t(y)), uint64_t(z));
+}
+}
+/* ======================================== */
+
 static inline void rotToYPR_ZYX(const Eigen::Matrix3d& R,
                                 double& yaw, double& pitch, double& roll)
 {
@@ -124,6 +145,7 @@ void GLWidget::initializeGL()
     createArrowGeometry();
     setCamera();
 
+    mapVoxelSet_.clear();   // <-- 新增
     glReady_ = true;
 
 }
@@ -472,16 +494,46 @@ void GLWidget::onTf(const TFMsg &m)
 
 void GLWidget::onCloud(const CloudMsg &m)
 {
+    if (m.points.empty()) return;
+
     QMutexLocker lk(&dataMtx_);
+
+    /* 1. 先把实时帧原样放进 cloudCpu_，保证实时窗口有东西可画 */
     cloudCpu_.clear();
     cloudCpu_.reserve(m.points.size());
-    for (const auto &p : m.points)
-        cloudCpu_.emplace_back(p.x(), p.y(), p.z());
-
+    for (const auto &pt : m.points)
+        cloudCpu_.emplace_back(pt.x(), pt.y(), pt.z());
     cloudPts_ = static_cast<int>(cloudCpu_.size());
     cloudDirty_.store(true, std::memory_order_release);
 
-    if (glReady_) update();   // 已显示时请求重绘；未显示时不重要
+    /* 2. 再把同一批点累加到地图（去重逻辑不变） */
+    float localMinZ = std::numeric_limits<float>::max();
+    float localMaxZ = std::numeric_limits<float>::lowest();
+    for (const auto &pt : m.points) {
+        float z = pt.z();
+        localMinZ = std::min(localMinZ, z);
+        localMaxZ = std::max(localMaxZ, z);
+    }
+    if (localMaxZ - localMinZ < 1e-6f) localMaxZ = localMinZ + 1.0f;
+
+    for (const auto &pt : m.points) {
+        Eigen::Vector3f p(pt.x(), pt.y(), pt.z());
+        auto [vx, vy, vz] = posToVoxel(p);
+        uint64_t h = voxelHash(vx, vy, vz);
+        if (mapVoxelSet_.insert(h).second) {          // 新体素
+            mapInterleavedCpu_.emplace_back(p);
+            QVector3D c = heightToColor(p.z(), mapMinZ_, mapMaxZ_);
+            mapInterleavedCpu_.emplace_back(c.x(), c.y(), c.z());
+        }
+    }
+
+    /* 更新全局高度范围 */
+    mapMinZ_ = std::min(mapMinZ_, localMinZ);
+    mapMaxZ_ = std::max(mapMaxZ_, localMaxZ);
+    mapPts_  = static_cast<int>(mapInterleavedCpu_.size() / 2);
+    mapDirty_.store(true, std::memory_order_release);
+
+    if (glReady_) update();
 }
 
 
@@ -686,6 +738,7 @@ void GLWidget::clearMap()
         mapInterleavedCpu_.clear();
         mapPts_ = 0;
         mapDirty_.store(false, std::memory_order_release);
+        mapVoxelSet_.clear();   // <-- 关键：把去重哈希也清掉
     }
 
     // 清理轨迹

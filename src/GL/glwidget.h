@@ -13,7 +13,8 @@
 
 #include "tftree.h"
 #include "protocol_msg.h"
-
+#include <unordered_set>   // ← 让 std::unordered_set 可见
+#include <cstdint>         // ← uint64_t
 // 轨迹缓存
 struct Trail {
     std::deque<Eigen::Vector3f> points;
@@ -107,6 +108,9 @@ private:
     // 地图高度范围（用于颜色）
     float mapMinZ_ = 0.0f;
     float mapMaxZ_ = 0.0f;
+
+    /* 去重用：空间哈希表 */
+    std::unordered_set<uint64_t> mapVoxelSet_;
 
     // 工具函数
     static QMatrix4x4 toQMatrix(const Eigen::Matrix4d &m);
