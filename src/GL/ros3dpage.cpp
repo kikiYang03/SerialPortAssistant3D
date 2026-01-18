@@ -72,12 +72,16 @@ Ros3DPage::Ros3DPage(QWidget* parent)
     auto* cloudBox = new QGroupBox(tr("点云显示"), side);
     auto* ckRealtime = new QCheckBox(tr("实时点云"), cloudBox);
     auto* ckMap       = new QCheckBox(tr("地图点云"), cloudBox);
+    auto* ckIncremental = new QCheckBox(tr("累计点云"), cloudBox);   // 新增
     ckRealtime->setChecked(true);
     ckMap->setChecked(true);
+    ckIncremental->setChecked(false);
+
 
     auto* cloudLay = new QVBoxLayout(cloudBox);
     cloudLay->addWidget(ckRealtime);
     cloudLay->addWidget(ckMap);
+    cloudLay->addWidget(ckIncremental);
 
     // ---------- 操作说明 ----------
     auto* instBox = new QGroupBox(tr("操作说明"), side);
@@ -157,4 +161,5 @@ Ros3DPage::Ros3DPage(QWidget* parent)
     // 信号连接
     connect(ckRealtime, &QCheckBox::toggled, gl_, &GLWidget::setShowRealtimeCloud);
     connect(ckMap,      &QCheckBox::toggled, gl_, &GLWidget::setShowMapCloud);
+    connect(ckIncremental, &QCheckBox::toggled, gl_, &GLWidget::setIncrementalMap);
 }

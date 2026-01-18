@@ -47,6 +47,7 @@ public slots:
     void onCloud(const CloudMsg &);
     void onMap(const MapCloudMsg &);
 
+
     void clearMap();        // 清理点云地图
     void clearTrail();  // 新增
     void clearCloud();  // 新增
@@ -56,6 +57,8 @@ public slots:
 
     void addYaw  (int degrees);   // 正数右转，负数左转
     void addPitch(int degrees);   // 正数下俯，负数上仰
+
+    void setIncrementalMap(bool on);   // 勾选/取消勾选按钮时调用
 
 private slots:   // 新增
     void doUploadCloud();   // 在主线程里把 cloudCpu_ 塞进 vboCloud_
@@ -67,12 +70,15 @@ protected:
     void paintGL() override;
 
 private:
+    bool incrementalMap_ = false;
+    void onMapFull(const MapCloudMsg &m);
 
     ColorMode colorMode_ = Height;
     TfTree tf_;
     // 点云大小
     float cloudPtSize_ = 3.0f;
     float mapPtSize_   = 3.0f;
+    double orthoExtent_ = 10.0;   // 正交半宽，控制“视野”大小
 
     // ---------------- CPU 缓存 + dirty 标志 ----------------
     QMutex dataMtx_;

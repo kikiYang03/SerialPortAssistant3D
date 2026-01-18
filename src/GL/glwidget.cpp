@@ -487,7 +487,59 @@ void GLWidget::onCloud(const CloudMsg &m)
 
 
 /* ---------- 1. 收到 MapCloudMsg 后只做 CPU 侧缓存 + 抛上传任务 ---------- */
+/* 对外仍然叫 onMap，内部根据 incrementalMap_ 决定是追加还是替换 */
 void GLWidget::onMap(const MapCloudMsg &m)
+{
+    if (m.points.empty()) return;
+
+    QMutexLocker lk(&dataMtx_);
+
+    if (!incrementalMap_) {
+        /* 原来的全量逻辑 */
+        onMapFull(m);
+        return;
+    }
+
+    /* ---------- 增量模式：直接追加，不清理历史 ---------- */
+    float oldMinZ = mapMinZ_, oldMaxZ = mapMaxZ_;
+    bool first = mapInterleavedCpu_.empty();
+
+    /* 1) 更新高度范围 */
+    for (const auto &p : m.points) {
+        mapMinZ_ = std::min(mapMinZ_, static_cast<float>(p.z()));
+        mapMaxZ_ = std::max(mapMaxZ_, static_cast<float>(p.z()));
+    }
+    if (first || std::abs(mapMaxZ_ - mapMinZ_) < 1e-6f)
+        mapMaxZ_ = mapMinZ_ + 1.0f;
+
+    /* 2) 直接尾部追加 */
+    size_t oldPts = mapPts_;
+    for (const auto &p : m.points) {
+        mapInterleavedCpu_.emplace_back(p.x(), p.y(), p.z());
+        QVector3D c = heightToColor(static_cast<float>(p.z()), mapMinZ_, mapMaxZ_);
+        mapInterleavedCpu_.emplace_back(c.x(), c.y(), c.z());
+    }
+    mapPts_ = static_cast<int>(oldPts + m.points.size());
+    mapDirty_.store(true, std::memory_order_release);
+
+    if (glReady_) update();
+}
+
+void GLWidget::setIncrementalMap(bool on)
+{
+    QMutexLocker lk(&dataMtx_);
+    if (incrementalMap_ == on) return;
+    incrementalMap_ = on;
+
+    if (!on) {
+        /* 切回全量模式 → 立即清空本地缓存，等下一帧全量 MapCloudMsg 来 */
+        mapInterleavedCpu_.clear();
+        mapPts_ = 0;
+        mapDirty_.store(true, std::memory_order_release);
+    }
+    if (glReady_) update();
+}
+void GLWidget::onMapFull(const MapCloudMsg &m)
 {
     // if (!glReady_) return;
     if (m.points.empty()) return;
@@ -634,27 +686,6 @@ void GLWidget::wheelEvent(QWheelEvent* e)
 
 QVector3D GLWidget::heightToColor(float z, float minZ, float maxZ)
 {
-    // // 紫色-绿色
-    // float n = (z - minZ) / (maxZ - minZ + 1e-6f);
-    // n = std::clamp(n, 0.0f, 1.0f);
-
-    // // 非线性，增强层次
-    // n = std::pow(n, 0.7f);
-
-    // // 低->高：黄绿青 -> 蓝紫
-    // float hue = 80.0f + n * (300.0f - 80.0f);
-
-    // // 饱和度略低
-    // float sat = 0.50f;
-
-    // // 亮度随高度变化（关键）
-    // float val = 0.70f + (1.0f - n) * 0.20f;
-
-    // QColor c;
-    // c.setHsvF(hue / 360.0f, sat, val);
-
-    // return QVector3D(c.redF(), c.greenF(), c.blueF());
-
     float n = (z - minZ) / (maxZ - minZ + 1e-6f);
     n = std::clamp(n, 0.0f, 1.0f);
 
