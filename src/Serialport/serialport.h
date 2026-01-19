@@ -27,6 +27,8 @@
 #include <protocolhandler.h>
 #include <tcpclient.h>
 #include <protocolrouter.h>
+#include "glwidget.h"
+
 
 namespace Ui {
 class SerialPort;
@@ -54,6 +56,8 @@ public:
     void appendMessage(const QString &message) {
         emit appendToDisplay(message);
     }
+    // 初始化Glwiget
+    void setGLWidget(GLWidget* w);
 
 protected:
     void findFreePorts();  //查找可用串口
@@ -115,6 +119,8 @@ private:
     void handleUartFrame(const QByteArray& frame); // 解析测试/参数命令
     void setupConnections();
 
+    GLWidget* glWidget_;   // 新增
+
 signals:
     void rawBytesArrived(QByteArray data, bool isSerialPortMode);
 
@@ -124,8 +130,6 @@ signals:
     void appendToDisplay(const QString &message);
 
     void parameterResponseReceived(const QByteArray &data);  // 参数响应信号
-    // 清理绘图视图
-    void requestClearVisualization();
 
     void tcpConnectionChanged(bool connected);
 

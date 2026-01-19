@@ -174,7 +174,7 @@ void ProtocolRos3D::parseMap(const QJsonObject& obj)
 
     m.points = extractXYZFromPointCloud2Raw(raw, width, height, point_step, row_step, is_dense);
     // qDebug() << "MapCloudMsg: " << m.points.size();
-    ++m_mapCnt;
+    // ++m_mapCnt;
     emit mapCloudUpdated(m);
 }
 
@@ -228,17 +228,16 @@ void ProtocolRos3D::calcHz()
     constexpr double WIN = 10.0;
     double tfHz   = (m_tfCnt   - m_tfLast)   / WIN;
     double scanHz = (m_cloudCnt - m_cloudLast) / WIN;
-    double mapHz  = (m_mapCnt  - m_mapLast)  / WIN;
+    // double mapHz  = (m_mapCnt  - m_mapLast)  / WIN;
 
     m_tfLast    = m_tfCnt;
     m_cloudLast = m_cloudCnt;
-    m_mapLast   = m_mapCnt;
+    // m_mapLast   = m_mapCnt;
 
-    QString msg = QStringLiteral("%1 >> 话题统计:  /tf = %2 Hz, /cloud = %3 Hz, /map_cloud = %4 Hz")
+    QString msg = QStringLiteral("%1 >> 话题统计:  /tf = %2 Hz, /cloud = %3 Hz")
                       .arg(QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss"))
                       .arg(tfHz,   0, 'f', 2)
-                      .arg(scanHz, 0, 'f', 2)
-                      .arg(mapHz,  0, 'f', 2);
+                      .arg(scanHz, 0, 'f', 2);
 
     emit appendMessage(msg);
 }

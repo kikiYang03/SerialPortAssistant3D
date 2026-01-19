@@ -13,6 +13,7 @@ MainWindow::MainWindow(QWidget *parent)
     serialPort = new SerialPort;
     params = new Params;
     ros3dPage = new Ros3DPage;
+    serialPort->setGLWidget(ros3dPage->glWidget());
 
     ProtocolRouter* router = ProtocolRouter::instance();
 

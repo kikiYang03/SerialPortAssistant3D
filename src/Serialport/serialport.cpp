@@ -10,6 +10,7 @@ SerialPort::SerialPort(QWidget *parent)
     : QWidget(parent)
     , ui(new Ui::SerialPort)
     , m_reconnectWarningShown(false)
+    , glWidget_(nullptr)
 {
     ui->setupUi(this);
 
@@ -160,6 +161,11 @@ SerialPort::~SerialPort()
     delete ui;
 }
 
+//
+void SerialPort::setGLWidget(GLWidget* w)
+{
+    glWidget_ = w;
+}
 // 数据发送函数
 void SerialPort::sendData(const QByteArray &data)
 {
@@ -299,10 +305,10 @@ void SerialPort::on_wifiConnectBt_clicked()
     TcpClient* tcpClient = TcpClient::getInstance();
 
     if(ui->wifiConnectBt->text() == "打开连接"){
+        /* ---- 新增：清掉上一轮的绘制数据 ---- */
+        if(glWidget_) glWidget_->clearMap();   // 与“清理地图”按钮同一套逻辑
         // 清空输出窗口
         on_clearRecvBt_clicked();
-        // 清空地图
-        emit requestClearVisualization();
         // 先停止可能的重连
         tcpClient->stopAutoReconnect();
         // 重置'重连'警告标志
