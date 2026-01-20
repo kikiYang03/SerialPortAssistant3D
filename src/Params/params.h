@@ -58,13 +58,10 @@ private:
     void setupTable();
     void setupParameters();
     QWidget* createValueWidget(const QString &id, const QString &range, int defaultValue);
-    void updateTableFromWidgets();
     void restoreDefaultValues();
 
     // 参数通信相关方法
     void sendParameterWriteRequest(const QString &paramId, int value);
-
-    void updateParameterValue(const QString &paramId, int value);
 
     int m_expectedParamCount = 8; // 根据实际参数数量设置
     int m_receivedParamCount = 0;

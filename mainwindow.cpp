@@ -90,17 +90,6 @@ MainWindow::MainWindow(QWidget *parent)
     connect(router, &ProtocolRouter::parameterFrameReceived,
             params, &Params::updateParameter);
 
-
-    // 统计
-    // connect(router, &ProtocolRouter::frameCountUpdated,
-    //         serialPort, &SerialPort::updateStatistics);
-    //==========================================================
-
-    // 3) 接收数据 -> 协议解析（跨线程 queued）
-    // connect(serialPort, &SerialPort::rawBytesArrived,
-    //         protocolHandler, &ProtocolRos3D::onRawBytes,
-    //         Qt::QueuedConnection);  //todo 这里要改成协议路由类
-
     // 4) 解析结果 -> 渲染（回主线程 queued）
     connect(protocolHandler, &ProtocolRos3D::tfUpdated,
             ros3dPage->glWidget(), &GLWidget::onTf, Qt::QueuedConnection);
