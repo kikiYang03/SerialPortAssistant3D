@@ -144,14 +144,15 @@ Ros3DPage::Ros3DPage(QWidget* parent)
 
     // ---------- TF 显示更新 ----------
     connect(gl_, &GLWidget::tfInfoChanged, this,
-            [this](double x,double y,double z,
-                   double yaw,double pitch,double roll){
-                labX_->setText(QString::number(x, 'f', 3));
-                labY_->setText(QString::number(y, 'f', 3));
-                labZ_->setText(QString::number(z, 'f', 3));
-                labYaw_->setText(QString::number(qRadiansToDegrees(yaw),   'f', 1));
-                labPitch_->setText(QString::number(qRadiansToDegrees(pitch),'f', 1));
-                labRoll_->setText(QString::number(qRadiansToDegrees(roll), 'f', 1));
+            [this](double x, double y, double z,
+                   double yaw, double pitch, double roll){
+                labX_->setText(QString::number(x, 'f', 2) + " m");
+                labY_->setText(QString::number(y, 'f', 2) + " m");
+                labZ_->setText(QString::number(z, 'f', 2) + " m");
+
+                labYaw_->setText(QString::number(qRadiansToDegrees(yaw), 'f', 2) + "°");
+                labPitch_->setText(QString::number(qRadiansToDegrees(pitch), 'f', 2) + "°");
+                labRoll_->setText(QString::number(qRadiansToDegrees(roll), 'f', 2) + "°");
             });
 
     // 信号连接

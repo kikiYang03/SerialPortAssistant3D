@@ -686,26 +686,6 @@ void GLWidget::wheelEvent(QWheelEvent* e)
 
 QVector3D GLWidget::heightToColor(float z, float minZ, float maxZ)
 {
-    // // 紫色-绿色
-    // float n = (z - minZ) / (maxZ - minZ + 1e-6f);
-    // n = std::clamp(n, 0.0f, 1.0f);
-
-    // // 非线性，增强层次
-    // n = std::pow(n, 0.7f);
-
-    // // 低->高：黄绿青 -> 蓝紫
-    // float hue = 80.0f + n * (300.0f - 80.0f);
-
-    // // 饱和度略低
-    // float sat = 0.50f;
-
-    // // 亮度随高度变化（关键）
-    // float val = 0.70f + (1.0f - n) * 0.20f;
-
-    // QColor c;
-    // c.setHsvF(hue / 360.0f, sat, val);
-
-    // return QVector3D(c.redF(), c.greenF(), c.blueF());
 
     float n = (z - minZ) / (maxZ - minZ + 1e-6f);
     n = std::clamp(n, 0.0f, 1.0f);
@@ -791,7 +771,7 @@ void GLWidget::setCamera()
 {
     yaw_ = 90.0;
     pitch_ = 0.0;
-    distance_ = 10.0;
+    distance_ = 15.0;
     center_ = QVector3D(0,0,0);
     update();
 }

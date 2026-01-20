@@ -173,7 +173,6 @@ void SerialPort::sendData(const QByteArray &data)
     TcpClient* tcpClient = TcpClient::getInstance();
 
     if(isSerialPortConnected){
-        qDebug() << "使用串口发送测试数据...";
         if (serialPort->isOpen()) {
             bytesSent = serialPort->write(data);
         } else {
