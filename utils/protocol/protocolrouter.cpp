@@ -285,22 +285,10 @@ QByteArray ProtocolRouter::buildFrame(quint8 command, const QVariantMap &params)
         quint8 subCmd = params.value("sub_cmd", 0x01).toUInt();
         frame.append(static_cast<char>(subCmd)); // 子命令
 
-        // 如果是参数读取请求，可以添加更多数据
-        if (subCmd == 0x03 && params.contains("param_id")) {
-            quint8 paramId = params.value("param_id").toUInt();
-            frame.append(static_cast<char>(paramId));
-        }
-
         break;
     }
-
     case 0x10: { // 参数写入
         frame.append(static_cast<char>(0x10)); // 主命令
-
-        if (!params.contains("param_id") || !params.contains("value")) {
-            qWarning() << "构建参数帧缺少必要参数";
-            return QByteArray();
-        }
 
         quint8 paramId = params.value("param_id").toUInt();
         qint16 value = params.value("value").toInt();

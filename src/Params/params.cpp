@@ -35,7 +35,7 @@ Params::~Params()
 {
     delete ui;
 }
-
+// 初始化表格样式
 void Params::setupTable()
 {
     // 设置表格列数和标题
@@ -104,6 +104,7 @@ void Params::setupTable()
     ui->optLabel->setStyleSheet("font-size: 10px;");
 }
 
+// 初始化参数信息
 void Params::setupParameters()
 {
     const QVector<Parameter>& parameters = s_parameters;
@@ -220,7 +221,7 @@ QWidget* Params::createValueWidget(const QString &id, const QString &range, int 
 }
 
 
-// 写入参数
+// 构建帧写入参数
 void Params::sendParameterWriteRequest(const QString &paramId, int value)
 {
     TcpClient* tcpClient = TcpClient::getInstance();
@@ -281,32 +282,7 @@ void Params::updateParameter(quint8 paramIdRaw, qint16 value)
     }
 }
 
-void Params::updateParameterValue(const QString &paramId, int value)
-{
-    for (int row = 0; row < ui->tableWidget->rowCount(); ++row) {
-        QTableWidgetItem *idItem = ui->tableWidget->item(row, 1);
-        if (idItem && idItem->text().compare(paramId, Qt::CaseInsensitive) == 0) {
-            QWidget *widget = valueWidgets[row];
-            QLayout *layout = widget->layout();
-            if (layout && layout->count() > 0) {
-                QWidget *valueControl = layout->itemAt(0)->widget();
-                if (QComboBox *comboBox = qobject_cast<QComboBox*>(valueControl)) {
-                    // 对于雷达型号参数，直接设置索引
-                    if (paramId == "0x00") {
-                        comboBox->setCurrentIndex(value);
-                    } else {
-                        // 其他参数使用组合框的情况
-                        comboBox->setCurrentIndex(value);
-                    }
-                } else if (QSpinBox *spinBox = qobject_cast<QSpinBox*>(valueControl)) {
-                    spinBox->setValue(value);
-                }
-            }
-            qDebug() << "更新界面参数:" << paramId << "=" << value;
-            break;
-        }
-    }
-}
+
 // 槽函数
 // 获取当前参数
 void Params::on_readButton_clicked()
@@ -334,10 +310,9 @@ void Params::on_readButton_clicked()
     qDebug() << "发送统一参数读取请求，数据:" << frame.toHex(' ');
     QString timestamp = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss >> 用户操作: ");
     emit appendMessage(timestamp + "读取当前参数...");
-    // QMessageBox::information(this, "读取参数", "正在获取所有参数...");
 }
 
-// 写入参数
+// 写入参数按钮
 void Params::on_writeButton_clicked()
 {
     TcpClient* tcpClient = TcpClient::getInstance();
@@ -347,12 +322,8 @@ void Params::on_writeButton_clicked()
         return;
     }
 
-    // 从界面读取值并发送写入请求
     int writeCount = 0;
     for (int row = 0; row < valueWidgets.size(); ++row) {
-        // 跳过折叠的行
-        if (m_isGroupFolded && row >= 1 && row <= 5) continue;
-
         QTableWidgetItem *idItem = ui->tableWidget->item(row, 1);
         if (!idItem || idItem->text() == "-") continue; // 跳过无参数ID的行
 
@@ -360,29 +331,26 @@ void Params::on_writeButton_clicked()
         QLayout *layout = widget->layout();
         if (layout && layout->count() > 0) {
             QWidget *valueControl = layout->itemAt(0)->widget();
+            // 按照样式按钮类型获取值
             if (QComboBox *comboBox = qobject_cast<QComboBox*>(valueControl)) {
                 int value = comboBox->currentData().toInt();
-                // 添加小延迟，避免连续发送
-                QTimer::singleShot(writeCount * 100, this, [this, id = idItem->text(), value]() {
-                    sendParameterWriteRequest(id, value);
-                });
+                sendParameterWriteRequest(idItem->text(), value); // 发送写入请求
                 writeCount++;
             } else if (QSpinBox *spinBox = qobject_cast<QSpinBox*>(valueControl)) {
                 int value = spinBox->value();
-                // 添加小延迟，避免连续发送
-                QTimer::singleShot(writeCount * 100, this, [this, id = idItem->text(), value]() {
-                    sendParameterWriteRequest(id, value);
-                });
+                sendParameterWriteRequest(idItem->text(), value); // 发送写入请求
                 writeCount++;
             }
         }
     }
 
     if (writeCount > 0) {
-        // QMessageBox::information(this, "写入参数",
-        //                          QString("正在将 %1 个参数写入模块...\n写入操作无响应确认。").arg(writeCount));
-        QMessageBox::information(this, "写入参数", QString("请断电重启确保参数生效"));
-        ui->optLabel->setText("写入参数");
+        // 发送完成指令帧 AA 00 04 0A
+        QByteArray completionFrame = ProtocolRouter::buildFrame(0x00, QVariantMap{{"sub_cmd", 0x04}});
+        tcpClient->sendData(completionFrame);
+
+        QMessageBox::information(this, "写入参数", "模块已更新参数并关机，请重新上电");
+        ui->optLabel->setText("参数写入完成");
         ui->optLabel->setStyleSheet("color: blue;");
     } else {
         QMessageBox::warning(this, "警告", "没有找到需要写入的参数");
@@ -419,28 +387,6 @@ void Params::on_defaultButton_clicked()
     ui->optLabel->setText("恢复参数默认值");
     ui->optLabel->setStyleSheet("color: blue;");
     QMessageBox::information(this, "恢复默认", "上位机已恢复默认参数，需写入参数");
-}
-
-// 写入参数
-void Params::updateTableFromWidgets()
-{
-    // 从界面控件读取值
-    for (int row = 0; row < valueWidgets.size(); ++row) {
-        QWidget *widget = valueWidgets[row];
-        QLayout *layout = widget->layout();
-        if (layout && layout->count() > 0) {
-            QWidget *valueControl = layout->itemAt(0)->widget();
-            if (QComboBox *comboBox = qobject_cast<QComboBox*>(valueControl)) {
-                int value = comboBox->currentData().toInt();
-                // 处理下拉框值
-                qDebug() << "参数" << row << "值:" << value;
-            } else if (QSpinBox *spinBox = qobject_cast<QSpinBox*>(valueControl)) {
-                int value = spinBox->value();
-                // 处理数字输入框值
-                qDebug() << "参数" << row << "值:" << value;
-            }
-        }
-    }
 }
 
 // 恢复默认参数
