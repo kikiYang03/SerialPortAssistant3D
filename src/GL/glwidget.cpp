@@ -449,7 +449,7 @@ void GLWidget::paintGL()
 /* -------------- 1. 收 TF:俩静态只接收一次，动态一直更新 -------------- */
 void GLWidget::onTf(const TFMsg &m)
 {
-    qDebug() << "收到TF消息:" << m.frame_id << "->" << m.child_frame_id;
+    // qDebug() << "收到TF消息:" << m.frame_id << "->" << m.child_frame_id;
 
     /* ============= 静态TF1: map → camera_init ============= */
     if (m.frame_id == "map" && m.child_frame_id == "camera_init")
@@ -530,15 +530,15 @@ void GLWidget::onTf(const TFMsg &m)
 
 void GLWidget::onCloud(const CloudMsg &m)
 {
-    qDebug() << "cloudmsg: "<< m;
+    // qDebug() << "cloudmsg: "<< m;
     if (m.points.empty()) return;
 
-    for (int i = 0; i < std::min(10, (int)m.points.size()); ++i) {
-        qDebug() << "点" << i << ": ("
-                 << m.points[i].x() << ", "
-                 << m.points[i].y() << ", "
-                 << m.points[i].z() << ")";
-    }
+    // for (int i = 0; i < std::min(10, (int)m.points.size()); ++i) {
+    //     qDebug() << "点" << i << ": ("
+    //              << m.points[i].x() << ", "
+    //              << m.points[i].y() << ", "
+    //              << m.points[i].z() << ")";
+    // }
 
     QMutexLocker lk(&dataMtx_);
 
