@@ -42,6 +42,21 @@ static inline void rotToYPR_ZYX(const Eigen::Matrix3d& R,
     roll = std::atan2(R(2,1), R(2,2));
 }
 
+// =========== 新增：坐标转换辅助函数 ===========
+Eigen::Vector3d GLWidget::transformPointToMap(const Eigen::Vector3d& pt_in_camera_init)
+{
+    if (!hasReceivedMapToCameraInitTf_) {
+        return pt_in_camera_init;  // 未收到TF时原样返回
+    }
+
+    // camera_init → map 变换
+    Eigen::Vector4d homog(pt_in_camera_init.x(),
+                          pt_in_camera_init.y(),
+                          pt_in_camera_init.z(), 1.0);
+    Eigen::Vector4d transformed = T_map_ci_ * homog;
+    return Eigen::Vector3d(transformed.x(), transformed.y(), transformed.z());
+}
+
 
 GLWidget::GLWidget(QWidget *parent)
     : QOpenGLWidget(parent)
@@ -135,8 +150,6 @@ void GLWidget::initializeGL()
     glVertexAttribPointer(1,3,GL_FLOAT,GL_FALSE,6*sizeof(float),(void*)(3*sizeof(float)));
     vaoMap_.release();
 
-    // 静态 TF
-    tf_.setTransform("body","base_link", Eigen::Vector3d::Zero(), Eigen::Quaterniond::Identity());
 
     // 初始化静态几何体 VAO/VBO
     createAxisGeometry();
@@ -146,7 +159,15 @@ void GLWidget::initializeGL()
     setCamera();
 
     mapVoxelSet_.clear();   // <-- 新增
+    // 初始化TF相关标志
     glReady_ = true;
+
+    hasReceivedMapToCameraInitTf_ = false;
+    hasReceivedBodyToBaseLinkTf_ = false;   // 已存在，确保为false
+    T_map_ci_.setIdentity();
+    T_ci_map_.setIdentity();
+    T_body_baselink_.setIdentity();         // 新增：初始化静态TF矩阵
+    T_map_baselink_.setIdentity();
 
 }
 
@@ -198,7 +219,7 @@ void GLWidget::drawAxis(const Eigen::Matrix4d &T, float len)
 {
     progSimple_.bind();
     Eigen::Matrix4d S = Eigen::Matrix4d::Identity();
-    S(0,0) = S(1,1) = S(2,2) = len;   // 统一缩放
+    S(0, 0) = S(1, 1) = S(2, 2) = len;   // 统一缩放
     Eigen::Matrix4d mvp = proj_ * view_ * T * S;
     progSimple_.setUniformValue("mvp", toQMatrix(mvp));
 
@@ -207,9 +228,9 @@ void GLWidget::drawAxis(const Eigen::Matrix4d &T, float len)
     // 加粗坐标轴线
     glLineWidth(3.0f);  // 设置线条宽度为3像素
 
-    progSimple_.setUniformValue("col", QVector3D(1,0,0)); glDrawArrays(GL_LINES,0,2);
-    progSimple_.setUniformValue("col", QVector3D(0,1,0)); glDrawArrays(GL_LINES,2,2);
-    progSimple_.setUniformValue("col", QVector3D(0,0,1)); glDrawArrays(GL_LINES,4,2);
+    progSimple_.setUniformValue("col", QVector3D(1, 0, 0)); glDrawArrays(GL_LINES, 0, 2);
+    progSimple_.setUniformValue("col", QVector3D(0, 1, 0)); glDrawArrays(GL_LINES, 2, 2);
+    progSimple_.setUniformValue("col", QVector3D(0, 0, 1)); glDrawArrays(GL_LINES, 4, 2);
 
     glLineWidth(1.0f);  // 恢复默认线条宽度
 
@@ -241,13 +262,13 @@ void GLWidget::createGridGeometry()
     vaoGrid_.release();
 }
 
-void GLWidget::drawGrid(const Eigen::Matrix4d &T, int /*cells*/, float /*step*/)
+void GLWidget::drawGrid(const Eigen::Matrix4d &T, int cells, float step)
 {
     progSimple_.bind();
-    progSimple_.setUniformValue("mvp", toQMatrix(proj_*view_*T));
-    progSimple_.setUniformValue("col", QVector3D(.4,.4,.4));
+    progSimple_.setUniformValue("mvp", toQMatrix(proj_ * view_ * T));
+    progSimple_.setUniformValue("col", QVector3D(.4, .4, .4));
     vaoGrid_.bind();
-    glDrawArrays(GL_LINES, 0, 40*4*2);   // 固定 40*4*2 条线段
+    glDrawArrays(GL_LINES, 0, cells * 4 * 2);   // 固定 40*4*2 条线段
     vaoGrid_.release();
     progSimple_.release();
 }
@@ -255,7 +276,8 @@ void GLWidget::drawGrid(const Eigen::Matrix4d &T, int /*cells*/, float /*step*/)
 /* ---------- 轨迹 ---------- */
 void GLWidget::createTrailVAO()
 {
-    vboTrail_.create();  vaoTrail_.create();
+    vboTrail_.create();
+    vaoTrail_.create();
     vaoTrail_.bind();
     vboTrail_.setUsagePattern(QOpenGLBuffer::DynamicDraw);
     vboTrail_.bind();
@@ -321,94 +343,62 @@ void GLWidget::drawSolidArrow(const Eigen::Matrix4d &T, float len, float radius)
 
 void GLWidget::paintGL()
 {
+    doUploadCloud();  // 上传实时点云
+    doUploadMap();    // 上传地图点云
+
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     glEnable(GL_DEPTH_TEST);
 
-    // ---------- 0. 上传 VBO（保证 OpenGL context current） ----------
-    {
-        QMutexLocker lk(&dataMtx_);
-        if (cloudDirty_.exchange(false, std::memory_order_acq_rel)) {
-            vboCloud_.bind();
-            vboCloud_.allocate(cloudCpu_.data(),
-                               static_cast<int>(cloudCpu_.size() * sizeof(Eigen::Vector3f)));
-            vboCloud_.release();
-        }
-    }
-    {
-        QMutexLocker lk(&dataMtx_);
-        if (mapDirty_.exchange(false, std::memory_order_acq_rel)) {
-            vboMap_.bind();
-            vboMap_.allocate(mapInterleavedCpu_.data(),
-                             static_cast<int>(mapInterleavedCpu_.size() * sizeof(Eigen::Vector3f)));
-            vboMap_.release();
-        }
-    }
-
-
-    // ---------- 1. 计算轨道球 view 矩阵（camera_init 系） ----------
+    // ---------- 1. 计算相机的 view 矩阵（基于 map 坐标系）----------
     Eigen::Matrix4d view = Eigen::Matrix4d::Identity();
 
-    const double ry = yaw_   * M_PI / 180.0;
-    const double rp = pitch_ * M_PI / 180.0;
+    const double ry = yaw_ * M_PI / 180.0;  // 偏航角（yaw）转换为弧度
+    const double rp = pitch_ * M_PI / 180.0;  // 俯仰角（pitch）转换为弧度
 
     Eigen::Matrix4d transBack = Eigen::Matrix4d::Identity();
-    transBack(2,3) = -distance_;
+    transBack(2, 3) = -distance_;  // 沿 Z 轴后移
 
     Eigen::Matrix4d rotYaw = Eigen::Matrix4d::Identity();
-    rotYaw(0,0) =  cos(ry); rotYaw(0,1) = -sin(ry);
-    rotYaw(1,0) =  sin(ry); rotYaw(1,1) =  cos(ry);
+    rotYaw(0, 0) = cos(ry); rotYaw(0, 1) = -sin(ry);
+    rotYaw(1, 0) = sin(ry); rotYaw(1, 1) = cos(ry);
 
     Eigen::Matrix4d rotPitch = Eigen::Matrix4d::Identity();
-    rotPitch(1,1) =  cos(rp); rotPitch(1,2) = -sin(rp);
-    rotPitch(2,1) =  sin(rp); rotPitch(2,2) =  cos(rp);
+    rotPitch(1, 1) = cos(rp); rotPitch(1, 2) = -sin(rp);
+    rotPitch(2, 1) = sin(rp); rotPitch(2, 2) = cos(rp);
 
     Eigen::Matrix4d lookCenter = Eigen::Matrix4d::Identity();
-    lookCenter(0,3) = -center_.x();
-    lookCenter(1,3) = -center_.y();
-    lookCenter(2,3) = -center_.z();
+    lookCenter(0, 3) = -center_.x();
+    lookCenter(1, 3) = -center_.y();
+    lookCenter(2, 3) = -center_.z();
 
     view = transBack * rotPitch * rotYaw * lookCenter;
     view_ = view;
 
-    // ---------- 2. 世界系（camera_init）基础元素 ----------
-    Eigen::Matrix4d world = Eigen::Matrix4d::Identity();
+    // ---------- 2. 渲染栅格和坐标轴（直接在 map 坐标系下）----------
+    drawAxis(Eigen::Matrix4d::Identity(), 3.0f);  // 直接在 map 坐标系下渲染坐标轴
+    drawGrid(Eigen::Matrix4d::Identity(), 40, 1.0f);  // 直接在 map 坐标系下渲染栅格
 
-    // ---------- 3. 把 map 当刚体：用最新 map→camera_init 的逆 ----------
-    Eigen::Matrix4d T_ci_map = T_map_ci__latest_.inverse();
-    drawAxis(T_ci_map, 3.0f);
-    drawGrid(T_ci_map, 40, 1.0f);
-
-    // ---------- 4. 轨迹线（红色）—— base_link 原点在 camera_init 系 ----------
+    // ---------- 3. 渲染其他元素（如轨迹、点云等）----------
+    // 渲染轨迹线（白色）—— 现在直接在 map 坐标系下
     if (trail_.points.size() > 1)
     {
-        /* deque -> vector 拿到连续内存 */
-        std::vector<Eigen::Vector3f> tmp(trail_.points.begin(),
-                                         trail_.points.end());
+        std::vector<Eigen::Vector3f> tmp(trail_.points.begin(), trail_.points.end());
 
         progSimple_.bind();
+        // 关键点：直接使用 proj * view，因为点已经在 map 系下
         progSimple_.setUniformValue("mvp", toQMatrix(proj_ * view_));
-        // progSimple_.setUniformValue("col", QVector3D(0.31f, 0.82f, 0.57f));
         progSimple_.setUniformValue("col", QVector3D(1.0f, 1.0f, 1.0f));
 
         vaoTrail_.bind();
         vboTrail_.bind();
-        vboTrail_.allocate(tmp.data(),
-                           tmp.size() * sizeof(Eigen::Vector3f));
+        vboTrail_.allocate(tmp.data(), tmp.size() * sizeof(Eigen::Vector3f));
         glLineWidth(3.0f);
         glDrawArrays(GL_LINE_STRIP, 0, tmp.size());
         vaoTrail_.release();
         progSimple_.release();
     }
 
-    // ---------- 5. 最新箭头（camera_init 系） ----------
-    if (trail_.hasValidTransform)
-    {
-        progSimple_.bind();
-        drawSolidArrow(trail_.latestTransform, 1.0f, 0.15f);
-        progSimple_.release();
-    }
-
-    // ---------- 6. 当前帧点云 ----------
+    // 渲染当前帧点云
     if (showRealtimeCloud_ && cloudPts_ > 0) {
         progSimple_.bind();
         const Eigen::Matrix4d mvp = proj_ * view_;
@@ -421,7 +411,7 @@ void GLWidget::paintGL()
         progSimple_.release();
     }
 
-    // ---------- 7. 地图点云（彩色，高度着色） ----------
+    // 渲染地图点云（彩色，高度着色）
     if (showMapCloud_ && mapPts_ > 0) {
         progColorCloud_.bind();
         progColorCloud_.setUniformValue("mvp", toQMatrix(proj_ * view_));
@@ -433,144 +423,247 @@ void GLWidget::paintGL()
         vaoMap_.release();
         progColorCloud_.release();
     }
+
+    // 渲染箭头（map → base_link）
+    if (trail_.hasValidTransform &&
+        hasReceivedMapToCameraInitTf_ &&
+        hasReceivedBodyToBaseLinkTf_)
+    {
+        progSimple_.bind();
+        drawSolidArrow(T_map_baselink_, 1.0f, 0.15f);  // 使用 map → base_link 的变换矩阵
+        progSimple_.release();
+    }
+    // 渲染完成后打印TF状态
+    static int frame_cnt = 0;
+    if (++frame_cnt % 100 == 0) {
+        qDebug() << "TF接收状态:" << hasReceivedMapToCameraInitTf_;
+        if (hasReceivedMapToCameraInitTf_) {
+            qDebug() << "camera_init在map中的位置:"
+                     << T_map_ci_(0,3) << T_map_ci_(1,3) << T_map_ci_(2,3);
+        }
+    }
 }
 
 // =========== 数据处理
 
-/* -------------- 1. 收 TF：只存最新 -------------- */
+/* -------------- 1. 收 TF:俩静态只接收一次，动态一直更新 -------------- */
 void GLWidget::onTf(const TFMsg &m)
 {
-    // 我们关心的两条边直接存成矩阵，方便后面直接乘
+    qDebug() << "收到TF消息:" << m.frame_id << "->" << m.child_frame_id;
+
+    /* ============= 静态TF1: map → camera_init ============= */
     if (m.frame_id == "map" && m.child_frame_id == "camera_init")
     {
-        Eigen::Matrix4d T = Eigen::Matrix4d::Identity();
-        T.block<3,3>(0,0) = Eigen::Quaterniond(m.q.scalar(),m.q.x(),m.q.y(),m.q.z()).matrix();
-        T.block<3,1>(0,3) = Eigen::Vector3d(m.t.x(),m.t.y(),m.t.z());
-        T_map_ci__latest_ = T;                 // map→camera_init
+        if (hasReceivedMapToCameraInitTf_)
+        {
+            qDebug() << "  忽略：map→camera_init 静态TF已接收过";
+            return;
+        }
 
-        // 更新 TF 树（保留，万一别处要用）
-        tf_.setTransform(m.frame_id, m.child_frame_id,
-                         Eigen::Vector3d(m.t.x(),m.t.y(),m.t.z()),
-                         Eigen::Quaterniond(m.q.scalar(),m.q.x(),m.q.y(),m.q.z()));
+        Eigen::Matrix4d T = Eigen::Matrix4d::Identity();
+        T.block<3,3>(0,0) = Eigen::Quaterniond(m.q.scalar(), m.q.x(), m.q.y(), m.q.z()).matrix();
+        T.block<3,1>(0,3) = Eigen::Vector3d(m.t.x(), m.t.y(), m.t.z());
+
+        T_map_ci_ = T;           // map → camera_init
+        T_ci_map_ = T.inverse(); // camera_init → map
+
+        hasReceivedMapToCameraInitTf_ = true;
+        qDebug() << "✓ 静态TF已接收: map→camera_init";
     }
+
+    /* ============= 静态TF2: body → base_link ============= */
     else if (m.frame_id == "body" && m.child_frame_id == "base_link")
     {
-        Eigen::Matrix4d T = Eigen::Matrix4d::Identity();
-        T.block<3,3>(0,0) = Eigen::Quaterniond(m.q.scalar(),m.q.x(),m.q.y(),m.q.z()).matrix();
-        T.block<3,1>(0,3) = Eigen::Vector3d(m.t.x(),m.t.y(),m.t.z());
-        T_body_baselink_latest_ = T;           // body→base_link
+        if (hasReceivedBodyToBaseLinkTf_)
+        {
+            qDebug() << "  忽略：body→base_link 静态TF已接收过";
+            return;
+        }
 
-        // 更新 TF 树（保留，万一别处要用）
-        tf_.setTransform(m.frame_id, m.child_frame_id,
-                         Eigen::Vector3d(m.t.x(),m.t.y(),m.t.z()),
-                         Eigen::Quaterniond(m.q.scalar(),m.q.x(),m.q.y(),m.q.z()));
+        Eigen::Matrix4d T = Eigen::Matrix4d::Identity();
+        T.block<3,3>(0,0) = Eigen::Quaterniond(m.q.scalar(), m.q.x(), m.q.y(), m.q.z()).matrix();
+        T.block<3,1>(0,3) = Eigen::Vector3d(m.t.x(), m.t.y(), m.t.z());
+
+        T_body_baselink_ = T;  // 存储静态变换
+
+        hasReceivedBodyToBaseLinkTf_ = true;
+        qDebug() << "✓ 静态TF已接收: body→base_link";
     }
+
+    /* ============= 动态TF: camera_init → body ============= */
     else if (m.frame_id == "camera_init" && m.child_frame_id == "body")
     {
-        // 轨迹只跟 camera_init→body 有关
+        // 必须等待两个静态TF都接收完成
+        if (!hasReceivedMapToCameraInitTf_ || !hasReceivedBodyToBaseLinkTf_)
+        {
+            qDebug() << "  等待静态TF："
+                     << "map→camera_init=" << hasReceivedMapToCameraInitTf_
+                     << " body→base_link=" << hasReceivedBodyToBaseLinkTf_;
+            return;
+        }
+
+        // 1. 构建 camera_init→body 矩阵
         Eigen::Matrix4d T_ci_b = Eigen::Matrix4d::Identity();
-        T_ci_b.block<3,3>(0,0) = Eigen::Quaterniond(m.q.scalar(),m.q.x(),m.q.y(),m.q.z()).matrix();
-        T_ci_b.block<3,1>(0,3) = Eigen::Vector3d(m.t.x(),m.t.y(),m.t.z());
-        // 如果需要关系转化，则把下面的T_ci_b改为T_ci_bl
-        // Eigen::Matrix4d T_ci_bl = T_ci_b * T_body_baselink_latest_;
-        Eigen::Vector3f pt = T_ci_b.block<3,1>(0,3).cast<float>();
+        T_ci_b.block<3,3>(0,0) = Eigen::Quaterniond(m.q.scalar(), m.q.x(), m.q.y(), m.q.z()).matrix();
+        T_ci_b.block<3,1>(0,3) = Eigen::Vector3d(m.t.x(), m.t.y(), m.t.z());
+
+        // 2. 计算完整路径：map → base_link
+        Eigen::Matrix4d T_map_baselink = T_map_ci_ * T_ci_b * T_body_baselink_;
+
+        // 3. 存储map系下的轨迹点
+        Eigen::Vector3f pt = T_map_baselink.block<3,1>(0,3).cast<float>();
         trail_.points.push_back(pt);
         while (trail_.points.size() > kMaxTrail) trail_.points.pop_front();
 
-        trail_.latestTransform   = T_ci_b;
+        // 4. 更新状态
+        T_map_baselink_ = T_map_baselink;
+        trail_.latestTransform = T_map_baselink;
         trail_.hasValidTransform = true;
 
-
-        // 计算 YPR
+        // 5. 发出位姿信号（使用 camera_init 系下的原始值）
         const Eigen::Matrix3d R = T_ci_b.block<3,3>(0,0);
         double yaw, pitch, roll;
         rotToYPR_ZYX(R, yaw, pitch, roll);
-
-        emit tfInfoChanged(T_ci_b(0,3), T_ci_b(1,3), T_ci_b(2,3),
-                           yaw, pitch, roll);
+        emit tfInfoChanged(T_ci_b(0,3), T_ci_b(1,3), T_ci_b(2,3), yaw, pitch, roll);
     }
 }
 
-
 void GLWidget::onCloud(const CloudMsg &m)
 {
+    qDebug() << "cloudmsg: "<< m;
     if (m.points.empty()) return;
+
+    for (int i = 0; i < std::min(10, (int)m.points.size()); ++i) {
+        qDebug() << "点" << i << ": ("
+                 << m.points[i].x() << ", "
+                 << m.points[i].y() << ", "
+                 << m.points[i].z() << ")";
+    }
 
     QMutexLocker lk(&dataMtx_);
 
-    /* 1. 先把实时帧原样放进 cloudCpu_，保证实时窗口有东西可画 */
+    // 0) 先统计本帧在 map 系下的高度范围（用于归一化）
+    float localMinZ_map = std::numeric_limits<float>::max();
+    float localMaxZ_map = std::numeric_limits<float>::lowest();
+
+    // 这里直接复用 transformPointToMap，未收到TF时会原样返回（等价用 camera_init.z）
+    for (const auto &pt : m.points) {
+        Eigen::Vector3d p_ci(pt.x(), pt.y(), pt.z());
+        Eigen::Vector3d p_map = transformPointToMap(p_ci);
+        float z_map = static_cast<float>(p_map.z());
+        localMinZ_map = std::min(localMinZ_map, z_map);
+        localMaxZ_map = std::max(localMaxZ_map, z_map);
+    }
+    if (localMaxZ_map - localMinZ_map < 1e-6f) localMaxZ_map = localMinZ_map + 1.0f;
+
+    // 更新全局范围（map系）
+    mapMinZ_ = std::min(mapMinZ_, localMinZ_map);
+    mapMaxZ_ = std::max(mapMaxZ_, localMaxZ_map);
+
+    // 1) 转换实时帧到 map 系
     cloudCpu_.clear();
     cloudCpu_.reserve(m.points.size());
-    for (const auto &pt : m.points)
-        cloudCpu_.emplace_back(pt.x(), pt.y(), pt.z());
+
+    for (const auto &pt : m.points) {
+        Eigen::Vector3d p_ci(pt.x(), pt.y(), pt.z());
+        Eigen::Vector3d p_map = transformPointToMap(p_ci);
+        cloudCpu_.emplace_back(p_map.cast<float>());
+    }
     cloudPts_ = static_cast<int>(cloudCpu_.size());
     cloudDirty_.store(true, std::memory_order_release);
 
-    /* 2. 再把同一批点累加到地图（去重逻辑不变） */
-    float localMinZ = std::numeric_limits<float>::max();
-    float localMaxZ = std::numeric_limits<float>::lowest();
-    for (const auto &pt : m.points) {
-        float z = pt.z();
-        localMinZ = std::min(localMinZ, z);
-        localMaxZ = std::max(localMaxZ, z);
-    }
-    if (localMaxZ - localMinZ < 1e-6f) localMaxZ = localMinZ + 1.0f;
+    // 2) 累加到地图点云（带体素去重）
+    // 去重仍在 camera_init 系下做（保持你的原设计）
+    if (hasReceivedMapToCameraInitTf_) {
+        qDebug() << "要绘制点云529";
+        for (const auto &pt : m.points) {
+            Eigen::Vector3d p_ci(pt.x(), pt.y(), pt.z());
 
-    for (const auto &pt : m.points) {
-        Eigen::Vector3f p(pt.x(), pt.y(), pt.z());
-        auto [vx, vy, vz] = posToVoxel(p);
-        uint64_t h = voxelHash(vx, vy, vz);
-        if (mapVoxelSet_.insert(h).second) {          // 新体素
-            mapInterleavedCpu_.emplace_back(p);
-            QVector3D c = heightToColor(p.z(), mapMinZ_, mapMaxZ_);
-            mapInterleavedCpu_.emplace_back(c.x(), c.y(), c.z());
+            auto [vx, vy, vz] = posToVoxel(p_ci.cast<float>());
+            uint64_t h = voxelHash(vx, vy, vz);
+
+            if (mapVoxelSet_.insert(h).second) {
+                Eigen::Vector3d p_map = transformPointToMap(p_ci);
+                mapInterleavedCpu_.emplace_back(p_map.cast<float>());
+
+                // 颜色：基于 map.z + map系 min/max
+                QVector3D c = heightToColor(static_cast<float>(p_map.z()), mapMinZ_, mapMaxZ_);
+                mapInterleavedCpu_.emplace_back(c.x(), c.y(), c.z());
+            }
+        }
+    } else {
+        // 未收到TF时：transformPointToMap 原样返回，所以 map==camera_init（仍自洽）
+        for (const auto &pt : m.points) {
+            Eigen::Vector3d p_ci(pt.x(), pt.y(), pt.z());
+
+            auto [vx, vy, vz] = posToVoxel(p_ci.cast<float>());
+            uint64_t h = voxelHash(vx, vy, vz);
+
+            if (mapVoxelSet_.insert(h).second) {
+                Eigen::Vector3d p_map = transformPointToMap(p_ci);
+                mapInterleavedCpu_.emplace_back(p_map.cast<float>());
+
+                QVector3D c = heightToColor(static_cast<float>(p_map.z()), mapMinZ_, mapMaxZ_);
+                mapInterleavedCpu_.emplace_back(c.x(), c.y(), c.z());
+            }
         }
     }
 
-    /* 更新全局高度范围 */
-    mapMinZ_ = std::min(mapMinZ_, localMinZ);
-    mapMaxZ_ = std::max(mapMaxZ_, localMaxZ);
-    mapPts_  = static_cast<int>(mapInterleavedCpu_.size() / 2);
+    // 3) 维护地图点数与上传标志
+    mapPts_ = static_cast<int>(mapInterleavedCpu_.size() / 2);
     mapDirty_.store(true, std::memory_order_release);
 
     if (glReady_) update();
 }
+
 
 
 
 /* ---------- 1. 收到 MapCloudMsg 后只做 CPU 侧缓存 + 抛上传任务 ---------- */
 void GLWidget::onMap(const MapCloudMsg &m)
 {
-    // if (!glReady_) return;
     if (m.points.empty()) return;
-
     QMutexLocker lk(&dataMtx_);
 
-    /* 1) 统计 Z 范围 */
+    // 1) 统计 map 系 Z 范围（归一化范围）
     mapMinZ_ = std::numeric_limits<float>::max();
     mapMaxZ_ = std::numeric_limits<float>::lowest();
+
+    // 先缓存 camera_init 点（可选；保留你原结构）
+    std::vector<Eigen::Vector3d> points_ci;
+    points_ci.reserve(m.points.size());
+
     for (const auto &p : m.points) {
-        mapMinZ_ = std::min(mapMinZ_, static_cast<float>(p.z()));
-        mapMaxZ_ = std::max(mapMaxZ_, static_cast<float>(p.z()));
+        Eigen::Vector3d p_ci(p.x(), p.y(), p.z());
+        points_ci.push_back(p_ci);
+
+        Eigen::Vector3d p_map = transformPointToMap(p_ci);
+        float z_map = static_cast<float>(p_map.z());
+        mapMinZ_ = std::min(mapMinZ_, z_map);
+        mapMaxZ_ = std::max(mapMaxZ_, z_map);
     }
     if (std::abs(mapMaxZ_ - mapMinZ_) < 1e-6f) mapMaxZ_ = mapMinZ_ + 1.0f;
 
-    /* 2) 组装 interleaved 数据：pos + color */
+    // 2) 转换到 map 系并组装 interleaved 数据（pos+color）
     mapInterleavedCpu_.clear();
     mapInterleavedCpu_.reserve(m.points.size() * 2);
-    for (const auto &p : m.points) {
-        mapInterleavedCpu_.emplace_back(p.x(), p.y(), p.z());   // pos
-        QVector3D c = heightToColor(static_cast<float>(p.z()), mapMinZ_, mapMaxZ_);
-        mapInterleavedCpu_.emplace_back(c.x(), c.y(), c.z());   // color
+
+    for (const Eigen::Vector3d& p_ci : points_ci) {
+        Eigen::Vector3d p_map = transformPointToMap(p_ci);
+
+        // 位置
+        mapInterleavedCpu_.emplace_back(p_map.cast<float>());
+
+        // 颜色：基于 map.z + map系 min/max
+        QVector3D c = heightToColor(static_cast<float>(p_map.z()), mapMinZ_, mapMaxZ_);
+        mapInterleavedCpu_.emplace_back(c.x(), c.y(), c.z());
     }
 
     mapPts_ = static_cast<int>(m.points.size());
     mapDirty_.store(true, std::memory_order_release);
     if (glReady_) update();
-
-    /* 3) 立即在主线程上传（OpenGL context 当前） */
-    // QMetaObject::invokeMethod(this, &GLWidget::doUploadMap, Qt::QueuedConnection);
 }
+
 
 /* ---------- 2. 真正的 GPU 上传（主线程执行） ---------- */
 void GLWidget::doUploadCloud()

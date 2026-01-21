@@ -69,8 +69,18 @@ protected:
 
 private:
 
+    // =========== TF相关 ===========
+    Eigen::Matrix4d T_map_ci_;          // map → camera_init
+    Eigen::Matrix4d T_ci_map_;          // camera_init → map
+    Eigen::Matrix4d T_body_baselink_;   // 新增：body → base_link 静态变换矩阵
+    Eigen::Matrix4d T_map_baselink_;    // map → base_link 动态计算结果
+    bool hasReceivedMapToCameraInitTf_ = false;
+    bool hasReceivedBodyToBaseLinkTf_ = false;   // 已存在，正确
+
     ColorMode colorMode_ = Height;
     TfTree tf_;
+
+    Eigen::Vector3d transformPointToMap(const Eigen::Vector3d& pt_in_camera_init);
     // 点云大小
     float cloudPtSize_ = 3.0f;
     float mapPtSize_   = 3.0f;
