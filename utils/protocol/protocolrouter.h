@@ -26,7 +26,7 @@ public:
                           const QVariantMap &params = QVariantMap());
 
     // 便捷方法
-    QByteArray buildTestFrame(bool isResponse = false);
+    static QByteArray buildTestFrame(bool isResponse = false);
     QByteArray buildSaveMapFrame();
     static QByteArray buildReadParamFrame(quint8 paramId = 0xFF); // 0xFF=读取所有
     static QByteArray buildWriteParamFrame(quint8 paramId, qint16 value);

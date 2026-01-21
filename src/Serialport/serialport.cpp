@@ -216,7 +216,7 @@ void SerialPort::sendData(const QByteArray &data)
 void SerialPort::on_sendBt_clicked()
 {
     // 使用协议工具类构建测试帧
-    QByteArray testFrame = ProtocolHandler::buildTestFrame();
+    QByteArray testFrame = ProtocolRouter::buildTestFrame();
     qDebug() << "发送测试数据中...."<< testFrame;
     sendData(testFrame);
     QString timestamp = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss >> 测试操作: ");

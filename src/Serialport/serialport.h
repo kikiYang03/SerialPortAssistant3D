@@ -24,7 +24,6 @@
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QElapsedTimer>
-#include <protocolhandler.h>
 #include <tcpclient.h>
 #include <protocolrouter.h>
 #include "glwidget.h"
