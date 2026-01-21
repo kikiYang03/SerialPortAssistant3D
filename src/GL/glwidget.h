@@ -38,6 +38,9 @@ public:
     void setShowRealtimeCloud(bool show);   // 实时点云开关
     void setShowMapCloud(bool show);        // 地图点云开关
 
+    void setZFilterRange(float minZ, float maxZ);
+    void setZFilterEnabled(bool enabled);
+
 
 signals:
     void tfInfoChanged(double x, double y, double z,
@@ -161,6 +164,22 @@ private:
 
     bool showRealtimeCloud_ = true;         // 默认显示
     bool showMapCloud_      = true;
+
+
+    // Z轴范围控制
+    float zMinFilter_ = -10.0f;   // 默认最小Z值
+    float zMaxFilter_ =  10.0f;   // 默认最大Z值
+    bool  enableZFilter_ = false; // 是否启用Z轴过滤
+
+    // 添加新的过滤点云渲染方法
+    void drawFilteredPoints(QOpenGLShaderProgram &program,
+                            QOpenGLVertexArrayObject &vao,
+                            QOpenGLBuffer &vbo,
+                            const std::vector<Eigen::Vector3f>& points,
+                            int pointCount,
+                            float pointSize,
+                            const QVector3D& color = QVector3D(1,1,1),
+                            bool useColorProgram = false);
 };
 
 #endif // GLWIDGET_H

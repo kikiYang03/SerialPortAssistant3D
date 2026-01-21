@@ -2,6 +2,9 @@
 #define ROS3DPAGE_H
 #pragma once
 #include <QWidget>
+#include <QCheckBox>
+#include <QSlider>
+#include <QDoubleSpinBox>
 
 class GLWidget;
 class QLabel;
@@ -26,6 +29,14 @@ private:
     QLabel* labPitch_ = nullptr;
     QLabel* labRoll_  = nullptr;
 
+    // Z轴范围控制
+    QCheckBox* ckZFilter_ = nullptr;
+    QLabel* labZMin_ = nullptr;
+    QLabel* labZMax_ = nullptr;
+    QSlider* sliderZMin_ = nullptr;
+    QSlider* sliderZMax_ = nullptr;
+    QDoubleSpinBox* spinZMin_ = nullptr;
+    QDoubleSpinBox* spinZMax_ = nullptr;
 };
 
 

@@ -401,30 +401,96 @@ void GLWidget::paintGL()
     // 渲染当前帧点云
     if (hasReceivedMapToCameraInitTf_){
         if (showRealtimeCloud_ && cloudPts_ > 0) {
-            progSimple_.bind();
-            const Eigen::Matrix4d mvp = proj_ * view_;
-            progSimple_.setUniformValue("mvp", toQMatrix(mvp));
-            progSimple_.setUniformValue("col", QVector3D(0.35f, 0.85f, 0.95f));
-            vaoCloud_.bind();
-            glPointSize(cloudPtSize_);
-            glDrawArrays(GL_POINTS, 0, cloudPts_);
-            vaoCloud_.release();
-            progSimple_.release();
+            if (enableZFilter_) {
+                // 使用过滤后的点云
+                progSimple_.bind();
+                const Eigen::Matrix4d mvp = proj_ * view_;
+                progSimple_.setUniformValue("mvp", toQMatrix(mvp));
+                progSimple_.setUniformValue("col", QVector3D(0.35f, 0.85f, 0.95f));
+
+                // 过滤点云
+                std::vector<Eigen::Vector3f> filteredCloud;
+                filteredCloud.reserve(cloudCpu_.size());
+                for (const auto& pt : cloudCpu_) {
+                    if (pt.z() >= zMinFilter_ && pt.z() <= zMaxFilter_) {
+                        filteredCloud.push_back(pt);
+                    }
+                }
+
+                if (!filteredCloud.empty()) {
+                    vaoCloud_.bind();
+                    vboCloud_.bind();
+                    vboCloud_.allocate(filteredCloud.data(),
+                                       static_cast<int>(filteredCloud.size() * sizeof(Eigen::Vector3f)));
+                    glPointSize(cloudPtSize_);
+                    glDrawArrays(GL_POINTS, 0, static_cast<int>(filteredCloud.size()));
+                    vboCloud_.release();
+                    vaoCloud_.release();
+                }
+                progSimple_.release();
+            } else {
+                // 原始渲染逻辑
+                progSimple_.bind();
+                const Eigen::Matrix4d mvp = proj_ * view_;
+                progSimple_.setUniformValue("mvp", toQMatrix(mvp));
+                progSimple_.setUniformValue("col", QVector3D(0.35f, 0.85f, 0.95f));
+                vaoCloud_.bind();
+                glPointSize(cloudPtSize_);
+                glDrawArrays(GL_POINTS, 0, cloudPts_);
+                vaoCloud_.release();
+                progSimple_.release();
+            }
         }
 
-
-        // 渲染地图点云（彩色，高度着色）
+        // 修改地图点云渲染部分（约第318行附近）：
         if (showMapCloud_ && mapPts_ > 0) {
-            progColorCloud_.bind();
-            progColorCloud_.setUniformValue("mvp", toQMatrix(proj_ * view_));
-            progColorCloud_.setUniformValue("uPointSize", mapPtSize_);
-            progColorCloud_.setUniformValue("uAlpha", 1.0f);
-            progColorCloud_.setUniformValue("uSoftEdge", 0.35f);
-            vaoMap_.bind();
-            glDrawArrays(GL_POINTS, 0, mapPts_);
-            vaoMap_.release();
-            progColorCloud_.release();
+            if (enableZFilter_) {
+                // 过滤地图点云
+                progColorCloud_.bind();
+                progColorCloud_.setUniformValue("mvp", toQMatrix(proj_ * view_));
+                progColorCloud_.setUniformValue("uPointSize", mapPtSize_);
+                progColorCloud_.setUniformValue("uAlpha", 1.0f);
+                progColorCloud_.setUniformValue("uSoftEdge", 0.35f);
+
+                // 过滤点云数据
+                std::vector<Eigen::Vector3f> filteredMap;
+                filteredMap.reserve(mapInterleavedCpu_.size());
+
+                // 注意：mapInterleavedCpu_ 是交错的 [位置, 颜色, 位置, 颜色, ...]
+                for (size_t i = 0; i < mapInterleavedCpu_.size(); i += 2) {
+                    const auto& position = mapInterleavedCpu_[i];
+                    const auto& color = mapInterleavedCpu_[i + 1];
+
+                    if (position.z() >= zMinFilter_ && position.z() <= zMaxFilter_) {
+                        filteredMap.push_back(position);
+                        filteredMap.push_back(color);
+                    }
+                }
+
+                if (!filteredMap.empty()) {
+                    vaoMap_.bind();
+                    vboMap_.bind();
+                    vboMap_.allocate(filteredMap.data(),
+                                     static_cast<int>(filteredMap.size() * sizeof(Eigen::Vector3f)));
+                    glDrawArrays(GL_POINTS, 0, static_cast<int>(filteredMap.size() / 2));
+                    vboMap_.release();
+                    vaoMap_.release();
+                }
+                progColorCloud_.release();
+            } else {
+                // 原始渲染逻辑
+                progColorCloud_.bind();
+                progColorCloud_.setUniformValue("mvp", toQMatrix(proj_ * view_));
+                progColorCloud_.setUniformValue("uPointSize", mapPtSize_);
+                progColorCloud_.setUniformValue("uAlpha", 1.0f);
+                progColorCloud_.setUniformValue("uSoftEdge", 0.35f);
+                vaoMap_.bind();
+                glDrawArrays(GL_POINTS, 0, mapPts_);
+                vaoMap_.release();
+                progColorCloud_.release();
+            }
         }
+
     }
     else
     {
@@ -435,14 +501,18 @@ void GLWidget::paintGL()
         }
     }
 
-    // 渲染箭头（map → base_link）
+    // 添加箭头渲染的Z轴过滤（约第345行附近）：
     if (trail_.hasValidTransform &&
         hasReceivedMapToCameraInitTf_ &&
         hasReceivedBodyToBaseLinkTf_)
     {
-        progSimple_.bind();
-        drawSolidArrow(T_map_baselink_, 1.0f, 0.15f);  // 使用 map → base_link 的变换矩阵
-        progSimple_.release();
+        // 检查箭头位置是否在Z轴范围内
+        Eigen::Vector3d arrowPos = T_map_baselink_.block<3,1>(0,3);
+        if (!enableZFilter_ || (arrowPos.z() >= zMinFilter_ && arrowPos.z() <= zMaxFilter_)) {
+            progSimple_.bind();
+            drawSolidArrow(T_map_baselink_, 1.0f, 0.15f);
+            progSimple_.release();
+        }
     }
     // 渲染完成后打印TF状态
     // static int frame_cnt = 0;
@@ -453,6 +523,20 @@ void GLWidget::paintGL()
     //                  << T_map_ci_(0,3) << T_map_ci_(1,3) << T_map_ci_(2,3);
     //     }
     // }
+}
+
+// 添加公共方法用于设置Z轴范围：
+void GLWidget::setZFilterRange(float minZ, float maxZ)
+{
+    zMinFilter_ = minZ;
+    zMaxFilter_ = maxZ;
+    update();
+}
+
+void GLWidget::setZFilterEnabled(bool enabled)
+{
+    enableZFilter_ = enabled;
+    update();
 }
 
 // =========== 数据处理
@@ -834,6 +918,11 @@ void GLWidget::clearMap()
         // 清空Z值范围
         mapMinZ_ = std::numeric_limits<float>::max();
         mapMaxZ_ = std::numeric_limits<float>::lowest();
+
+        // 重置Z轴范围
+        zMinFilter_ = -5.0f;   // 修改：默认最小Z值-5m
+        zMaxFilter_ =  20.0f;  // 修改：默认最大Z值20m
+        enableZFilter_ = false; // 是否启用Z轴过滤
     }
 
     // 清理静态TF数据

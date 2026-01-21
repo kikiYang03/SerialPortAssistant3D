@@ -79,6 +79,45 @@ Ros3DPage::Ros3DPage(QWidget* parent)
     cloudLay->addWidget(ckRealtime);
     cloudLay->addWidget(ckMap);
 
+    // ---------- 新增：Z轴范围控制 ----------
+    auto* zFilterBox = new QGroupBox(tr("Z轴范围控制"), side);
+
+    ckZFilter_ = new QCheckBox(tr("启用Z轴过滤"), zFilterBox);
+    ckZFilter_->setChecked(false);
+
+    // 最小值控制
+    auto* minLabel = new QLabel(tr("最小Z值:"), zFilterBox);
+    labZMin_ = new QLabel("0.0", zFilterBox);
+    sliderZMin_ = new QSlider(Qt::Horizontal, zFilterBox);
+    sliderZMin_->setRange(-500, 500);  // -50m 到 50m，缩放因子0.1
+    sliderZMin_->setValue(-100);       // -10.0m
+    spinZMin_ = new QDoubleSpinBox(zFilterBox);
+    spinZMin_->setRange(-50.0, 50.0);
+    spinZMin_->setValue(-10.0);
+    spinZMin_->setSingleStep(0.5);
+    spinZMin_->setSuffix(" m");
+
+    // 最大值控制
+    auto* maxLabel = new QLabel(tr("最大Z值:"), zFilterBox);
+    labZMax_ = new QLabel("0.0", zFilterBox);
+    sliderZMax_ = new QSlider(Qt::Horizontal, zFilterBox);
+    sliderZMax_->setRange(-500, 500);  // -50m 到 50m，缩放因子0.1
+    sliderZMax_->setValue(100);        // 10.0m
+    spinZMax_ = new QDoubleSpinBox(zFilterBox);
+    spinZMax_->setRange(-50.0, 50.0);
+    spinZMax_->setValue(10.0);
+    spinZMax_->setSingleStep(0.5);
+    spinZMax_->setSuffix(" m");
+    // 布局
+    auto* zFilterLay = new QGridLayout(zFilterBox);
+    zFilterLay->addWidget(ckZFilter_, 0, 0, 1, 3);
+    zFilterLay->addWidget(minLabel, 1, 0);
+    zFilterLay->addWidget(sliderZMin_, 1, 1);
+    zFilterLay->addWidget(spinZMin_, 1, 2);
+    zFilterLay->addWidget(maxLabel, 2, 0);
+    zFilterLay->addWidget(sliderZMax_, 2, 1);
+    zFilterLay->addWidget(spinZMax_, 2, 2);
+
     // ---------- 操作说明 ----------
     auto* instBox = new QGroupBox(tr("操作说明"), side);
     auto* labInstructions = new QLabel(
@@ -92,12 +131,15 @@ Ros3DPage::Ros3DPage(QWidget* parent)
     instLay->addStretch();
 
 
+    // 更新侧边栏布局，将zFilterBox添加到cloudBox之后：
     auto* sideLay = new QVBoxLayout(side);
     sideLay->addWidget(tfBox);
     sideLay->addSpacing(10);
     sideLay->addWidget(rotBox);
     sideLay->addSpacing(10);
     sideLay->addWidget(cloudBox);
+    sideLay->addSpacing(10);
+    sideLay->addWidget(zFilterBox);  // 新增的Z轴范围控制
     sideLay->addSpacing(10);
     sideLay->addWidget(controlBox);
     sideLay->addSpacing(10);
@@ -158,4 +200,57 @@ Ros3DPage::Ros3DPage(QWidget* parent)
     // 信号连接
     connect(ckRealtime, &QCheckBox::toggled, gl_, &GLWidget::setShowRealtimeCloud);
     connect(ckMap,      &QCheckBox::toggled, gl_, &GLWidget::setShowMapCloud);
+
+    // ---------- Z轴范围控制信号连接 ----------
+    // 滑块和微调框的同步
+    auto updateZMin = [this](double value) {
+        labZMin_->setText(QString::number(value, 'f', 1) + " m");
+        gl_->setZFilterRange(value, spinZMax_->value());
+    };
+
+    auto updateZMax = [this](double value) {
+        labZMax_->setText(QString::number(value, 'f', 1) + " m");
+        gl_->setZFilterRange(spinZMin_->value(), value);
+    };
+
+    // 滑块值改变（注意：滑块值是整型，需要除以10得到实际米值）
+    connect(sliderZMin_, &QSlider::valueChanged, this, [=](int value) {
+        double realValue = value / 10.0;
+        spinZMin_->blockSignals(true);
+        spinZMin_->setValue(realValue);
+        spinZMin_->blockSignals(false);
+        updateZMin(realValue);
+    });
+
+    connect(sliderZMax_, &QSlider::valueChanged, this, [=](int value) {
+        double realValue = value / 10.0;
+        spinZMax_->blockSignals(true);
+        spinZMax_->setValue(realValue);
+        spinZMax_->blockSignals(false);
+        updateZMax(realValue);
+    });
+
+    // 微调框值改变
+    connect(spinZMin_, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+            this, [=](double value) {
+                sliderZMin_->blockSignals(true);
+                sliderZMin_->setValue(static_cast<int>(value * 10));
+                sliderZMin_->blockSignals(false);
+                updateZMin(value);
+            });
+
+    connect(spinZMax_, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
+            this, [=](double value) {
+                sliderZMax_->blockSignals(true);
+                sliderZMax_->setValue(static_cast<int>(value * 10));
+                sliderZMax_->blockSignals(false);
+                updateZMax(value);
+            });
+
+    // 启用/禁用过滤
+    connect(ckZFilter_, &QCheckBox::toggled, gl_, &GLWidget::setZFilterEnabled);
+
+    // 初始化标签显示
+    updateZMin(spinZMin_->value());
+    updateZMax(spinZMax_->value());
 }
