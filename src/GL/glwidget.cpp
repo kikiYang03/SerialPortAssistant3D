@@ -399,29 +399,40 @@ void GLWidget::paintGL()
     }
 
     // 渲染当前帧点云
-    if (showRealtimeCloud_ && cloudPts_ > 0) {
-        progSimple_.bind();
-        const Eigen::Matrix4d mvp = proj_ * view_;
-        progSimple_.setUniformValue("mvp", toQMatrix(mvp));
-        progSimple_.setUniformValue("col", QVector3D(0.35f, 0.85f, 0.95f));
-        vaoCloud_.bind();
-        glPointSize(cloudPtSize_);
-        glDrawArrays(GL_POINTS, 0, cloudPts_);
-        vaoCloud_.release();
-        progSimple_.release();
-    }
+    if (hasReceivedMapToCameraInitTf_){
+        if (showRealtimeCloud_ && cloudPts_ > 0) {
+            progSimple_.bind();
+            const Eigen::Matrix4d mvp = proj_ * view_;
+            progSimple_.setUniformValue("mvp", toQMatrix(mvp));
+            progSimple_.setUniformValue("col", QVector3D(0.35f, 0.85f, 0.95f));
+            vaoCloud_.bind();
+            glPointSize(cloudPtSize_);
+            glDrawArrays(GL_POINTS, 0, cloudPts_);
+            vaoCloud_.release();
+            progSimple_.release();
+        }
 
-    // 渲染地图点云（彩色，高度着色）
-    if (showMapCloud_ && mapPts_ > 0) {
-        progColorCloud_.bind();
-        progColorCloud_.setUniformValue("mvp", toQMatrix(proj_ * view_));
-        progColorCloud_.setUniformValue("uPointSize", mapPtSize_);
-        progColorCloud_.setUniformValue("uAlpha", 1.0f);
-        progColorCloud_.setUniformValue("uSoftEdge", 0.35f);
-        vaoMap_.bind();
-        glDrawArrays(GL_POINTS, 0, mapPts_);
-        vaoMap_.release();
-        progColorCloud_.release();
+
+        // 渲染地图点云（彩色，高度着色）
+        if (showMapCloud_ && mapPts_ > 0) {
+            progColorCloud_.bind();
+            progColorCloud_.setUniformValue("mvp", toQMatrix(proj_ * view_));
+            progColorCloud_.setUniformValue("uPointSize", mapPtSize_);
+            progColorCloud_.setUniformValue("uAlpha", 1.0f);
+            progColorCloud_.setUniformValue("uSoftEdge", 0.35f);
+            vaoMap_.bind();
+            glDrawArrays(GL_POINTS, 0, mapPts_);
+            vaoMap_.release();
+            progColorCloud_.release();
+        }
+    }
+    else
+    {
+        // 可以在这里添加一些提示信息或调试输出
+        static int frameCnt = 0;
+        if (++frameCnt % 60 == 0) {  // 每秒显示一次（假设60fps）
+            qDebug() << "等待map->camera_init TF变换，暂不绘制点云...";
+        }
     }
 
     // 渲染箭头（map → base_link）
@@ -434,14 +445,14 @@ void GLWidget::paintGL()
         progSimple_.release();
     }
     // 渲染完成后打印TF状态
-    static int frame_cnt = 0;
-    if (++frame_cnt % 100 == 0) {
-        qDebug() << "TF接收状态:" << hasReceivedMapToCameraInitTf_;
-        if (hasReceivedMapToCameraInitTf_) {
-            qDebug() << "camera_init在map中的位置:"
-                     << T_map_ci_(0,3) << T_map_ci_(1,3) << T_map_ci_(2,3);
-        }
-    }
+    // static int frame_cnt = 0;
+    // if (++frame_cnt % 100 == 0) {
+    //     qDebug() << "TF接收状态:" << hasReceivedMapToCameraInitTf_;
+    //     if (hasReceivedMapToCameraInitTf_) {
+    //         qDebug() << "camera_init在map中的位置:"
+    //                  << T_map_ci_(0,3) << T_map_ci_(1,3) << T_map_ci_(2,3);
+    //     }
+    // }
 }
 
 // =========== 数据处理
@@ -456,7 +467,7 @@ void GLWidget::onTf(const TFMsg &m)
     {
         if (hasReceivedMapToCameraInitTf_)
         {
-            qDebug() << "  忽略：map→camera_init 静态TF已接收过";
+            // qDebug() << "  忽略：map→camera_init 静态TF已接收过";
             return;
         }
 
@@ -468,7 +479,7 @@ void GLWidget::onTf(const TFMsg &m)
         T_ci_map_ = T.inverse(); // camera_init → map
 
         hasReceivedMapToCameraInitTf_ = true;
-        qDebug() << "✓ 静态TF已接收: map→camera_init";
+        qDebug() << "静态TF已接收: map→camera_init";
     }
 
     /* ============= 静态TF2: body → base_link ============= */
@@ -476,7 +487,7 @@ void GLWidget::onTf(const TFMsg &m)
     {
         if (hasReceivedBodyToBaseLinkTf_)
         {
-            qDebug() << "  忽略：body→base_link 静态TF已接收过";
+            // qDebug() << "  忽略：body→base_link 静态TF已接收过";
             return;
         }
 
@@ -487,7 +498,7 @@ void GLWidget::onTf(const TFMsg &m)
         T_body_baselink_ = T;  // 存储静态变换
 
         hasReceivedBodyToBaseLinkTf_ = true;
-        qDebug() << "✓ 静态TF已接收: body→base_link";
+        qDebug() << "静态TF已接收: body→base_link";
     }
 
     /* ============= 动态TF: camera_init → body ============= */
@@ -520,11 +531,19 @@ void GLWidget::onTf(const TFMsg &m)
         trail_.latestTransform = T_map_baselink;
         trail_.hasValidTransform = true;
 
-        // 5. 发出位姿信号（使用 camera_init 系下的原始值）
-        const Eigen::Matrix3d R = T_ci_b.block<3,3>(0,0);
-        double yaw, pitch, roll;
-        rotToYPR_ZYX(R, yaw, pitch, roll);
-        emit tfInfoChanged(T_ci_b(0,3), T_ci_b(1,3), T_ci_b(2,3), yaw, pitch, roll);
+        /* 5. 发出位姿信号（map → base_link） */
+        const Eigen::Vector3d &t = T_map_baselink.block<3,1>(0,3);
+        const Eigen::Matrix3d &R = T_map_baselink.block<3,3>(0,0);
+
+        double ypr_yaw, ypr_pitch, ypr_roll;
+        rotToYPR_ZYX(R, ypr_yaw, ypr_pitch, ypr_roll);
+
+        int deg_yaw   = static_cast<int>(std::lround(ypr_yaw   * 180.0 / M_PI));
+        int deg_pitch = static_cast<int>(std::lround(ypr_pitch * 180.0 / M_PI));
+        int deg_roll  = static_cast<int>(std::lround(ypr_roll  * 180.0 / M_PI));
+
+        emit tfInfoChanged(t.x(), t.y(), t.z(),
+                           deg_yaw, deg_pitch, deg_roll);   // 已经变成整数度
     }
 }
 
@@ -575,7 +594,6 @@ void GLWidget::onCloud(const CloudMsg &m)
     // 2) 累加到地图点云（带体素去重）
     // 去重仍在 camera_init 系下做（保持你的原设计）
     if (hasReceivedMapToCameraInitTf_) {
-        qDebug() << "要绘制点云529";
         for (const auto &pt : m.points) {
             Eigen::Vector3d p_ci(pt.x(), pt.y(), pt.z());
 
@@ -812,7 +830,19 @@ void GLWidget::clearMap()
         mapPts_ = 0;
         mapDirty_.store(false, std::memory_order_release);
         mapVoxelSet_.clear();   // <-- 关键：把去重哈希也清掉
+
+        // 清空Z值范围
+        mapMinZ_ = std::numeric_limits<float>::max();
+        mapMaxZ_ = std::numeric_limits<float>::lowest();
     }
+
+    // 清理静态TF数据
+    hasReceivedMapToCameraInitTf_ = false;
+    hasReceivedBodyToBaseLinkTf_ = false;
+    T_map_ci_.setIdentity();
+    T_ci_map_.setIdentity();
+    T_body_baselink_.setIdentity();
+    T_map_baselink_.setIdentity();
 
     // 清理轨迹
     clearTrail();

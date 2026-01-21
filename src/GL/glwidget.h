@@ -41,7 +41,7 @@ public:
 
 signals:
     void tfInfoChanged(double x, double y, double z,
-                       double yaw_rad, double pitch_rad, double roll_rad);   //显示TF相关数据
+                       int yaw_deg, int pitch_deg, int roll_deg);   //显示TF相关数据
 
 public slots:
     void onTf(const TFMsg &);
