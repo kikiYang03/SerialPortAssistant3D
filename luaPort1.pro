@@ -28,7 +28,6 @@ SOURCES += \
     src/GL/ros3dpage.cpp \
     src/Params/params.cpp \
     src/Serialport/serialport.cpp \
-    utils/protocol/protocolhandler.cpp \
     utils/protocol/protocolros3d.cpp \
     utils/protocol/protocolrouter.cpp \
     utils/protocol/tftree.cpp \
@@ -44,7 +43,6 @@ HEADERS += \
     src/Serialport/serialport.h \
     stdafx.h \
     utils/protocol/protocol_msg.h \
-    utils/protocol/protocolhandler.h \
     utils/protocol/protocolros3d.h \
     utils/protocol/protocolrouter.h \
     utils/protocol/tftree.h \
