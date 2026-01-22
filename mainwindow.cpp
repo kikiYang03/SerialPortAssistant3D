@@ -70,7 +70,8 @@ MainWindow::MainWindow(QWidget *parent)
     connect(&AdminMode::instance(), &AdminMode::logAdminMessage,
             serialPort, &SerialPort::appendMessage);
 
-    toolBar->addAction(adminLogin);   // 或者加到菜单栏
+    // 管理者模式，不需要则注释掉
+    toolBar->addAction(adminLogin);
     // 1) 创建线程
     QThread* protoThread = nullptr;
     protoThread = new QThread(this);

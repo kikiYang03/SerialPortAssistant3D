@@ -1,10 +1,11 @@
 ﻿#include "adminmode.h"
+#include "utils/config/config.h"
 #include <QInputDialog>
 #include <QMessageBox>
 #include <QEvent>
 #include <QDateTime>
 
-static const QString ADMIN_PWD = "123456"; // 正式环境可放配置文件
+static const QString ADMIN_PWD = Config::instance().value("Admin/password").toString();
 
 AdminMode& AdminMode::instance()
 {

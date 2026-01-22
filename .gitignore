@@ -13,3 +13,4 @@ ui_params.h
 ui_rosvisualizer.h
 ui_serialport.h
 luaPort1_resource.rc
+config/config.ini
