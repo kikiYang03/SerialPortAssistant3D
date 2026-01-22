@@ -120,6 +120,10 @@ MainWindow::MainWindow(QWidget *parent)
     connect(params, &Params::appendMessage, serialPort, &SerialPort::appendMessage);
     // 连接解析数据的频率到SerialPort
     connect(protocolHandler, &ProtocolRos3D::appendMessage, serialPort, &SerialPort::appendMessage);
+    // 连接 GLWidget 的消息信号到 SerialPort 的显示槽
+    connect(ros3dPage->glWidget(), &GLWidget::appendMessage,
+            serialPort, &SerialPort::appendMessage);
+
 
 }
 

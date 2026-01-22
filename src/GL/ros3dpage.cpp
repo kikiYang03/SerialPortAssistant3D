@@ -1,6 +1,4 @@
 ﻿#include "ros3dpage.h"
-#include "glwidget.h"
-
 
 #include <QHBoxLayout>
 #include <QVBoxLayout>

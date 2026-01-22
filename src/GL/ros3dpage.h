@@ -6,6 +6,7 @@
 #include <QSlider>
 #include <QDoubleSpinBox>
 #include "dualrangeslider.h"
+#include "glwidget.h"
 
 class GLWidget;
 class QLabel;

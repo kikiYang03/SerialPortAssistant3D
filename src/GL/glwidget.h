@@ -45,6 +45,8 @@ public:
 signals:
     void tfInfoChanged(double x, double y, double z,
                        int yaw_deg, int pitch_deg, int roll_deg);   //显示TF相关数据
+    // 添加消息显示信号
+    void appendMessage(const QString &message);
 
 public slots:
     void onTf(const TFMsg &);

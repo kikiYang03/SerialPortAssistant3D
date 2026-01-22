@@ -69,6 +69,15 @@ void ProtocolRos3D::parseJsonFrame(uint8_t cmd, const QJsonObject& obj)
 /* TF 解析 */
 void ProtocolRos3D::parseTF(const QJsonObject& obj)
 {
+    // 把 QJsonObject 序列化成紧凑字符串
+    QJsonDocument doc(obj);
+    QByteArray json = doc.toJson(QJsonDocument::Compact);
+
+    // 用编号参数，避免 json 里可能含有 '%' 造成 arg 替换异常
+    QString msg = QStringLiteral("%1 >> TF数据解析前：%2")
+                      .arg(QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss"))
+                      .arg(QString::fromUtf8(json));
+    emit appendMessage(msg);
     // qDebug() << "TF数据解析前："<< obj;
     TFMsg m;
     m.frame_id       = obj["frame_id"].toString();
