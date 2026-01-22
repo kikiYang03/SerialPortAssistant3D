@@ -14,3 +14,4 @@ ui_rosvisualizer.h
 ui_serialport.h
 luaPort1_resource.rc
 config/config.ini
+et --hard 7a2c21d
