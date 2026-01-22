@@ -19,6 +19,7 @@ INCLUDEPATH += $$PWD/src/GL
 INCLUDEPATH += $$PWD/utils/tcp
 INCLUDEPATH += $$PWD/utils/protocol
 INCLUDEPATH += $$PWD/thirds/Eigen
+INCLUDEPATH += $$PWD/ui
 
 SOURCES += \
     src/Coordinate/coordinate.cpp \
@@ -28,6 +29,7 @@ SOURCES += \
     src/GL/ros3dpage.cpp \
     src/Params/params.cpp \
     src/Serialport/serialport.cpp \
+    ui/dualrangeslider.cpp \
     utils/protocol/protocolros3d.cpp \
     utils/protocol/protocolrouter.cpp \
     utils/protocol/tftree.cpp \
@@ -42,6 +44,7 @@ HEADERS += \
     src/Params/params.h \
     src/Serialport/serialport.h \
     stdafx.h \
+    ui/dualrangeslider.h \
     utils/protocol/protocol_msg.h \
     utils/protocol/protocolros3d.h \
     utils/protocol/protocolrouter.h \

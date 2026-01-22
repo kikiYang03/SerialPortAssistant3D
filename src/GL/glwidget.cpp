@@ -163,7 +163,7 @@ void GLWidget::initializeGL()
     glReady_ = true;
 
     hasReceivedMapToCameraInitTf_ = false;
-    hasReceivedBodyToBaseLinkTf_ = false;   // 已存在，确保为false
+    hasReceivedBodyToBaseLinkTf_ = false;
     T_map_ci_.setIdentity();
     T_ci_map_.setIdentity();
     T_body_baselink_.setIdentity();         // 新增：初始化静态TF矩阵
@@ -907,6 +907,13 @@ QVector3D GLWidget::normalToColor(const Eigen::Vector3f& n)
 // ========操作栏===============
 void GLWidget::clearMap()
 {
+    // 清理静态TF数据
+    hasReceivedMapToCameraInitTf_ = false;
+    hasReceivedBodyToBaseLinkTf_ = false;
+    T_map_ci_.setIdentity();
+    T_ci_map_.setIdentity();
+    T_body_baselink_.setIdentity();
+    T_map_baselink_.setIdentity();
     // 清理地图点云
     {
         QMutexLocker lk(&dataMtx_);
@@ -920,18 +927,11 @@ void GLWidget::clearMap()
         mapMaxZ_ = std::numeric_limits<float>::lowest();
 
         // 重置Z轴范围
-        zMinFilter_ = -5.0f;   // 修改：默认最小Z值-5m
-        zMaxFilter_ =  20.0f;  // 修改：默认最大Z值20m
-        enableZFilter_ = false; // 是否启用Z轴过滤
+        // zMinFilter_ = -5.0f;   // 修改：默认最小Z值-5m
+        // zMaxFilter_ =  20.0f;  // 修改：默认最大Z值20m
+        // enableZFilter_ = false; // 是否启用Z轴过滤
     }
 
-    // 清理静态TF数据
-    hasReceivedMapToCameraInitTf_ = false;
-    hasReceivedBodyToBaseLinkTf_ = false;
-    T_map_ci_.setIdentity();
-    T_ci_map_.setIdentity();
-    T_body_baselink_.setIdentity();
-    T_map_baselink_.setIdentity();
 
     // 清理轨迹
     clearTrail();

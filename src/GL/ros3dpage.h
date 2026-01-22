@@ -5,6 +5,7 @@
 #include <QCheckBox>
 #include <QSlider>
 #include <QDoubleSpinBox>
+#include "dualrangeslider.h"
 
 class GLWidget;
 class QLabel;
@@ -37,7 +38,10 @@ private:
     QSlider* sliderZMax_ = nullptr;
     QDoubleSpinBox* spinZMin_ = nullptr;
     QDoubleSpinBox* spinZMax_ = nullptr;
-};
+    DualRangeSlider* dualSlider_ = nullptr;  // 新增：双滑块
 
+private slots:
+    void onDualRangeChanged(double lower, double upper);  // 新增
+};
 
 #endif // ROS3DPAGE_H
