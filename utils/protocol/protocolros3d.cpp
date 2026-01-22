@@ -66,19 +66,22 @@ void ProtocolRos3D::parseJsonFrame(uint8_t cmd, const QJsonObject& obj)
     }
 }
 
+/* 全局节流时间戳，单位 ms */
+static qint64 g_lastTfLogMS   = 0;
+static qint64 g_lastCloudLogMS = 0;
+
 /* TF 解析 */
 void ProtocolRos3D::parseTF(const QJsonObject& obj)
 {
-    // 把 QJsonObject 序列化成紧凑字符串
-    QJsonDocument doc(obj);
-    QByteArray json = doc.toJson(QJsonDocument::Compact);
+    /* ---- 节流打印 ---- */
+    qint64 nowMS = QDateTime::currentMSecsSinceEpoch();
+    if (nowMS - g_lastTfLogMS >= 1000) {      // 距离上次 ≥1 s 才打印
+        g_lastTfLogMS = nowMS;
+        QString msg = QStringLiteral("接收到TF: %1")
+                          .arg(QString::fromUtf8(QJsonDocument(obj).toJson(QJsonDocument::Compact)));
+        AdminMode::appendMessage(msg);
+    }
 
-    // 用编号参数，避免 json 里可能含有 '%' 造成 arg 替换异常
-    QString msg = QStringLiteral("%1 >> TF数据解析前：%2")
-                      .arg(QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss"))
-                      .arg(QString::fromUtf8(json));
-    emit appendMessage(msg);
-    // qDebug() << "TF数据解析前："<< obj;
     TFMsg m;
     m.frame_id       = obj["frame_id"].toString();
     m.child_frame_id = obj["child_frame_id"].toString();
@@ -89,7 +92,7 @@ void ProtocolRos3D::parseTF(const QJsonObject& obj)
                       obj["qx"].toDouble(),
                       obj["qy"].toDouble(),
                       obj["qz"].toDouble());
-    // qDebug() << "TF数据解析成TFMsg："<< m;
+
     if (m.frame_id == "camera_init" && m.child_frame_id == "body"){
         ++m_tfCnt;          // 计数
     }
@@ -100,7 +103,12 @@ void ProtocolRos3D::parseTF(const QJsonObject& obj)
 /* 点云解析 */
 void ProtocolRos3D::parseCloud(const QJsonObject& obj)
 {
-    // qDebug() << "CloudMsg: " << obj;
+    qint64 nowMS = QDateTime::currentMSecsSinceEpoch();
+    if (nowMS - g_lastCloudLogMS >= 1000) {
+        g_lastCloudLogMS = nowMS;
+        AdminMode::appendMessage(QStringLiteral("接收到Cloud: 不做打印"));
+    }
+
     CloudMsg m;
     m.frame_id = obj["frame_id"].toString();
 
@@ -137,12 +145,6 @@ void ProtocolRos3D::parseCloud(const QJsonObject& obj)
     }
 
     m.points = extractXYZFromPointCloud2Raw(raw, width, height, point_step, row_step, is_dense);
-
-
-    // for (int i=0; i<qMin(5, m.points.size()); ++i)
-    //     qDebug() << "p" << i << m.points[i];
-
-    // qDebug() << "CloudMsg: " << m;
     ++m_cloudCnt;
     emit cloudUpdated(m);
 }

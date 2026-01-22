@@ -1,13 +1,13 @@
 ﻿#include "mainwindow.h"
 #include "ui_mainwindow.h"
 #include <QThread>
+#include <QInputDialog>
+#include <QLineEdit>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
     , ui(new Ui::MainWindow)
 {
-
-
     ui->setupUi(this);
     // 实例化页面
     serialPort = new SerialPort;
@@ -55,6 +55,22 @@ MainWindow::MainWindow(QWidget *parent)
     toolBar->setMovable(false);
     toolBar->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
 
+    // mainwindow.cpp 构造函数追加
+    QAction *adminLogin = new QAction("管理员登录/退出");
+    connect(adminLogin, &QAction::triggered, this, [](){
+        if (AdminMode::instance().isAdmin()) {
+            AdminMode::instance().logout();
+        } else {
+            bool ok;
+            QString pwd = QInputDialog::getText(nullptr, "管理员登录", "请输入密码：",
+                                                QLineEdit::Password, "", &ok);
+            if (ok) AdminMode::instance().login(pwd);
+        }
+    });
+    connect(&AdminMode::instance(), &AdminMode::logAdminMessage,
+            serialPort, &SerialPort::appendMessage);
+
+    toolBar->addAction(adminLogin);   // 或者加到菜单栏
     // 1) 创建线程
     QThread* protoThread = nullptr;
     protoThread = new QThread(this);
@@ -65,12 +81,6 @@ MainWindow::MainWindow(QWidget *parent)
     // 2) 线程退出时清理
     connect(protoThread, &QThread::finished, protocolHandler, &QObject::deleteLater);
     protoThread->start();
-
-    // 固定刷新率驱动渲染（60Hz；如需降低占用可改 33ms=30Hz）
-    // QTimer* renderTimer = new QTimer(this);
-    // connect(renderTimer, &QTimer::timeout,
-    //         ros3dPage->glWidget(), QOverload<>::of(&GLWidget::update));
-    // renderTimer->start(16);
 
     //==========================================================
     // SerialPort只负责原始数据收发

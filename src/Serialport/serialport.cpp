@@ -35,9 +35,11 @@ SerialPort::SerialPort(QWidget *parent)
 
     QString ipText = Config::instance().value("Network/tcp_ip", "127.0.0.1").toString();
     QString port = Config::instance().value("Network/tcp_port", "8088").toString();
-    ui->ipInput->setEnabled(false);
+    // ui->ipInput->setEnabled(false);
+    AdminMode::instance().install(ui->ipInput, true, false);
     ui->ipInput->setText(ipText);
-    ui->portInput->setEnabled(false);
+    // ui->portInput->setEnabled(false);
+    AdminMode::instance().install(ui->portInput, true, false);
     ui->portInput->setText(port);
     ui->protocolComboBox->setEnabled(false);
     TcpClient* tcpClient = TcpClient::getInstance();

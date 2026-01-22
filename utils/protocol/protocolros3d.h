@@ -4,6 +4,7 @@
 #include <QByteArray>
 #include <QJsonObject>
 #include "protocol_msg.h"
+#include <adminmode.h>
 
 class ProtocolRos3D : public QObject {
     Q_OBJECT

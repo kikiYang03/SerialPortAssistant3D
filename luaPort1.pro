@@ -20,8 +20,10 @@ INCLUDEPATH += $$PWD/utils/tcp
 INCLUDEPATH += $$PWD/utils/protocol
 INCLUDEPATH += $$PWD/thirds/Eigen
 INCLUDEPATH += $$PWD/ui
+INCLUDEPATH += $$PWD/admins
 
 SOURCES += \
+    admins/adminmode.cpp \
     src/Coordinate/coordinate.cpp \
     main.cpp \
     mainwindow.cpp \
@@ -37,6 +39,7 @@ SOURCES += \
     utils/config/config.cpp
 
 HEADERS += \
+    admins/adminmode.h \
     src/Coordinate/coordinate.h \
     mainwindow.h \
     src/GL/glwidget.h \

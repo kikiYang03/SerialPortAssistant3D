@@ -564,11 +564,8 @@ void GLWidget::onTf(const TFMsg &m)
         T_ci_map_ = T.inverse(); // camera_init → map
 
         hasReceivedMapToCameraInitTf_ = true;
-        qDebug() << "静态TF已接收: map→camera_init";
 
-        QString msg = QStringLiteral("%1 >> 静态TF已接收: map→camera_init")
-                          .arg(QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss"));
-        emit appendMessage(msg);
+        AdminMode::appendMessage("================静态TF已接收: map→camera_init==============");
     }
 
     /* ============= 静态TF2: body → base_link ============= */
@@ -587,11 +584,7 @@ void GLWidget::onTf(const TFMsg &m)
         T_body_baselink_ = T;  // 存储静态变换
 
         hasReceivedBodyToBaseLinkTf_ = true;
-        qDebug() << "静态TF已接收: body→base_link";
-
-        QString msg = QStringLiteral("%1 >> 静态TF已接收: body→base_link")
-            .arg(QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss"));
-        emit appendMessage(msg);
+        AdminMode::appendMessage("================静态TF已接收: body→base_link==============");
     }
 
     /* ============= 动态TF: camera_init → body ============= */
@@ -635,16 +628,16 @@ void GLWidget::onTf(const TFMsg &m)
         int deg_pitch = static_cast<int>(std::lround(ypr_pitch * 180.0 / M_PI));
         int deg_roll  = static_cast<int>(std::lround(ypr_roll  * 180.0 / M_PI));
 
-        QString msg = QStringLiteral("%1 >> 动态TF: camera_init→body x: %2, y: %3, z: %4, yaw: %5, pitch: %6, roll: %7")
-                          .arg(QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss"))
-                          .arg(t.x())
-                          .arg(t.y())
-                            .arg(t.z())
-                            .arg(deg_yaw)
-                            .arg(deg_pitch)
-                            .arg(deg_roll)
-            ;
-        emit appendMessage(msg);
+        // QString msg = QStringLiteral("%1 >> 动态TF: camera_init→body x: %2, y: %3, z: %4, yaw: %5, pitch: %6, roll: %7")
+        //                   .arg(QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss"))
+        //                   .arg(t.x())
+        //                   .arg(t.y())
+        //                     .arg(t.z())
+        //                     .arg(deg_yaw)
+        //                     .arg(deg_pitch)
+        //                     .arg(deg_roll)
+        //     ;
+        // emit appendMessage(msg);
 
         emit tfInfoChanged(t.x(), t.y(), t.z(),
                            deg_yaw, deg_pitch, deg_roll);   // 已经变成整数度

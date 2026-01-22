@@ -27,6 +27,7 @@
 #include <tcpclient.h>
 #include <protocolrouter.h>
 #include "glwidget.h"
+#include "adminmode.h"
 
 
 namespace Ui {

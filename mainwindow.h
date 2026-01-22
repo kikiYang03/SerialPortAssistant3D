@@ -16,6 +16,7 @@
 #include <glwidget.h>
 #include <ros3dpage.h>
 #include <protocolrouter.h>
+#include "adminmode.h"
 
 QT_BEGIN_NAMESPACE
 namespace Ui {

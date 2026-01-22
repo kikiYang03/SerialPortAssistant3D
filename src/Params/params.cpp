@@ -3,6 +3,7 @@
 #include "protocolrouter.h"
 #include <QHBoxLayout>
 #include <QDebug>
+#include <adminmode.h>
 
 const QVector<Parameter> Params::s_parameters = {
     {"0x00", "雷达型号", "0~1", "0=mid360, 1=unitree_L2", 0},
@@ -15,6 +16,7 @@ const QVector<Parameter> Params::s_parameters = {
     {"0x06", "Yaw角度", "-180~180", "雷达偏航角，单位度", 0},
     // {"0x10", "建图or定位模式", "0~1", "0=建图模式，1=定位模式，保存地图后可以设置为定位模式，重启模块后则会调用保存的地图进行定位", 0},
     {"0x11", "输出方式", "0~1", "0=串口输出坐标，1=mavlink格式输出可连接px4飞控", 0},
+    {"0x99", "导航版偏移", "-500~500", "导航版相对于雷达的X偏移，单位厘米", 0},
     };
 
 Params::Params(QWidget *parent)
@@ -151,6 +153,7 @@ void Params::setupParameters()
         QTableWidgetItem *rangeItem = new QTableWidgetItem(param.range);
         ui->tableWidget->setItem(row, 4, rangeItem);
 
+
         // 说明 - 正确设置文本换行
         QTableWidgetItem *descItem = new QTableWidgetItem(param.description);
         // 移除错误的flags设置，改用正确的方式
@@ -161,6 +164,20 @@ void Params::setupParameters()
         QWidget *valueWidget = createValueWidget(param.id, param.range, param.defaultValue);
         valueWidgets.append(valueWidget);
         ui->tableWidget->setCellWidget(row, 3, valueWidget);
+        /* ===== 管理员可见性控制 ===== */
+        if (param.id == "0x99") {
+            // 1. 先整行隐藏
+            ui->tableWidget->setRowHidden(row, !AdminMode::instance().isAdmin());
+
+            // 2. 监听状态变化，动态显隐
+            connect(&AdminMode::instance(), &AdminMode::adminStateChanged,
+                    this, [this, row](bool admin){
+                        ui->tableWidget->setRowHidden(row, !admin);
+                    });
+
+            // 3. 如果还想让输入框“仅管理员可编辑”，再单独注册 valueWidget 即可
+            AdminMode::instance().install(valueWidget, true, false);
+        }
     }
 
     // 设置行高自适应内容

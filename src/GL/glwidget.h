@@ -13,6 +13,7 @@
 
 #include "tftree.h"
 #include "protocol_msg.h"
+#include "adminmode.h"
 #include <unordered_set>   // ← 让 std::unordered_set 可见
 #include <cstdint>         // ← uint64_t
 // 轨迹缓存
