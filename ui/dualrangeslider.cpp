@@ -101,8 +101,9 @@ void DualRangeSlider::paintEvent(QPaintEvent* event)
     QString lowerText = QString::number(m_lowerValue, 'f', 1);
     QString upperText = QString::number(m_upperValue, 'f', 1);
 
-    painter.drawText(m_lowerHandle.center().x() - 10, 35, lowerText);
-    painter.drawText(m_upperHandle.center().x() - 10, 35, upperText);
+    int textY = height() - 5;   // 距离底边 5 px
+    painter.drawText(m_lowerHandle.center().x() - 10, textY, lowerText);
+    painter.drawText(m_upperHandle.center().x() - 10, textY, upperText);
 }
 
 void DualRangeSlider::mousePressEvent(QMouseEvent* event)

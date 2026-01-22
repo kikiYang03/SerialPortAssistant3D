@@ -72,17 +72,17 @@ Ros3DPage::Ros3DPage(QWidget* parent)
     // btnSave->setEnabled(false);
 
     // 新增：视角旋转按钮组
-    auto* rotBox = new QGroupBox(tr("视角旋转"), side);
-    auto* yawLeft   = new QPushButton(tr("左转 ◀"), rotBox);
-    auto* yawRight  = new QPushButton(tr("右转 ▶"), rotBox);
-    auto* pitchUp   = new QPushButton(tr("上仰 ▲"), rotBox);
-    auto* pitchDown = new QPushButton(tr("下俯 ▼"), rotBox);
+    // auto* rotBox = new QGroupBox(tr("视角旋转"), side);
+    // auto* yawLeft   = new QPushButton(tr("左转 ◀"), rotBox);
+    // auto* yawRight  = new QPushButton(tr("右转 ▶"), rotBox);
+    // auto* pitchUp   = new QPushButton(tr("上仰 ▲"), rotBox);
+    // auto* pitchDown = new QPushButton(tr("下俯 ▼"), rotBox);
 
-    auto* rotLay = new QGridLayout(rotBox);
-    rotLay->addWidget(pitchUp,   0, 0, 1, 2);
-    rotLay->addWidget(yawLeft,   1, 0);
-    rotLay->addWidget(yawRight,  1, 1);
-    rotLay->addWidget(pitchDown, 2, 0, 1, 2);
+    // auto* rotLay = new QGridLayout(rotBox);
+    // rotLay->addWidget(pitchUp,   0, 0, 1, 2);
+    // rotLay->addWidget(yawLeft,   1, 0);
+    // rotLay->addWidget(yawRight,  1, 1);
+    // rotLay->addWidget(pitchDown, 2, 0, 1, 2);
 
     // ---------- 新增：点云显隐开关 ----------
     auto* cloudBox = new QGroupBox(tr("点云显示"), side);
@@ -105,6 +105,7 @@ Ros3DPage::Ros3DPage(QWidget* parent)
     dualSlider_ = new DualRangeSlider(zFilterBox);
     dualSlider_->setRange(-5.0, 20.0);  // 设置范围-5~20m
     dualSlider_->setValues(-5.0, 5.0);  // 初始值
+    dualSlider_->setMinimumHeight(60);   // 新增这一行
 
     // 数值显示和微调框
     labZMin_ = new QLabel("-5.0 m", zFilterBox);
@@ -134,7 +135,9 @@ Ros3DPage::Ros3DPage(QWidget* parent)
     zFilterLay->addWidget(new QLabel(tr("最大值:")), 3, 0);
     zFilterLay->addWidget(spinZMax_, 3, 1);
     zFilterLay->addWidget(labZMax_, 3, 2);
-
+    // 新增：把滑块区域撑开
+    zFilterLay->setRowStretch(4, 1);   // 第4行（空行）占全部剩余空间
+    zFilterLay->addWidget(new QWidget(zFilterBox), 4, 0); // 占位widget
     // ---------- 操作说明 ----------
     auto* instBox = new QGroupBox(tr("操作说明"), side);
     auto* labInstructions = new QLabel(
@@ -152,8 +155,8 @@ Ros3DPage::Ros3DPage(QWidget* parent)
     auto* sideLay = new QVBoxLayout(side);
     sideLay->addWidget(tfBox);
     sideLay->addSpacing(10);
-    sideLay->addWidget(rotBox);
-    sideLay->addSpacing(10);
+    // sideLay->addWidget(rotBox);
+    // sideLay->addSpacing(10);
     sideLay->addWidget(cloudBox);
     sideLay->addSpacing(10);
     sideLay->addWidget(zFilterBox);  // 新增的Z轴范围控制
@@ -176,30 +179,30 @@ Ros3DPage::Ros3DPage(QWidget* parent)
     // connect(btnSave,  &QPushButton::clicked, this, [this](){ gl_->saveMapToFile(); });
 
     // ---------- 长按连发定时器 ----------
-    auto* repeatTimer = new QTimer(this);
-    repeatTimer->setInterval(200);          // 200 ms 连发间隔
-    repeatTimer->setSingleShot(false);
+    // auto* repeatTimer = new QTimer(this);
+    // repeatTimer->setInterval(200);          // 200 ms 连发间隔
+    // repeatTimer->setSingleShot(false);
 
-    auto connectRepeat = [&](QPushButton* btn, int yawDelta, int pitchDelta){
-        connect(btn, &QPushButton::pressed, this, [=](){
-            gl_->addYaw(yawDelta);
-            gl_->addPitch(pitchDelta);
-            repeatTimer->disconnect();
-            connect(repeatTimer, &QTimer::timeout, this, [=](){
-                gl_->addYaw(yawDelta);
-                gl_->addPitch(pitchDelta);
-            });
-            repeatTimer->start();
-        });
-        connect(btn, &QPushButton::released, this, [repeatTimer](){
-            repeatTimer->stop();
-        });
-    };
+    // auto connectRepeat = [&](QPushButton* btn, int yawDelta, int pitchDelta){
+    //     connect(btn, &QPushButton::pressed, this, [=](){
+    //         gl_->addYaw(yawDelta);
+    //         gl_->addPitch(pitchDelta);
+    //         repeatTimer->disconnect();
+    //         connect(repeatTimer, &QTimer::timeout, this, [=](){
+    //             gl_->addYaw(yawDelta);
+    //             gl_->addPitch(pitchDelta);
+    //         });
+    //         repeatTimer->start();
+    //     });
+    //     connect(btn, &QPushButton::released, this, [repeatTimer](){
+    //         repeatTimer->stop();
+    //     });
+    // };
 
-    connectRepeat(yawLeft,   -5, 0);
-    connectRepeat(yawRight,  +5, 0);
-    connectRepeat(pitchUp,    0, -5);
-    connectRepeat(pitchDown,  0, +5);
+    // connectRepeat(yawLeft,   -5, 0);
+    // connectRepeat(yawRight,  +5, 0);
+    // connectRepeat(pitchUp,    0, -5);
+    // connectRepeat(pitchDown,  0, +5);
 
     // ---------- TF 显示更新 ----------
     connect(gl_, &GLWidget::tfInfoChanged, this,

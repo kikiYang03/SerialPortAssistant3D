@@ -71,7 +71,7 @@ MainWindow::MainWindow(QWidget *parent)
             serialPort, &SerialPort::appendMessage);
 
     // 管理者模式，不需要则注释掉
-    toolBar->addAction(adminLogin);
+    // toolBar->addAction(adminLogin);
     // 1) 创建线程
     QThread* protoThread = nullptr;
     protoThread = new QThread(this);
