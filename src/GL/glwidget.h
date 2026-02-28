@@ -42,12 +42,20 @@ public:
     void setZFilterRange(float minZ, float maxZ);
     void setZFilterEnabled(bool enabled);
 
+    void setNavMode(bool enable);
+
 
 signals:
     void tfInfoChanged(double x, double y, double z,
                        int yaw_deg, int pitch_deg, int roll_deg);   //显示TF相关数据
     // 添加消息显示信号
     void appendMessage(const QString &message);
+
+    void navGoalSet(double x, double y, double z, double yaw);
+    void navModeChanged(bool isNavMode);
+
+    // 通知UI更新目标点数值
+    void navTargetUpdated(double x, double y, double z, double yaw_deg);
 
 public slots:
     void onTf(const TFMsg &);
@@ -64,6 +72,9 @@ public slots:
     void addYaw  (int degrees);   // 正数右转，负数左转
     void addPitch(int degrees);   // 正数下俯，负数上仰
 
+    // 接收UI微调框传来的目标点数值
+    void updateNavTargetFromUI(double x, double y, double z, double yaw_deg);
+
 private slots:   // 新增
     void doUploadCloud();   // 在主线程里把 cloudCpu_ 塞进 vboCloud_
     void doUploadMap();     // 在主线程里把 mapInterleavedCpu_ 塞进 vboMap_
@@ -73,6 +84,8 @@ protected:
     void resizeGL(int w, int h) override;
     void paintGL() override;
 
+    void mouseReleaseEvent(QMouseEvent *e) override;
+
 private:
 
     // =========== TF相关 ===========
@@ -80,6 +93,20 @@ private:
     Eigen::Matrix4d T_ci_map_;          // camera_init → map
     Eigen::Matrix4d T_body_baselink_;   // 新增：body → base_link 静态变换矩阵
     Eigen::Matrix4d T_map_baselink_;    // map → base_link 动态计算结果
+
+    // 修改这行：
+    Eigen::Vector3d screenToWorld(const QPoint& pos, double targetZ);
+
+    bool isNavMode_ = false;
+    bool hasNavTarget_ = false;  // 是否已经生成了箭头
+    bool isNavGoalSet_ = false;  // 是否已经最终确认了目标（退出指点模式后）
+
+    // 👇 新增：记录是否正在按住左键拖动设定朝向
+    bool isDraggingNavGoal_ = false;
+
+    Eigen::Vector3d navTarget3D_{0, 0, 0}; // 目标坐标
+    double navYaw_ = 0.0;
+
     bool hasReceivedMapToCameraInitTf_ = false;
     bool hasReceivedBodyToBaseLinkTf_ = false;   // 已存在，正确
 

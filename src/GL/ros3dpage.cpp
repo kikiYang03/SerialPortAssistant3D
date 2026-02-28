@@ -60,12 +60,43 @@ Ros3DPage::Ros3DPage(QWidget* parent)
     auto* controlBox = new QGroupBox(tr("操作按钮"), side);
     auto* btnClear = new QPushButton(tr("清理地图"), controlBox);
     auto* btnReset = new QPushButton(tr("初始化相机"), controlBox);
+
+    // ---------- 目标点设置 (新增面板) ----------
+    auto* targetBox = new QGroupBox(tr("目标点指引"), side);
+    auto* btnNavGoal = new QPushButton(tr("指点模式(设目标)"), targetBox);
+    btnNavGoal->setCheckable(true);
+
+    spinNavX_ = new QDoubleSpinBox(targetBox);
+    spinNavY_ = new QDoubleSpinBox(targetBox);
+    spinNavZ_ = new QDoubleSpinBox(targetBox);
+    spinNavYaw_ = new QDoubleSpinBox(targetBox);
+
+    // 配置数值框范围和精度
+    auto setupNavSpinBox = [](QDoubleSpinBox* sp, const QString& suffix, double min, double max) {
+        sp->setRange(min, max);
+        sp->setDecimals(2);
+        sp->setSingleStep(0.1);
+        sp->setSuffix(suffix);
+    };
+    setupNavSpinBox(spinNavX_, " m", -1000.0, 1000.0);
+    setupNavSpinBox(spinNavY_, " m", -1000.0, 1000.0);
+    setupNavSpinBox(spinNavZ_, " m", -100.0, 100.0);
+    setupNavSpinBox(spinNavYaw_, " °", -360.0, 360.0);
+
+    auto* targetLay = new QGridLayout(targetBox);
+    targetLay->addWidget(btnNavGoal, 0, 0, 1, 4);
+    targetLay->addWidget(new QLabel("X:"), 1, 0); targetLay->addWidget(spinNavX_, 1, 1);
+    targetLay->addWidget(new QLabel("Y:"), 1, 2); targetLay->addWidget(spinNavY_, 1, 3);
+    targetLay->addWidget(new QLabel("Z:"), 2, 0); targetLay->addWidget(spinNavZ_, 2, 1);
+    targetLay->addWidget(new QLabel("Yaw:"), 2, 2); targetLay->addWidget(spinNavYaw_, 2, 3);
+
     // auto* btnSave  = new QPushButton(tr("保存地图"), controlBox);
 
 
     auto* controlLay = new QVBoxLayout(controlBox);
     controlLay->addWidget(btnClear);
     controlLay->addWidget(btnReset);
+    // controlLay->addWidget(btnNavGoal);
     // controlLay->addWidget(btnSave);
     controlLay->addStretch();   // 把按钮顶到上面
 
@@ -154,6 +185,8 @@ Ros3DPage::Ros3DPage(QWidget* parent)
     // 更新侧边栏布局，将zFilterBox添加到cloudBox之后：
     auto* sideLay = new QVBoxLayout(side);
     sideLay->addWidget(tfBox);
+    sideLay->addSpacing(10);
+    sideLay->addWidget(targetBox);   // <--- 加入目标面板
     sideLay->addSpacing(10);
     // sideLay->addWidget(rotBox);
     // sideLay->addSpacing(10);
@@ -254,6 +287,38 @@ Ros3DPage::Ros3DPage(QWidget* parent)
 
     // 启用/禁用过滤
     connect(ckZFilter_, &QCheckBox::toggled, gl_, &GLWidget::setZFilterEnabled);
+
+    connect(gl_, &GLWidget::navGoalSet, this, [](double x, double y, double z, double yaw) {
+        double yaw_deg = yaw * 180.0 / M_PI;
+        QString msg = QString("生成目标点 -> X: %1, Y: %2, Z: %3, Yaw: %4°")
+                          .arg(x, 0, 'f', 2)
+                          .arg(y, 0, 'f', 2)
+                          .arg(z, 0, 'f', 2)
+                          .arg(yaw_deg, 0, 'f', 1);
+        qDebug() << msg;
+    });
+
+    // 监听 Toggle 状态改变
+    connect(btnNavGoal, &QPushButton::toggled, this, [=](bool checked) {
+        if (checked) {
+            btnNavGoal->setText(tr("退出指点模式"));
+            gl_->setNavMode(true);
+        } else {
+            btnNavGoal->setText(tr("指点模式(设目标)"));
+            gl_->setNavMode(false);
+        }
+    });
+
+
+    // 接收GLWidget鼠标拖动时的坐标更新信号
+    connect(gl_, &GLWidget::navTargetUpdated, this, &Ros3DPage::onNavTargetUpdated);
+
+    // 监听UI上微调框的修改信号
+    void (QDoubleSpinBox::*valueChangedSignal)(double) = &QDoubleSpinBox::valueChanged;
+    connect(spinNavX_, valueChangedSignal, this, &Ros3DPage::onNavSpinBoxChanged);
+    connect(spinNavY_, valueChangedSignal, this, &Ros3DPage::onNavSpinBoxChanged);
+    connect(spinNavZ_, valueChangedSignal, this, &Ros3DPage::onNavSpinBoxChanged);
+    connect(spinNavYaw_, valueChangedSignal, this, &Ros3DPage::onNavSpinBoxChanged);
 }
 
 // 新增槽函数
@@ -274,4 +339,35 @@ void Ros3DPage::onDualRangeChanged(double lower, double upper)
 
     // 更新GLWidget
     gl_->setZFilterRange(lower, upper);
+}
+
+
+void Ros3DPage::onNavTargetUpdated(double x, double y, double z, double yaw_deg)
+{
+    // 收到画布上的点位置，更新UI，但屏蔽信号避免循环触发
+    spinNavX_->blockSignals(true);
+    spinNavY_->blockSignals(true);
+    spinNavZ_->blockSignals(true);
+    spinNavYaw_->blockSignals(true);
+
+    spinNavX_->setValue(x);
+    spinNavY_->setValue(y);
+    spinNavZ_->setValue(z);
+    spinNavYaw_->setValue(yaw_deg);
+
+    spinNavX_->blockSignals(false);
+    spinNavY_->blockSignals(false);
+    spinNavZ_->blockSignals(false);
+    spinNavYaw_->blockSignals(false);
+}
+
+void Ros3DPage::onNavSpinBoxChanged()
+{
+    // UI框数值发生变动时，把新值喂给 GL 画布
+    gl_->updateNavTargetFromUI(
+        spinNavX_->value(),
+        spinNavY_->value(),
+        spinNavZ_->value(),
+        spinNavYaw_->value()
+        );
 }

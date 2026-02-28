@@ -502,7 +502,7 @@ void GLWidget::paintGL()
         }
     }
 
-    // 添加箭头渲染的Z轴过滤（约第345行附近）：
+    // 添加箭头渲染的Z轴过滤
     if (trail_.hasValidTransform &&
         hasReceivedMapToCameraInitTf_ &&
         hasReceivedBodyToBaseLinkTf_)
@@ -514,6 +514,36 @@ void GLWidget::paintGL()
             drawSolidArrow(T_map_baselink_, 1.0f, 0.15f);
             progSimple_.release();
         }
+    }
+
+    // 绘制指点模式的箭头（未完成：绿色，已完成：黄色）
+    if (hasNavTarget_ || isNavGoalSet_) {
+        Eigen::Matrix4d T_nav = Eigen::Matrix4d::Identity();
+        T_nav.block<3,1>(0,3) = navTarget3D_;
+        T_nav.block<3,3>(0,0) = Eigen::AngleAxisd(navYaw_, Eigen::Vector3d::UnitZ()).matrix();
+
+        Eigen::Matrix4d Rfix = Eigen::Matrix4d::Identity();
+        double a = M_PI/2.0;
+        Rfix(0,0)=cos(a);  Rfix(0,2)=sin(a);
+        Rfix(2,0)=-sin(a); Rfix(2,2)=cos(a);
+
+        progSimple_.bind();
+        Eigen::Matrix4d mvp = proj_ * view_ * T_nav * Rfix;
+        progSimple_.setUniformValue("mvp", toQMatrix(mvp));
+
+        // 判断状态给颜色
+        if (isNavMode_) {
+            progSimple_.setUniformValue("col", QVector3D(0.0f, 1.0f, 0.0f)); // 绿色：正在指点
+        } else {
+            progSimple_.setUniformValue("col", QVector3D(1.0f, 1.0f, 0.0f)); // 黄色：已确认目标
+        }
+
+        vaoArrow_.bind();
+        int cylinderVerts = (16+1)*2;
+        glDrawArrays(GL_QUAD_STRIP, 0, cylinderVerts);
+        glDrawArrays(GL_TRIANGLES, cylinderVerts, 16*3);
+        vaoArrow_.release();
+        progSimple_.release();
     }
     // 渲染完成后打印TF状态
     // static int frame_cnt = 0;
@@ -811,6 +841,19 @@ void GLWidget::doUploadMap()
 void GLWidget::mousePressEvent(QMouseEvent* e)
 {
     lastMousePos_ = e->pos();
+
+    // 拦截：如果处于指点模式，并且按下左键
+    if (isNavMode_ && e->button() == Qt::LeftButton) {
+        // 1. 按下瞬间：确定起点位置 (X, Y)，保持 Z 不变
+        navTarget3D_ = screenToWorld(e->pos(), navTarget3D_.z());
+        hasNavTarget_ = true;
+        isDraggingNavGoal_ = true; // 开始拖动状态
+
+        // 发送更新信号给UI
+        emit navTargetUpdated(navTarget3D_.x(), navTarget3D_.y(), navTarget3D_.z(), navYaw_ * 180.0 / M_PI);
+        update();
+        return; // 拦截事件，不再往下走
+    }
 }
 
 // 右键鼠标移动
@@ -818,6 +861,26 @@ void GLWidget::mouseMoveEvent(QMouseEvent* e)
 {
     QPoint delta = e->pos() - lastMousePos_;
     lastMousePos_ = e->pos();
+
+    // 2. 拖动过程：如果是指标模式且正在拖动，计算 Yaw 角度
+    if (isNavMode_ && hasNavTarget_ && isDraggingNavGoal_) {
+        // 获取当前鼠标在 Z=targetZ 平面上的世界坐标
+        Eigen::Vector3d dragPos = screenToWorld(e->pos(), navTarget3D_.z());
+
+        // 计算起点 (navTarget3D_) 到当前拖动点 (dragPos) 的向量
+        double dx = dragPos.x() - navTarget3D_.x();
+        double dy = dragPos.y() - navTarget3D_.y();
+
+        // 避免原地抖动：当拖动距离大于一小段阈值时，才更新角度
+        if (std::hypot(dx, dy) > 0.05) {
+            navYaw_ = std::atan2(dy, dx);
+
+            // 实时更新UI和画面
+            emit navTargetUpdated(navTarget3D_.x(), navTarget3D_.y(), navTarget3D_.z(), navYaw_ * 180.0 / M_PI);
+            update();
+        }
+        return; // 拦截事件，防止触发视角平移/旋转
+    }
 
     if (e->buttons() & Qt::LeftButton) {
         pitch_ += delta.y() * 0.5f;   // 鼠标上下 → 俯仰
@@ -1004,4 +1067,71 @@ void GLWidget::setCamera()
 void GLWidget::saveMapToFile()
 {
     qDebug() << "保存地图...";
+}
+
+
+void GLWidget::setNavMode(bool enable)
+{
+    isNavMode_ = enable;
+    if (enable) {
+        // 进入模式：如果已经有目标点了，变为绿色(未确认状态)，保持位置不变
+        isNavGoalSet_ = false;
+    } else {
+        // 退出模式：锁定为黄色并发送目标信号
+        if (hasNavTarget_) {
+            isNavGoalSet_ = true;
+            emit navGoalSet(navTarget3D_.x(), navTarget3D_.y(), navTarget3D_.z(), navYaw_);
+        }
+    }
+    update();
+}
+
+Eigen::Vector3d GLWidget::screenToWorld(const QPoint& pos, double targetZ)
+{
+    // 1. 转 NDC 坐标 [-1, 1]
+    double x_ndc = (2.0 * pos.x()) / width() - 1.0;
+    double y_ndc = 1.0 - (2.0 * pos.y()) / height();
+
+    Eigen::Vector4d ray_clip(x_ndc, y_ndc, -1.0, 1.0);
+
+    // 2. 转相机坐标系
+    Eigen::Vector4d ray_eye = proj_.inverse() * ray_clip;
+    ray_eye.z() = -1.0;
+    ray_eye.w() = 0.0;
+
+    // 3. 转世界坐标系 (方向向量)
+    Eigen::Vector4d ray_wor_4d = view_.inverse() * ray_eye;
+    Eigen::Vector3d ray_wor(ray_wor_4d.x(), ray_wor_4d.y(), ray_wor_4d.z());
+    ray_wor.normalize();
+
+    // 4. 获取相机世界坐标
+    Eigen::Vector4d cam_pos_4d = view_.inverse() * Eigen::Vector4d(0, 0, 0, 1);
+    Eigen::Vector3d cam_pos(cam_pos_4d.x(), cam_pos_4d.y(), cam_pos_4d.z());
+
+    // 5. 与 Z = targetZ 平面求交 (修改这里)
+    if (std::abs(ray_wor.z()) > 1e-6) {
+        double t = (targetZ - cam_pos.z()) / ray_wor.z();
+        if (t > 0) {
+            return cam_pos + t * ray_wor;
+        }
+    }
+    return Eigen::Vector3d(0, 0, targetZ); // 兜底返回当前Z高度
+}
+
+void GLWidget::mouseReleaseEvent(QMouseEvent* e)
+{
+    // 3. 松开鼠标：结束拖动状态，箭头成型
+    if (e->button() == Qt::LeftButton && isDraggingNavGoal_) {
+        isDraggingNavGoal_ = false;
+        // 如果你需要在这里触发“确认”操作，可以发信号，
+        // 不过你目前的设计是按“退出指点模式”按钮才算最终确认，所以这里只改状态即可。
+    }
+}
+
+void GLWidget::updateNavTargetFromUI(double x, double y, double z, double yaw_deg)
+{
+    navTarget3D_ = Eigen::Vector3d(x, y, z);
+    navYaw_ = yaw_deg * M_PI / 180.0;
+    hasNavTarget_ = true; // 用户在界面输入也算作生成了目标
+    update();
 }

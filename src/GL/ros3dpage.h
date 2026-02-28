@@ -41,8 +41,18 @@ private:
     QDoubleSpinBox* spinZMax_ = nullptr;
     DualRangeSlider* dualSlider_ = nullptr;  // 新增：双滑块
 
+    // 目标点控制组件
+    QPushButton* btnNavGoal_ = nullptr;
+    QDoubleSpinBox* spinNavX_ = nullptr;
+    QDoubleSpinBox* spinNavY_ = nullptr;
+    QDoubleSpinBox* spinNavZ_ = nullptr;
+    QDoubleSpinBox* spinNavYaw_ = nullptr;
+
 private slots:
-    void onDualRangeChanged(double lower, double upper);  // 新增
+    void onDualRangeChanged(double lower, double upper);  // 双滑块的取值
+
+    void onNavTargetUpdated(double x, double y, double z, double yaw_deg);
+    void onNavSpinBoxChanged();
 };
 
 #endif // ROS3DPAGE_H
