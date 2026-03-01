@@ -111,6 +111,10 @@ MainWindow::MainWindow(QWidget *parent)
     connect(protocolHandler, &ProtocolRos3D::mapCloudUpdated,
             ros3dPage->glWidget(), &GLWidget::onMap, Qt::QueuedConnection);
 
+    // === 连接目标轨迹信号 ===
+    connect(protocolHandler, &ProtocolRos3D::goalPathUpdated,
+            ros3dPage->glWidget(), &GLWidget::onGoalPath, Qt::QueuedConnection);
+
     // ----------------------------------------------------------
     // 绑定槽函数——显示页面
     // ----------------------------------------------------------
@@ -134,6 +138,7 @@ MainWindow::MainWindow(QWidget *parent)
     // 连接 GLWidget 的消息信号到 SerialPort 的显示槽
     connect(ros3dPage->glWidget(), &GLWidget::appendMessage,
             serialPort, &SerialPort::appendMessage);
+
 
 
 }

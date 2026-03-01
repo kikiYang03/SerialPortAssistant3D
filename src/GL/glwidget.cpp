@@ -170,6 +170,16 @@ void GLWidget::initializeGL()
     T_body_baselink_.setIdentity();         // 新增：初始化静态TF矩阵
     T_map_baselink_.setIdentity();
 
+
+    vboOptimalPath_.create();
+    vaoOptimalPath_.create();
+    vaoOptimalPath_.bind();
+    vboOptimalPath_.setUsagePattern(QOpenGLBuffer::DynamicDraw);
+    vboOptimalPath_.bind();
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, nullptr);
+    vaoOptimalPath_.release();
+
 }
 
 void GLWidget::resizeGL(int w,int h)
@@ -502,6 +512,30 @@ void GLWidget::paintGL()
         }
     }
 
+    if (hasOptimalPath_ && !optimalPathPts_.empty())
+    {
+        progSimple_.bind();
+        // 同样直接使用 proj * view，因为点已在 map 系下
+        progSimple_.setUniformValue("mvp", toQMatrix(proj_ * view_));
+        // 设置为亮绿色以区别于机器人历史轨迹
+        progSimple_.setUniformValue("col", QVector3D(1.0f, 1.0f, 0.0f));
+
+        vaoOptimalPath_.bind();
+        vboOptimalPath_.bind();
+        vboOptimalPath_.allocate(optimalPathPts_.data(),
+                                 static_cast<int>(optimalPathPts_.size() * sizeof(Eigen::Vector3f)));
+
+        glLineWidth(4.0f); // 规划路径稍微加粗
+        glDrawArrays(GL_LINE_STRIP, 0, static_cast<int>(optimalPathPts_.size()));
+
+        // 绘制路径点（可选，让路径更清晰）
+        glPointSize(6.0f);
+        glDrawArrays(GL_POINTS, 0, static_cast<int>(optimalPathPts_.size()));
+
+        vaoOptimalPath_.release();
+        progSimple_.release();
+    }
+
     // 添加箭头渲染的Z轴过滤
     if (trail_.hasValidTransform &&
         hasReceivedMapToCameraInitTf_ &&
@@ -807,6 +841,25 @@ void GLWidget::onMap(const MapCloudMsg &m)
     mapPts_ = static_cast<int>(m.points.size());
     mapDirty_.store(true, std::memory_order_release);
     if (glReady_) update();
+}
+
+void GLWidget::onGoalPath(const PathMsg &m)
+{
+    if (m.points.empty()) return;
+
+    QMutexLocker lk(&dataMtx_);
+    optimalPathPts_.clear();
+    optimalPathPts_.reserve(m.points.size());
+
+    for (const auto &pt : m.points) {
+        // 转换到 map 坐标系（与点云和机器人位置对齐）
+        Eigen::Vector3d p_ci(pt.x(), pt.y(), pt.z());
+        // Eigen::Vector3d p_map = transformPointToMap(p_ci);
+        optimalPathPts_.emplace_back(p_ci.cast<float>());
+    }
+
+    hasOptimalPath_ = true;
+    update(); // 触发重绘
 }
 
 

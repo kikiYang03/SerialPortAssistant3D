@@ -75,6 +75,8 @@ public slots:
     // 接收UI微调框传来的目标点数值
     void updateNavTargetFromUI(double x, double y, double z, double yaw_deg);
 
+    void onGoalPath(const PathMsg &m);
+
 private slots:   // 新增
     void doUploadCloud();   // 在主线程里把 cloudCpu_ 塞进 vboCloud_
     void doUploadMap();     // 在主线程里把 mapInterleavedCpu_ 塞进 vboMap_
@@ -210,6 +212,11 @@ private:
                             float pointSize,
                             const QVector3D& color = QVector3D(1,1,1),
                             bool useColorProgram = false);
+
+    std::vector<Eigen::Vector3f> optimalPathPts_; // 存储规划路径点
+    QOpenGLBuffer vboOptimalPath_;
+    QOpenGLVertexArrayObject vaoOptimalPath_;
+    bool hasOptimalPath_ = false;
 };
 
 #endif // GLWIDGET_H

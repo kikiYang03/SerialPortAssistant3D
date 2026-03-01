@@ -11,7 +11,8 @@
 static const uint8_t CMD_TF   = 0x01;
 static const uint8_t CMD_CLOUD = 0x02;
 static const uint8_t CMD_MAP  = 0x03;
-static const uint8_t CMD_NAV_GOAL = 0x04; // 【新增】目标点指令
+static const uint8_t CMD_NAV_GOAL = 0x04;   // 目标点指令
+static const uint8_t CMD_GOAL_PATH=0x06;    // 目标点轨迹
 
 ProtocolRos3D::ProtocolRos3D(QObject* parent)
     : QObject(parent)
@@ -63,6 +64,7 @@ void ProtocolRos3D::parseJsonFrame(uint8_t cmd, const QJsonObject& obj)
     case CMD_TF:   parseTF(obj);   break;
     case CMD_CLOUD: parseCloud(obj); break;
     case CMD_MAP:  parseMap(obj);  break;
+    case CMD_GOAL_PATH: parseGoalPath(obj); break;
     default: qWarning() << "unknown cmd" << cmd;
     }
 }
@@ -188,6 +190,26 @@ void ProtocolRos3D::parseMap(const QJsonObject& obj)
     // qDebug() << "MapCloudMsg: " << m.points.size();
     // ++m_mapCnt;
     emit mapCloudUpdated(m);
+}
+
+/* 目标轨迹解析 */
+void ProtocolRos3D::parseGoalPath(const QJsonObject& obj)
+{
+    PathMsg m;
+
+    QJsonArray ptsArr = obj["points"].toArray();
+    m.points.reserve(ptsArr.size());
+
+    for (int i = 0; i < ptsArr.size(); ++i) {
+        QJsonObject pObj = ptsArr[i].toObject();
+        m.points.append(QVector3D(
+            pObj["x"].toDouble(),
+            pObj["y"].toDouble(),
+            pObj["z"].toDouble()
+            ));
+    }
+
+    emit goalPathUpdated(m);
 }
 
 

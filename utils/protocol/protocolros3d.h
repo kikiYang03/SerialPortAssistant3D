@@ -26,12 +26,16 @@ signals:
     // 添加消息显示信号
     void appendMessage(const QString &message);
 
+    void goalPathUpdated(const PathMsg& msg);
+
 private:
     void parseJsonFrame(uint8_t cmd, const QJsonObject& obj);
 
     void parseTF(const QJsonObject& obj);
     void parseCloud(const QJsonObject& obj);   // cloud_registered / Laser_map 共用
     void parseMap(const QJsonObject& obj);
+
+    void parseGoalPath(const QJsonObject& obj);
 
     /* 工具 */
     static quint8 crc8(const QByteArray& data);

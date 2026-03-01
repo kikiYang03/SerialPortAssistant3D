@@ -215,6 +215,7 @@ void ProtocolRouter::dispatchFrameBySignal(const QByteArray &frame, quint8 comma
     case 0x01: // TF数据
     case 0x02: // 点云数据
     case 0x03: // 地图数据
+    case 0x06: // 目标轨迹
         handleRos3dData(command, frame);
         break;
 

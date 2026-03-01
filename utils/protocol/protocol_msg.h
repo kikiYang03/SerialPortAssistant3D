@@ -22,6 +22,9 @@ struct MapCloudMsg {
     QVector<QVector3D> points;
 };
 
+struct PathMsg {
+    QVector<QVector3D> points;
+};
 struct Transform {
     QString frame;
     QString child;
@@ -32,6 +35,7 @@ struct Transform {
 Q_DECLARE_METATYPE(TFMsg)
 Q_DECLARE_METATYPE(CloudMsg)
 Q_DECLARE_METATYPE(MapCloudMsg)
+Q_DECLARE_METATYPE(PathMsg)
 
 
 inline QDebug operator<<(QDebug dbg, const TFMsg &m)
@@ -67,6 +71,13 @@ inline QDebug operator<<(QDebug dbg, const Transform &t)
                   << ", child=" << t.child
                   << ", t=" << t.t
                   << ", q=" << t.q << '}';
+    return dbg;
+}
+
+inline QDebug operator<<(QDebug dbg, const PathMsg &m)
+{
+    QDebugStateSaver saver(dbg);
+    dbg.nospace() << "PathMsg {points=" << m.points.size() << '}';
     return dbg;
 }
 #endif // PROTOCOL_MSG_H

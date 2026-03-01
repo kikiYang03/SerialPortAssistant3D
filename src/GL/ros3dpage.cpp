@@ -66,7 +66,7 @@ Ros3DPage::Ros3DPage(QWidget* parent)
 
     // ---------- 目标点设置 (新增面板) ----------
     auto* targetBox = new QGroupBox(tr("目标点指引"), side);
-    auto* btnNavGoal = new QPushButton(tr("指点模式(设目标)"), targetBox);
+    auto* btnNavGoal = new QPushButton(tr("设置目标点"), targetBox);
     btnNavGoal->setCheckable(true);
 
     // 发送目标点按钮
