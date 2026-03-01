@@ -48,11 +48,15 @@ private:
     QDoubleSpinBox* spinNavZ_ = nullptr;
     QDoubleSpinBox* spinNavYaw_ = nullptr;
 
+    QPushButton* btnSendNavGoal_ = nullptr;
+
 private slots:
     void onDualRangeChanged(double lower, double upper);  // 双滑块的取值
 
     void onNavTargetUpdated(double x, double y, double z, double yaw_deg);
     void onNavSpinBoxChanged();
+
+    void onSendNavGoalClicked();
 };
 
 #endif // ROS3DPAGE_H

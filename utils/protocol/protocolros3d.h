@@ -11,6 +11,9 @@ class ProtocolRos3D : public QObject {
 public:
     explicit ProtocolRos3D(QObject* parent = nullptr);
 
+    // 【新增】构建目标点下发帧: AA 04 [JSON] 0A
+    static QByteArray buildNavGoalFrame(double x, double y, double z, double yaw);
+
 public slots:
     void onRawBytes(quint8 cmd,const QByteArray& data);
     void setLinkAlive(bool alive) { m_linkAlive = alive; }

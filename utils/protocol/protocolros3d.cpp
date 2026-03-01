@@ -11,6 +11,7 @@
 static const uint8_t CMD_TF   = 0x01;
 static const uint8_t CMD_CLOUD = 0x02;
 static const uint8_t CMD_MAP  = 0x03;
+static const uint8_t CMD_NAV_GOAL = 0x04; // 【新增】目标点指令
 
 ProtocolRos3D::ProtocolRos3D(QObject* parent)
     : QObject(parent)
@@ -251,4 +252,28 @@ void ProtocolRos3D::calcHz()
                       .arg(scanHz, 0, 'f', 2);
 
     emit appendMessage(msg);
+}
+
+// 设置目标点
+QByteArray ProtocolRos3D::buildNavGoalFrame(double x, double y, double z, double yaw)
+{
+    // 1. 构建 JSON 对象
+    QJsonObject obj;
+    obj["x"] = x;
+    obj["y"] = y;
+    obj["z"] = z;
+    obj["yaw"] = yaw;
+
+    // 2. 转换为紧凑的 JSON 字节串
+    QJsonDocument doc(obj);
+    QByteArray jsonData = doc.toJson(QJsonDocument::Compact);
+
+    // 3. 组装完整数据帧: AA 04 [JSON] 0A
+    QByteArray frame;
+    frame.append(static_cast<char>(0xAA));
+    frame.append(static_cast<char>(CMD_NAV_GOAL));
+    frame.append(jsonData);
+    frame.append(static_cast<char>(0x0A));
+
+    return frame;
 }

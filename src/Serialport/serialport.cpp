@@ -318,21 +318,17 @@ void SerialPort::on_wifiConnectBt_clicked()
         ui->serialBox->setEnabled(false);
         if (protocol == "TCP"){
             if (!tcpClient->isConnected()) {
-                // QString ip = ui->ipInput->text();
-                // quint16 port = ui->portInput->text().toUShort(&ok);
-                // 固定模块IP 端口
-                QString ipText = Config::instance().value("Network/tcp_ip", "127.0.0.1").toString();
+                // --- 修改开始：获取输入框中的 IP 和端口 ---
+                QString ipText = ui->ipInput->text().trimmed();
                 bool ok = false;
-                quint16 port = Config::instance().value("Network/tcp_port", "6666").toString().toUShort(&ok);
-                if (!ok) {
-                    // 处理转换失败，例如使用默认值
-                    port = 6666;
-                }
+                quint16 port = ui->portInput->text().toUShort(&ok);
 
+                // 如果输入框为空（比如初次启动），则回退到配置文件
+                if (ipText.isEmpty()) {
+                    ipText = Config::instance().value("Network/tcp_ip", "127.0.0.1").toString();
+                }
                 if (!ok || port == 0) {
-                    // 转换失败或端口号为0的处理
-                    QMessageBox::warning(this, "错误", "请输入有效的端口号(1-65535)");
-                    return;
+                    port = Config::instance().value("Network/tcp_port", "6666").toUInt();
                 }
 
                 qDebug() << "开始连接TCP..." << ipText << ":" << port;

@@ -1,4 +1,6 @@
 ﻿#include "ros3dpage.h"
+#include "tcpclient.h"
+#include "protocolros3d.h"
 
 #include <QHBoxLayout>
 #include <QVBoxLayout>
@@ -11,6 +13,7 @@
 #include <QtMath>
 #include <QTimer>
 #include <QCheckBox>
+#include <QMessageBox>
 
 Ros3DPage::Ros3DPage(QWidget* parent)
     : QWidget(parent)
@@ -66,6 +69,10 @@ Ros3DPage::Ros3DPage(QWidget* parent)
     auto* btnNavGoal = new QPushButton(tr("指点模式(设目标)"), targetBox);
     btnNavGoal->setCheckable(true);
 
+    // 发送目标点按钮
+    btnSendNavGoal_ = new QPushButton(tr("发送目标点"), targetBox);
+    btnSendNavGoal_->setEnabled(false); // 初始状态为不可用，直到目标点确认
+
     spinNavX_ = new QDoubleSpinBox(targetBox);
     spinNavY_ = new QDoubleSpinBox(targetBox);
     spinNavZ_ = new QDoubleSpinBox(targetBox);
@@ -81,10 +88,13 @@ Ros3DPage::Ros3DPage(QWidget* parent)
     setupNavSpinBox(spinNavX_, " m", -1000.0, 1000.0);
     setupNavSpinBox(spinNavY_, " m", -1000.0, 1000.0);
     setupNavSpinBox(spinNavZ_, " m", -100.0, 100.0);
-    setupNavSpinBox(spinNavYaw_, " °", -360.0, 360.0);
+    setupNavSpinBox(spinNavYaw_, " °", -180.0, 180.0);
+    spinNavYaw_->setDecimals(0);       // 小数位数设为 0
+    spinNavYaw_->setSingleStep(1.0);   // 每次点击上下箭头增减 1 度
 
     auto* targetLay = new QGridLayout(targetBox);
-    targetLay->addWidget(btnNavGoal, 0, 0, 1, 4);
+    targetLay->addWidget(btnNavGoal, 0, 0, 1, 2);
+    targetLay->addWidget(btnSendNavGoal_, 0, 2, 1, 2);
     targetLay->addWidget(new QLabel("X:"), 1, 0); targetLay->addWidget(spinNavX_, 1, 1);
     targetLay->addWidget(new QLabel("Y:"), 1, 2); targetLay->addWidget(spinNavY_, 1, 3);
     targetLay->addWidget(new QLabel("Z:"), 2, 0); targetLay->addWidget(spinNavZ_, 2, 1);
@@ -288,7 +298,7 @@ Ros3DPage::Ros3DPage(QWidget* parent)
     // 启用/禁用过滤
     connect(ckZFilter_, &QCheckBox::toggled, gl_, &GLWidget::setZFilterEnabled);
 
-    connect(gl_, &GLWidget::navGoalSet, this, [](double x, double y, double z, double yaw) {
+    connect(gl_, &GLWidget::navGoalSet, this, [this](double x, double y, double z, double yaw) {
         double yaw_deg = yaw * 180.0 / M_PI;
         QString msg = QString("生成目标点 -> X: %1, Y: %2, Z: %3, Yaw: %4°")
                           .arg(x, 0, 'f', 2)
@@ -296,6 +306,9 @@ Ros3DPage::Ros3DPage(QWidget* parent)
                           .arg(z, 0, 'f', 2)
                           .arg(yaw_deg, 0, 'f', 1);
         qDebug() << msg;
+
+        // 目标点已设置，启用发送按钮
+        btnSendNavGoal_->setEnabled(true);
     });
 
     // 监听 Toggle 状态改变
@@ -303,11 +316,18 @@ Ros3DPage::Ros3DPage(QWidget* parent)
         if (checked) {
             btnNavGoal->setText(tr("退出指点模式"));
             gl_->setNavMode(true);
+            // 正在指点时，禁用发送按钮，防止误触
+            btnSendNavGoal_->setEnabled(false);
         } else {
             btnNavGoal->setText(tr("指点模式(设目标)"));
             gl_->setNavMode(false);
+            // 这里不需要写 setEnabled(true)，因为 gl_->setNavMode(false) 会触发 gl_ 发射 navGoalSet 信号，
+            // 从而在上面的 connect 里启用发送按钮。
         }
     });
+
+    // 【新增】连接发送按钮的点击槽函数
+    connect(btnSendNavGoal_, &QPushButton::clicked, this, &Ros3DPage::onSendNavGoalClicked);
 
 
     // 接收GLWidget鼠标拖动时的坐标更新信号
@@ -370,4 +390,36 @@ void Ros3DPage::onNavSpinBoxChanged()
         spinNavZ_->value(),
         spinNavYaw_->value()
         );
+}
+
+
+void Ros3DPage::onSendNavGoalClicked()
+{
+    TcpClient* tcpClient = TcpClient::getInstance();
+
+    if (!tcpClient->isConnected()) {
+        QMessageBox::warning(this, "错误", "请先建立TCP连接");
+        return;
+    }
+
+    // 从界面微调框获取坐标和角度
+    double x = spinNavX_->value();
+    double y = spinNavY_->value();
+    double z = spinNavZ_->value();
+    double yaw_deg = spinNavYaw_->value();
+
+    // 将角度转换为 ego-planner 需要的弧度制
+    double yaw_rad = yaw_deg * M_PI / 180.0;
+
+    // 构建下发给 ego-planner 的目标点帧: AA 04 [JSON] 0A
+    QByteArray frame = ProtocolRos3D::buildNavGoalFrame(x, y, z, yaw_rad);
+
+    // 发送数据
+    tcpClient->sendData(frame);
+
+    qDebug() << "发送导航目标点请求，数据:" << frame.toHex(' ');
+
+    // 如果你在界面底部有日志栏，可以打印相关信息
+    // QString timestamp = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss >> 用户操作: ");
+    // emit appendMessage(timestamp + QString("发送目标点 (X:%1, Y:%2, Z:%3, Yaw:%4°)").arg(x).arg(y).arg(z).arg(yaw_deg));
 }

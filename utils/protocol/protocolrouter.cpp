@@ -219,8 +219,8 @@ void ProtocolRouter::dispatchFrameBySignal(const QByteArray &frame, quint8 comma
         break;
 
     default:
-        qWarning() << "未知命令：" << QString::number(command, 16)
-                   << "帧数据：" << frame.toHex();
+        // qWarning() << "未知命令：" << QString::number(command, 16)
+        //            << "帧数据：" << frame.toHex();
         break;
     }
 }
