@@ -340,8 +340,13 @@ void ProtocolRouter::processUart15BFrame(const QByteArray &fr)
     quint8 msgId = quint8(fr[1]); // 提取 MsgID
 
     // 偏移量统一 +1 (因为中间插入了 MsgID)
-    auto i16 = [&](int off){ return qFromBigEndian<qint16>(
+    // auto i16 = [&](int off){ return qFromBigEndian<qint16>(
+    //                               reinterpret_cast<const uchar*>(fr.constData()+off)); };
+
+    // 解析改为小端
+    auto i16 = [&](int off){ return qFromLittleEndian<qint16>(
                                   reinterpret_cast<const uchar*>(fr.constData()+off)); };
+
     qint16 x    = i16(2);
     qint16 y    = i16(4);
     qint16 z    = i16(6);
@@ -410,13 +415,22 @@ QByteArray ProtocolRouter::buildNavGoalFrame(qint16 x, qint16 y, qint16 z,
     frame[0] = static_cast<char>(0xAA);
     frame[1] = static_cast<char>(0x02); // 消息ID: 0x02 (导航目标点)
 
-    // 使用 qToBigEndian 快速写入大端数据
-    qToBigEndian<qint16>(x, frame.data() + 2);
-    qToBigEndian<qint16>(y, frame.data() + 4);
-    qToBigEndian<qint16>(z, frame.data() + 6);
-    qToBigEndian<qint16>(roll, frame.data() + 8);
-    qToBigEndian<qint16>(pitch, frame.data() + 10);
-    qToBigEndian<qint16>(yaw, frame.data() + 12);
+    // // 使用 qToBigEndian 快速写入大端数据
+    // qToBigEndian<qint16>(x, frame.data() + 2);
+    // qToBigEndian<qint16>(y, frame.data() + 4);
+    // qToBigEndian<qint16>(z, frame.data() + 6);
+    // qToBigEndian<qint16>(roll, frame.data() + 8);
+    // qToBigEndian<qint16>(pitch, frame.data() + 10);
+    // qToBigEndian<qint16>(yaw, frame.data() + 12);
+
+    // 小端序
+    qToLittleEndian<qint16>(x, frame.data() + 2);
+    qToLittleEndian<qint16>(y, frame.data() + 4);
+    qToLittleEndian<qint16>(z, frame.data() + 6);
+    qToLittleEndian<qint16>(roll, frame.data() + 8);
+    qToLittleEndian<qint16>(pitch, frame.data() + 10);
+    qToLittleEndian<qint16>(yaw, frame.data() + 12);
+
 
     frame[14] = static_cast<char>(0x0A);
 
