@@ -39,6 +39,10 @@ public:
     static void clearBuffer(QByteArray &buffer);
     static QString frameToHexString(const QByteArray &frame);
 
+    // 构建 0x02 导航目标点帧 (上位机 -> 模块)
+    static QByteArray buildNavGoalFrame(qint16 x, qint16 y, qint16 z,
+                                        qint16 roll, qint16 pitch, qint16 yaw);
+
 signals:
     // 不同类型数据的信号
     void testFrameReceived(const QByteArray &frame, bool isResponse);
@@ -53,8 +57,12 @@ signals:
     void uartFrameReceived(qint16 x, qint16 y, qint16 z, qint16 yaw);
 
     // 串口接收信息信号
-    void uart14BFrameReceived(qint16 x, qint16 y, qint16 z,
-                              qint16 roll, qint16 pitch, qint16 yaw);
+    // void uart14BFrameReceived(qint16 x, qint16 y, qint16 z,
+    //                           qint16 roll, qint16 pitch, qint16 yaw);
+
+    // 串口接收信息信号 (带 msgId 分发)
+    void uartPoseReceived(quint8 msgId, qint16 x, qint16 y, qint16 z,
+                          qint16 roll, qint16 pitch, qint16 yaw);
 
     // 打印原来数据
     void printFrame(const QByteArray &frame);
@@ -82,7 +90,8 @@ private:
     // void handleMapData(const QByteArray &frame);
 
     // 串口解析数据
-    void processUart14BFrame(const QByteArray &fr);
+    // void processUart14BFrame(const QByteArray &fr);
+    void processUart15BFrame(const QByteArray &fr);
 
     static ProtocolRouter* m_instance;
     QMap<quint8, std::function<void(const QByteArray&)>> handlers;

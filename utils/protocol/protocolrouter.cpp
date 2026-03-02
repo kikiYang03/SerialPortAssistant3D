@@ -5,9 +5,10 @@
 
 static int frameType(const QByteArray &buf)
 {
-    if (buf.size() < 3)                    return -1;
-    if (quint8(buf[0]) != 0xAA)            return -1;
-    if (buf.size() >= 14 && quint8(buf[13]) == 0x0A) return 0;   // 串口
+    if (buf.size() < 3) return -1;
+    if (quint8(buf[0]) != 0xAA) return -1;
+    // 将 14 改为 15，索引 13 改为 14
+    if (buf.size() >= 15 && quint8(buf[14]) == 0x0A) return 0;   // 串口
     if (quint8(buf.back()) == 0x0A)        return 1;             // 网络
     return -1;
 }
@@ -77,31 +78,27 @@ void ProtocolRouter::processDataStream(QByteArray buffer, bool isSerialPortMode)
 
 void ProtocolRouter::processUartFrames()
 {
-    // emit printFrame(m_uartBuffer);  // 打印累积缓冲区数据
-
-    while (m_uartBuffer.size() >= 14) {
+    // 将所有的 14 改为 15，索引 13 改为 14
+    while (m_uartBuffer.size() >= 15) {
         int head = m_uartBuffer.indexOf(char(0xAA));
-        if (head < 0 || m_uartBuffer.size() - head < 14) {
-            // 如果没找到头或剩余数据不足14字节，保留数据等待下次
-            break;
+        if (head < 0 || m_uartBuffer.size() - head < 15) {
+            break; // 剩余数据不足 15 字节，等待
         }
 
-        // 提取14字节候选帧
-        QByteArray frame = m_uartBuffer.mid(head, 14);
+        // 提取 15 字节候选帧
+        QByteArray frame = m_uartBuffer.mid(head, 15);
 
         // 验证帧头帧尾
-        if (quint8(frame[0]) != 0xAA || quint8(frame[13]) != 0x0A) {
-            // 格式错误，移除帧头，滑窗继续查找
+        if (quint8(frame[0]) != 0xAA || quint8(frame[14]) != 0x0A) {
             m_uartBuffer.remove(head, 1);
             continue;
         }
 
         // 解析成功
-        processUart14BFrame(frame);
-        m_uartBuffer.remove(head, 14);
+        processUart15BFrame(frame);
+        m_uartBuffer.remove(head, 15);
     }
 
-    // 防止缓冲区无限增长：如果缓冲区太大且没有有效帧头，清空
     if (m_uartBuffer.size() > 1024 && !m_uartBuffer.contains(0xAA)) {
         qWarning() << "串口缓冲区无有效帧头，清空:" << m_uartBuffer.size() << "字节";
         m_uartBuffer.clear();
@@ -318,20 +315,46 @@ QByteArray ProtocolRouter::buildFrame(quint8 command, const QVariantMap &params)
 }
 
 // 新增解析串口数据函数
-void ProtocolRouter::processUart14BFrame(const QByteArray &fr)
+// void ProtocolRouter::processUart14BFrame(const QByteArray &fr)
+// {
+//     if (fr.size() != 14 || quint8(fr[0]) != 0xAA || quint8(fr[13]) != 0x0A)
+//         return ;
+
+//     auto i16 = [&](int off){ return qFromBigEndian<qint16>(
+//                                   reinterpret_cast<const uchar*>(fr.constData()+off)); };
+//     qint16 x    = i16(1);
+//     qint16 y    = i16(3);
+//     qint16 z    = i16(5);
+//     qint16 roll = i16(7);
+//     qint16 pitch= i16(9);
+//     qint16 yaw  = i16(11);
+//     emit uart14BFrameReceived(x,y,z,roll,pitch,yaw);
+// }
+
+
+void ProtocolRouter::processUart15BFrame(const QByteArray &fr)
 {
-    if (fr.size() != 14 || quint8(fr[0]) != 0xAA || quint8(fr[13]) != 0x0A)
+    if (fr.size() != 15 || quint8(fr[0]) != 0xAA || quint8(fr[14]) != 0x0A)
         return ;
 
+    quint8 msgId = quint8(fr[1]); // 提取 MsgID
+
+    // 偏移量统一 +1 (因为中间插入了 MsgID)
     auto i16 = [&](int off){ return qFromBigEndian<qint16>(
                                   reinterpret_cast<const uchar*>(fr.constData()+off)); };
-    qint16 x    = i16(1);
-    qint16 y    = i16(3);
-    qint16 z    = i16(5);
-    qint16 roll = i16(7);
-    qint16 pitch= i16(9);
-    qint16 yaw  = i16(11);
-    emit uart14BFrameReceived(x,y,z,roll,pitch,yaw);
+    qint16 x    = i16(2);
+    qint16 y    = i16(4);
+    qint16 z    = i16(6);
+    qint16 roll = i16(8);
+    qint16 pitch= i16(10);
+    qint16 yaw  = i16(12);
+
+    // 只有 0x01 (当前位姿) 和 0x03 (位置控制指令) 是从模块发给上位机的
+    if (msgId == 0x01 || msgId == 0x03) {
+        emit uartPoseReceived(msgId, x, y, z, roll, pitch, yaw);
+    } else {
+        qWarning() << "收到预期外的串口 MsgID:" << msgId;
+    }
 }
 
 QByteArray ProtocolRouter::buildTestFrame(bool isResponse)
@@ -377,6 +400,28 @@ QByteArray ProtocolRouter::buildRosFrame(quint8 topicId, const QJsonObject &data
     params["data_object"] = QJsonValue(data);
 
     return buildFrame(topicId, params);
+}
+
+QByteArray ProtocolRouter::buildNavGoalFrame(qint16 x, qint16 y, qint16 z,
+                                             qint16 roll, qint16 pitch, qint16 yaw)
+{
+    QByteArray frame;
+    frame.resize(15);
+    frame[0] = static_cast<char>(0xAA);
+    frame[1] = static_cast<char>(0x02); // 消息ID: 0x02 (导航目标点)
+
+    // 使用 qToBigEndian 快速写入大端数据
+    qToBigEndian<qint16>(x, frame.data() + 2);
+    qToBigEndian<qint16>(y, frame.data() + 4);
+    qToBigEndian<qint16>(z, frame.data() + 6);
+    qToBigEndian<qint16>(roll, frame.data() + 8);
+    qToBigEndian<qint16>(pitch, frame.data() + 10);
+    qToBigEndian<qint16>(yaw, frame.data() + 12);
+
+    frame[14] = static_cast<char>(0x0A);
+
+    qDebug() << "构建 0x02 导航帧：" << frame.toHex(' ').toUpper();
+    return frame;
 }
 
 bool ProtocolRouter::validateFrame(const QByteArray &frame)

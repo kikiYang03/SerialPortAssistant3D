@@ -123,11 +123,12 @@ SerialPort::SerialPort(QWidget *parent)
 
     elapsedTimer.start();
     // 串口数据解析
-    connect(ProtocolRouter::instance(), &ProtocolRouter::uart14BFrameReceived,
-            this, [this](qint16 x, qint16 y, qint16 z, qint16 r, qint16 p, qint16 yaw){
-                QString ts = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss >> 串口接收数据: ");
-                ui->recvEdit->append(ts + QString("x=%1 y=%2 z=%3 roll=%4 pitch=%5 yaw=%6")
-                                              .arg(x).arg(y).arg(z).arg(r).arg(p).arg(yaw));
+    connect(ProtocolRouter::instance(), &ProtocolRouter::uartPoseReceived,
+            this, [this](quint8 msgId, qint16 x, qint16 y, qint16 z, qint16 r, qint16 p, qint16 yaw){
+                QString typeStr = (msgId == 0x01) ? "当前位姿[0x01]" : "规划指令[0x03]";
+                QString ts = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss >> 串口接收 ");
+                ui->recvEdit->append(ts + typeStr + QString(": x=%1 y=%2 z=%3 roll=%4 pitch=%5 yaw=%6")
+                                                        .arg(x).arg(y).arg(z).arg(r).arg(p).arg(yaw));
             });
 
     connect(ProtocolRouter::instance(), &ProtocolRouter::printFrame,
