@@ -395,12 +395,12 @@ void Ros3DPage::onNavSpinBoxChanged()
 
 void Ros3DPage::onSendNavGoalClicked()
 {
-    TcpClient* tcpClient = TcpClient::getInstance();
+    // TcpClient* tcpClient = TcpClient::getInstance();
 
-    if (!tcpClient->isConnected()) {
-        QMessageBox::warning(this, "错误", "请先建立TCP连接");
-        return;
-    }
+    // if (!tcpClient->isConnected()) {
+    //     QMessageBox::warning(this, "错误", "请先建立TCP连接");
+    //     return;
+    // }
 
     // 从界面微调框获取坐标和角度
     double x = spinNavX_->value();
@@ -408,16 +408,22 @@ void Ros3DPage::onSendNavGoalClicked()
     double z = spinNavZ_->value();
     double yaw_deg = spinNavYaw_->value();
 
-    // 将角度转换为 ego-planner 需要的弧度制
-    double yaw_rad = yaw_deg * M_PI / 180.0;
+    // 触发信号，将数据交给专门处理通信的模块
+    emit sendNavGoalRequested(x, y, z, yaw_deg);
 
-    // 构建下发给 ego-planner 的目标点帧: AA 04 [JSON] 0A
-    QByteArray frame = ProtocolRos3D::buildNavGoalFrame(x, y, z, yaw_rad);
+    // (可选) 打印日志
+    qDebug() << "界面触发发送导航目标点请求...";
+
+    // 将角度转换为 ego-planner 需要的弧度制
+    // double yaw_rad = yaw_deg * M_PI / 180.0;
+
+    // // 构建下发给 ego-planner 的目标点帧: AA 04 [JSON] 0A
+    // QByteArray frame = ProtocolRos3D::buildNavGoalFrame(x, y, z, yaw_rad);
 
     // 发送数据
-    tcpClient->sendData(frame);
+    // tcpClient->sendData(frame);
 
-    qDebug() << "发送导航目标点请求，数据:" << frame.toHex(' ');
+    // qDebug() << "发送导航目标点请求，数据:" << frame.toHex(' ');
 
     // 如果你在界面底部有日志栏，可以打印相关信息
     // QString timestamp = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss >> 用户操作: ");

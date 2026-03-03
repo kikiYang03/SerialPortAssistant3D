@@ -65,6 +65,7 @@ protected:
 
 public slots:
     void handleTestFrame(const QByteArray &frame, bool isResponse);
+    void onSendNavGoalRequested(double x, double y, double z, double yaw_deg);
 
 private slots:
     void onTestTimeout();

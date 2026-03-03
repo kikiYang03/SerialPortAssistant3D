@@ -139,6 +139,9 @@ MainWindow::MainWindow(QWidget *parent)
     connect(ros3dPage->glWidget(), &GLWidget::appendMessage,
             serialPort, &SerialPort::appendMessage);
 
+    connect(ros3dPage, &Ros3DPage::sendNavGoalRequested,
+            serialPort, &SerialPort::onSendNavGoalRequested);
+
 
 
 }

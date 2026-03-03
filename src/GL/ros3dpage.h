@@ -20,6 +20,9 @@ public:
 
     GLWidget* glWidget() const { return gl_; }
 
+signals:
+    void sendNavGoalRequested(double x, double y, double z, double yaw_deg);
+
 private:
     GLWidget* gl_ = nullptr;
 

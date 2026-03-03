@@ -1,8 +1,13 @@
 ﻿#include "serialport.h"
 #include "ui_serialport.h"
 #include "utils/config/config.h"
+#include "protocolros3d.h"
+#include "protocolrouter.h"
+
 #include <QDataStream>
 #include <QTimer>
+#include <QMessageBox>
+#include <qmath.h>
 
 
 // 初始化ui界面
@@ -226,6 +231,37 @@ void SerialPort::on_sendBt_clicked()
     ui->recvEdit->append(timestamp + "已发送测试，等待模块回复...");
     testFlag = false;       // 重置测试标志并启动定时器
     testTimer->start(3000); // 3秒超时
+}
+
+void SerialPort::onSendNavGoalRequested(double x, double y, double z, double yaw_deg)
+{
+    TcpClient* tcpClient = TcpClient::getInstance();
+    double yaw_rad = yaw_deg * M_PI / 180.0;
+    QByteArray frame;
+
+    if (isSerialPortConnected) {
+        // --- 串口模式：调用 ProtocolRouter 构建二进制帧 (0x02) ---
+        // 注意：由于 ProtocolRouter 接收的是 qint16，通常需要将米(m)和弧度(rad)转换为毫米(mm)和毫弧度(mrad)或相关单位。
+        // 这里默认乘 1000 转换，请根据你的下位机实际通信协议修改比例系数！
+        qint16 val_x = static_cast<qint16>(x * 1000);
+        qint16 val_y = static_cast<qint16>(y * 1000);
+        qint16 val_z = static_cast<qint16>(z * 1000);
+        qint16 val_yaw = static_cast<qint16>(yaw_rad * 1000);
+
+        frame = ProtocolRouter::instance()->buildNavGoalFrame(val_x, val_y, val_z, 0, 0, val_yaw);
+
+    } else if (tcpClient->isConnected()) {
+        // --- TCP 模式：调用 ProtocolRos3D 构建 JSON 帧 (0x04) ---
+        frame = ProtocolRos3D::buildNavGoalFrame(x, y, z, yaw_rad);
+
+    } else {
+        QMessageBox::warning(this, "错误", "请先建立 TCP 联网或打开串口！");
+        return;
+    }
+
+    // 复用 SerialPort 现成的 sendData 进行发送
+    sendData(frame);
+    qDebug() << "成功发送导航目标点数据:" << frame.toHex(' ').toUpper();
 }
 
 // 数据处理/////////////////////////////////////////////////////////////////
