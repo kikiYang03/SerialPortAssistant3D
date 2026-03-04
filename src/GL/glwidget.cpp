@@ -512,13 +512,14 @@ void GLWidget::paintGL()
         }
     }
 
+    // 绘制去到目标点的轨迹路线
     if (hasOptimalPath_ && !optimalPathPts_.empty())
     {
         progSimple_.bind();
         // 同样直接使用 proj * view，因为点已在 map 系下
         progSimple_.setUniformValue("mvp", toQMatrix(proj_ * view_));
-        // 设置为亮绿色以区别于机器人历史轨迹
-        progSimple_.setUniformValue("col", QVector3D(1.0f, 1.0f, 0.0f));
+        // 设置为红色以区别于机器人历史轨迹
+        progSimple_.setUniformValue("col", QVector3D(1.0f, 0.0f, 0.0f));
 
         vaoOptimalPath_.bind();
         vboOptimalPath_.bind();

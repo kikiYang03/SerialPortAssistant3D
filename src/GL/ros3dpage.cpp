@@ -319,7 +319,7 @@ Ros3DPage::Ros3DPage(QWidget* parent)
             // 正在指点时，禁用发送按钮，防止误触
             btnSendNavGoal_->setEnabled(false);
         } else {
-            btnNavGoal->setText(tr("指点模式(设目标)"));
+            btnNavGoal->setText(tr("设置目标点"));
             gl_->setNavMode(false);
             // 这里不需要写 setEnabled(true)，因为 gl_->setNavMode(false) 会触发 gl_ 发射 navGoalSet 信号，
             // 从而在上面的 connect 里启用发送按钮。

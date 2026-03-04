@@ -132,7 +132,7 @@ SerialPort::SerialPort(QWidget *parent)
             this, [this](quint8 msgId, qint16 x, qint16 y, qint16 z, qint16 r, qint16 p, qint16 yaw){
                 QString typeStr = (msgId == 0x01) ? "当前位姿" : "规划指令";
                 QString ts = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss >> 串口接收 ");
-                ui->recvEdit->append(ts + typeStr + QString(": x=%1 y=%2 z=%3 roll=%4 pitch=%5 yaw=%6")
+                ui->recvEdit->append(ts + typeStr + QString(": x=%1cm y=%2cm z=%3cm roll=%4 pitch=%5 yaw=%6°")
                                                         .arg(x).arg(y).arg(z).arg(r).arg(p).arg(yaw));
             });
 
@@ -242,11 +242,11 @@ void SerialPort::onSendNavGoalRequested(double x, double y, double z, double yaw
     if (isSerialPortConnected) {
         // --- 串口模式：调用 ProtocolRouter 构建二进制帧 (0x02) ---
         // 注意：由于 ProtocolRouter 接收的是 qint16，通常需要将米(m)和弧度(rad)转换为毫米(mm)和毫弧度(mrad)或相关单位。
-        // 这里默认乘 1000 转换，请根据你的下位机实际通信协议修改比例系数！
-        qint16 val_x = static_cast<qint16>(x * 1000);
-        qint16 val_y = static_cast<qint16>(y * 1000);
-        qint16 val_z = static_cast<qint16>(z * 1000);
-        qint16 val_yaw = static_cast<qint16>(yaw_rad * 1000);
+        // 这里默认乘 100 转换为cm，请根据你的下位机实际通信协议修改比例系数！
+        qint16 val_x = static_cast<qint16>(x * 100);
+        qint16 val_y = static_cast<qint16>(y * 100);
+        qint16 val_z = static_cast<qint16>(z * 100);
+        qint16 val_yaw = static_cast<qint16>(yaw_deg);
 
         frame = ProtocolRouter::instance()->buildNavGoalFrame(val_x, val_y, val_z, 0, 0, val_yaw);
 
