@@ -8,11 +8,12 @@
 #include <QTimer>
 
 
-static const uint8_t CMD_TF   = 0x01;
-static const uint8_t CMD_CLOUD = 0x02;
-static const uint8_t CMD_MAP  = 0x03;
-static const uint8_t CMD_NAV_GOAL = 0x04;   // 目标点指令
-static const uint8_t CMD_GOAL_PATH=0x06;    // 目标点轨迹
+// 新协议命令ID定义
+static const uint8_t CMD_ROBOT_POSE  = 0x01;  // 机器人位姿 (map → base_link)
+static const uint8_t CMD_LIDAR_POSE  = 0x02;  // 雷达安装位姿 (map → laser)
+static const uint8_t CMD_CLOUD       = 0x03;  // 3D点云数据
+static const uint8_t CMD_NAV_GOAL    = 0x07;  // 目标点指令
+static const uint8_t CMD_GOAL_PATH   = 0x09;  // 最优轨迹线
 
 ProtocolRos3D::ProtocolRos3D(QObject* parent)
     : QObject(parent)
@@ -61,10 +62,10 @@ quint8 ProtocolRos3D::crc8(const QByteArray& data)
 void ProtocolRos3D::parseJsonFrame(uint8_t cmd, const QJsonObject& obj)
 {
     switch (cmd) {
-    case CMD_TF:   parseTF(obj);   break;
-    case CMD_CLOUD: parseCloud(obj); break;
-    case CMD_MAP:  parseMap(obj);  break;
-    case CMD_GOAL_PATH: parseGoalPath(obj); break;
+    case CMD_ROBOT_POSE:  parseRobotPose(obj);  break;
+    case CMD_LIDAR_POSE:  parseLidarPose(obj);  break;
+    case CMD_CLOUD:       parseCloud(obj);      break;
+    case CMD_GOAL_PATH:   parseGoalPath(obj);   break;
     default: qWarning() << "unknown cmd" << cmd;
     }
 }
@@ -73,33 +74,53 @@ void ProtocolRos3D::parseJsonFrame(uint8_t cmd, const QJsonObject& obj)
 static qint64 g_lastTfLogMS   = 0;
 static qint64 g_lastCloudLogMS = 0;
 
-/* TF 解析 */
-void ProtocolRos3D::parseTF(const QJsonObject& obj)
+/* 机器人位姿解析 (map → base_link) */
+void ProtocolRos3D::parseRobotPose(const QJsonObject& obj)
 {
-    /* ---- 节流打印 ---- */
     qint64 nowMS = QDateTime::currentMSecsSinceEpoch();
-    if (nowMS - g_lastTfLogMS >= 1000) {      // 距离上次 ≥1 s 才打印
+    if (nowMS - g_lastTfLogMS >= 1000) {
         g_lastTfLogMS = nowMS;
-        QString msg = QStringLiteral("接收到TF: %1")
-                          .arg(QString::fromUtf8(QJsonDocument(obj).toJson(QJsonDocument::Compact)));
+        QString msg = QStringLiteral("接收到机器人位姿: x=%.2f, y=%.2f, z=%.2f")
+                          .arg(obj["x"].toDouble())
+                          .arg(obj["y"].toDouble())
+                          .arg(obj["z"].toDouble());
         AdminMode::appendMessage(msg);
     }
 
-    TFMsg m;
+    RobotPoseMsg m;
     m.frame_id       = obj["frame_id"].toString();
     m.child_frame_id = obj["child_frame_id"].toString();
-    m.t              = QVector3D(obj["x"].toDouble(),
-                    obj["y"].toDouble(),
-                    obj["z"].toDouble());
-    m.q              = QQuaternion(obj["qw"].toDouble(),
-                      obj["qx"].toDouble(),
-                      obj["qy"].toDouble(),
-                      obj["qz"].toDouble());
+    m.x              = obj["x"].toDouble();
+    m.y              = obj["y"].toDouble();
+    m.z              = obj["z"].toDouble();
+    m.qx             = obj["qx"].toDouble();
+    m.qy             = obj["qy"].toDouble();
+    m.qz             = obj["qz"].toDouble();
+    m.qw             = obj["qw"].toDouble();
 
-    if (m.frame_id == "camera_init" && m.child_frame_id == "body"){
-        ++m_tfCnt;          // 计数
-    }
-    emit tfUpdated(m);
+    ++m_tfCnt;
+    emit robotPoseUpdated(m);
+}
+
+/* 雷达位姿解析 (map → laser) */
+void ProtocolRos3D::parseLidarPose(const QJsonObject& obj)
+{
+    LidarPoseMsg m;
+    m.frame_id       = obj["frame_id"].toString();
+    m.child_frame_id = obj["child_frame_id"].toString();
+    m.x              = obj["x"].toDouble();
+    m.y              = obj["y"].toDouble();
+    m.z              = obj["z"].toDouble();
+    m.qx             = obj["qx"].toDouble();
+    m.qy             = obj["qy"].toDouble();
+    m.qz             = obj["qz"].toDouble();
+    m.qw             = obj["qw"].toDouble();
+
+    QString msg = QStringLiteral("接收到雷达位姿: x=%.2f, y=%.2f, z=%.2f")
+                      .arg(m.x).arg(m.y).arg(m.z);
+    AdminMode::appendMessage(msg);
+
+    emit lidarPoseUpdated(m);
 }
 
 
@@ -290,7 +311,7 @@ QByteArray ProtocolRos3D::buildNavGoalFrame(double x, double y, double z, double
     QJsonDocument doc(obj);
     QByteArray jsonData = doc.toJson(QJsonDocument::Compact);
 
-    // 3. 组装完整数据帧: AA 04 [JSON] 0A
+    // 3. 组装完整数据帧: AA 07 [JSON] 0A (导航目标点)
     QByteArray frame;
     frame.append(static_cast<char>(0xAA));
     frame.append(static_cast<char>(CMD_NAV_GOAL));

@@ -25,6 +25,22 @@ struct MapCloudMsg {
 struct PathMsg {
     QVector<QVector3D> points;
 };
+
+// 新协议消息结构体
+struct RobotPoseMsg {
+    QString frame_id;        // "map"
+    QString child_frame_id;  // "base_link"
+    double x, y, z;
+    double qx, qy, qz, qw;
+};
+
+struct LidarPoseMsg {
+    QString frame_id;        // "map"
+    QString child_frame_id;  // "laser_link"
+    double x, y, z;
+    double qx, qy, qz, qw;
+};
+
 struct Transform {
     QString frame;
     QString child;
@@ -36,6 +52,8 @@ Q_DECLARE_METATYPE(TFMsg)
 Q_DECLARE_METATYPE(CloudMsg)
 Q_DECLARE_METATYPE(MapCloudMsg)
 Q_DECLARE_METATYPE(PathMsg)
+Q_DECLARE_METATYPE(RobotPoseMsg)
+Q_DECLARE_METATYPE(LidarPoseMsg)
 
 
 inline QDebug operator<<(QDebug dbg, const TFMsg &m)
@@ -78,6 +96,24 @@ inline QDebug operator<<(QDebug dbg, const PathMsg &m)
 {
     QDebugStateSaver saver(dbg);
     dbg.nospace() << "PathMsg {points=" << m.points.size() << '}';
+    return dbg;
+}
+
+inline QDebug operator<<(QDebug dbg, const RobotPoseMsg &m)
+{
+    QDebugStateSaver saver(dbg);
+    dbg.nospace() << "RobotPoseMsg{frame=" << m.frame_id
+                  << ", child=" << m.child_frame_id
+                  << ", pos=(" << m.x << "," << m.y << "," << m.z << ")}";
+    return dbg;
+}
+
+inline QDebug operator<<(QDebug dbg, const LidarPoseMsg &m)
+{
+    QDebugStateSaver saver(dbg);
+    dbg.nospace() << "LidarPoseMsg{frame=" << m.frame_id
+                  << ", child=" << m.child_frame_id
+                  << ", pos=(" << m.x << "," << m.y << "," << m.z << ")}";
     return dbg;
 }
 #endif // PROTOCOL_MSG_H

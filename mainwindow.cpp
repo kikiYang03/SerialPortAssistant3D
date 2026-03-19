@@ -102,14 +102,14 @@ MainWindow::MainWindow(QWidget *parent)
             params, &Params::updateParameter);
 
     // 4) 解析结果 -> 渲染（回主线程 queued）
-    connect(protocolHandler, &ProtocolRos3D::tfUpdated,
-            ros3dPage->glWidget(), &GLWidget::onTf, Qt::QueuedConnection);
+    connect(protocolHandler, &ProtocolRos3D::robotPoseUpdated,
+            ros3dPage->glWidget(), &GLWidget::onRobotPose, Qt::QueuedConnection);
+
+    connect(protocolHandler, &ProtocolRos3D::lidarPoseUpdated,
+            ros3dPage->glWidget(), &GLWidget::onLidarPose, Qt::QueuedConnection);
 
     connect(protocolHandler, &ProtocolRos3D::cloudUpdated,
             ros3dPage->glWidget(), &GLWidget::onCloud, Qt::QueuedConnection);
-
-    connect(protocolHandler, &ProtocolRos3D::mapCloudUpdated,
-            ros3dPage->glWidget(), &GLWidget::onMap, Qt::QueuedConnection);
 
     // === 连接目标轨迹信号 ===
     connect(protocolHandler, &ProtocolRos3D::goalPathUpdated,

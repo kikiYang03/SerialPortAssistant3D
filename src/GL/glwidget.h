@@ -58,9 +58,9 @@ signals:
     void navTargetUpdated(double x, double y, double z, double yaw_deg);
 
 public slots:
-    void onTf(const TFMsg &);
+    void onRobotPose(const RobotPoseMsg &);  // 机器人位姿 (map → base_link)
+    void onLidarPose(const LidarPoseMsg &);  // 雷达位姿 (map → laser)
     void onCloud(const CloudMsg &);
-    void onMap(const MapCloudMsg &);
 
     void clearMap();        // 清理点云地图
     void clearTrail();  // 新增
@@ -90,11 +90,11 @@ protected:
 
 private:
 
-    // =========== TF相关 ===========
-    Eigen::Matrix4d T_map_ci_;          // map → camera_init
-    Eigen::Matrix4d T_ci_map_;          // camera_init → map
-    Eigen::Matrix4d T_body_baselink_;   // 新增：body → base_link 静态变换矩阵
-    Eigen::Matrix4d T_map_baselink_;    // map → base_link 动态计算结果
+    // =========== 新协议TF相关 ===========
+    Eigen::Matrix4d T_map_base_link_;    // map → base_link (机器人位姿)
+    Eigen::Matrix4d T_map_laser_;        // map → laser (雷达位姿)
+    bool hasRobotPose_ = false;          // 是否收到机器人位姿
+    bool hasLidarPose_ = false;          // 是否收到雷达位姿
 
     // 修改这行：
     Eigen::Vector3d screenToWorld(const QPoint& pos, double targetZ);
@@ -109,13 +109,9 @@ private:
     Eigen::Vector3d navTarget3D_{0, 0, 0}; // 目标坐标
     double navYaw_ = 0.0;
 
-    bool hasReceivedMapToCameraInitTf_ = false;
-    bool hasReceivedBodyToBaseLinkTf_ = false;   // 已存在，正确
-
     ColorMode colorMode_ = Height;
     TfTree tf_;
 
-    Eigen::Vector3d transformPointToMap(const Eigen::Vector3d& pt_in_camera_init);
     // 点云大小
     float cloudPtSize_ = 3.0f;
     float mapPtSize_   = 3.0f;
@@ -169,12 +165,6 @@ private:
     void mouseMoveEvent(QMouseEvent *e) override;
     void wheelEvent(QWheelEvent *e) override;
 
-    // TF关系链
-    Eigen::Matrix4d T_map_ci__latest_      = Eigen::Matrix4d::Identity(); // map→camera_init
-    Eigen::Matrix4d T_body_baselink_latest_= Eigen::Matrix4d::Identity(); // body→base_link
-
-
-    // 放在 private 段
     QOpenGLBuffer vboAxis_;
     QOpenGLVertexArrayObject vaoAxis_;
 
