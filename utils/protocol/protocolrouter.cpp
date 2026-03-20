@@ -59,6 +59,14 @@ void ProtocolRouter::initDefaultHandlers()
         handleRos3dData(0x03, frame);
     });
 
+    registerHandler(0x05, [this](const QByteArray &frame) {  // 2D激光雷达数据
+        handleRos3dData(0x05, frame);
+    });
+
+    registerHandler(0x06, [this](const QByteArray &frame) {  // 2D地图数据
+        handleRos3dData(0x06, frame);
+    });
+
     registerHandler(0x09, [this](const QByteArray &frame) {  // 最优轨迹线
         handleRos3dData(0x09, frame);
     });
@@ -217,6 +225,8 @@ void ProtocolRouter::dispatchFrameBySignal(const QByteArray &frame, quint8 comma
     case 0x01: // 机器人位姿 (map → base_link)
     case 0x02: // 雷达安装位姿 (map → laser)
     case 0x03: // 3D点云数据
+    case 0x05: // 2D激光雷达数据
+    case 0x06: // 2D地图数据
     case 0x09: // 最优轨迹线
         handleRos3dData(command, frame);
         break;

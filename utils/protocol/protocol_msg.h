@@ -41,6 +41,27 @@ struct LidarPoseMsg {
     double qx, qy, qz, qw;
 };
 
+// 2D激光雷达扫描数据 (0x05)
+struct Scan2DMsg {
+    QString frame_id;
+    double angle_min;
+    double angle_max;
+    double angle_increment;
+    int range_count;
+    QVector<float> ranges;
+};
+
+// 2D占用栅格地图 (0x06)
+struct Map2DMsg {
+    QString frame_id;
+    int width;
+    int height;
+    double resolution;
+    double origin_x;
+    double origin_y;
+    QVector<int8_t> data;  // 解压后的地图数据
+};
+
 struct Transform {
     QString frame;
     QString child;
@@ -54,6 +75,8 @@ Q_DECLARE_METATYPE(MapCloudMsg)
 Q_DECLARE_METATYPE(PathMsg)
 Q_DECLARE_METATYPE(RobotPoseMsg)
 Q_DECLARE_METATYPE(LidarPoseMsg)
+Q_DECLARE_METATYPE(Scan2DMsg)
+Q_DECLARE_METATYPE(Map2DMsg)
 
 
 inline QDebug operator<<(QDebug dbg, const TFMsg &m)
@@ -114,6 +137,22 @@ inline QDebug operator<<(QDebug dbg, const LidarPoseMsg &m)
     dbg.nospace() << "LidarPoseMsg{frame=" << m.frame_id
                   << ", child=" << m.child_frame_id
                   << ", pos=(" << m.x << "," << m.y << "," << m.z << ")}";
+    return dbg;
+}
+
+inline QDebug operator<<(QDebug dbg, const Scan2DMsg &m)
+{
+    QDebugStateSaver saver(dbg);
+    dbg.nospace() << "Scan2DMsg{frame=" << m.frame_id
+                  << ", ranges=" << m.range_count << " points}";
+    return dbg;
+}
+
+inline QDebug operator<<(QDebug dbg, const Map2DMsg &m)
+{
+    QDebugStateSaver saver(dbg);
+    dbg.nospace() << "Map2DMsg{size=" << m.width << "x" << m.height
+                  << ", resolution=" << m.resolution << "}";
     return dbg;
 }
 #endif // PROTOCOL_MSG_H

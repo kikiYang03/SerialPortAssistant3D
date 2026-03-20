@@ -24,6 +24,10 @@ signals:
     void cloudUpdated(const CloudMsg& msg);
     void mapCloudUpdated(const MapCloudMsg& m);
 
+    // 2D数据信号
+    void scan2DUpdated(const Scan2DMsg& msg);        // 2D激光雷达数据 (0x05)
+    void map2DUpdated(const Map2DMsg& msg);          // 2D地图数据 (0x06)
+
     // 添加消息显示信号
     void appendMessage(const QString &message);
 
@@ -37,6 +41,8 @@ private:
     void parseCloud(const QJsonObject& obj);      // 解析3D点云 (0x03)
     void parseMap(const QJsonObject& obj);
     void parseGoalPath(const QJsonObject& obj);   // 解析最优轨迹 (0x09)
+    void parseScan2D(const QJsonObject& obj);     // 解析2D激光雷达 (0x05)
+    void parseMap2D(const QJsonObject& obj);      // 解析2D地图 (0x06)
 
     /* 工具 */
     static quint8 crc8(const QByteArray& data);
@@ -47,14 +53,14 @@ private:
 
     static QVector<int8_t> decompressRLE(const QVector<int8_t>& rle);
     // 计数器
-    quint32 m_tfCnt   = 0;
-    quint32 m_cloudCnt= 0;
-    quint32 m_mapCnt  = 0;
+    quint32 m_tfCnt    = 0;
+    quint32 m_cloudCnt = 0;  // 统一统计3D点云和2D激光数据
+    quint32 m_mapCnt   = 0;
 
     // 上一周期计数
-    quint32 m_tfLast   = 0;
-    quint32 m_cloudLast= 0;
-    quint32 m_mapLast  = 0;
+    quint32 m_tfLast     = 0;
+    quint32 m_cloudLast  = 0;
+    quint32 m_mapLast    = 0;
 
     QTimer *m_hzTimer = nullptr;
     bool m_linkAlive = false;

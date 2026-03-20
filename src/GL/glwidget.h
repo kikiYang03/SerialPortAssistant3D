@@ -38,6 +38,10 @@ public:
 
     void setShowRealtimeCloud(bool show);   // 实时点云开关
     void setShowMapCloud(bool show);        // 地图点云开关
+    void setShowScan2D(bool show);          // 2D激光雷达开关
+    void setShowMap2D(bool show);           // 2D地图开关
+    void setMap2DPointSize(float size);     // 设置地图点大小
+    void setMap2DStep(int step);            // 设置地图采样步长
 
     void setZFilterRange(float minZ, float maxZ);
     void setZFilterEnabled(bool enabled);
@@ -61,6 +65,8 @@ public slots:
     void onRobotPose(const RobotPoseMsg &);  // 机器人位姿 (map → base_link)
     void onLidarPose(const LidarPoseMsg &);  // 雷达位姿 (map → laser)
     void onCloud(const CloudMsg &);
+    void onScan2D(const Scan2DMsg &);        // 2D激光雷达数据 (0x05)
+    void onMap2D(const Map2DMsg &);          // 2D地图数据 (0x06)
 
     void clearMap();        // 清理点云地图
     void clearTrail();  // 新增
@@ -80,6 +86,8 @@ public slots:
 private slots:   // 新增
     void doUploadCloud();   // 在主线程里把 cloudCpu_ 塞进 vboCloud_
     void doUploadMap();     // 在主线程里把 mapInterleavedCpu_ 塞进 vboMap_
+    void doUploadScan2D();  // 在主线程里把 scan2DCpu_ 塞进 vboScan2D_
+    void doUploadMap2D();   // 在主线程里把 map2DCpu_ 塞进 vboMap2D_
 
 protected:
     void initializeGL() override;
@@ -130,6 +138,16 @@ private:
     QOpenGLBuffer vboMap_  {QOpenGLBuffer::VertexBuffer};
     QOpenGLVertexArrayObject vaoCloud_, vaoMap_;
     int cloudPts_ = 0, mapPts_ = 0;
+
+    // 2D数据 GPU对象
+    std::vector<Eigen::Vector3f> scan2DCpu_;
+    std::vector<Eigen::Vector3f> map2DCpu_;       // 位置+颜色交错存储
+    QOpenGLBuffer vboScan2D_{QOpenGLBuffer::VertexBuffer};
+    QOpenGLBuffer vboMap2D_{QOpenGLBuffer::VertexBuffer};
+    QOpenGLVertexArrayObject vaoScan2D_, vaoMap2D_;
+    int scan2DPts_ = 0, map2DPts_ = 0;
+    std::atomic_bool scan2DDirty_{false};
+    std::atomic_bool map2DDirty_{false};
 
     QOpenGLShaderProgram progSimple_;
     QOpenGLShaderProgram progColorCloud_;
@@ -186,6 +204,12 @@ private:
 
     bool showRealtimeCloud_ = true;         // 默认显示
     bool showMapCloud_      = true;
+
+    // 2D数据显示控制
+    bool showScan2D_ = true;
+    bool showMap2D_  = true;
+    float map2DPointSize_ = 6.0f;  // 2D地图点大小
+    int map2DStep_ = 1;             // 2D地图采样步长 (1=全部, 2=隔1取1, 3=隔2取1)
 
 
     // Z轴范围控制

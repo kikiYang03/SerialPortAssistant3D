@@ -6,7 +6,7 @@
 #include <adminmode.h>
 
 const QVector<Parameter> Params::s_parameters = {
-    {"0x00", "雷达型号", "0~1", "0=mid360, 1=unitree_L2", 0},
+    {"0x00", "雷达型号", "0~11", "0=mid360, 10=N10, 11=N10_P，默认0", 0},
     {"-", "雷达放置位置", "-", "雷达安装位置相对于机器人中心的位置，即tf树中：base_link->laser_link，坐标系遵循FLU（x为前，Y为左，Z为上）", 0},
     {"0x01", "X坐标", "-100~100", "雷达位置X坐标值，单位厘米", 0},
     {"0x02", "Y坐标", "-100~100", "雷达位置Y坐标值，单位厘米", 0},
@@ -22,9 +22,9 @@ const QVector<Parameter> Params::s_parameters = {
     {"0x22", "最大加速度", "0~1000", "路径规划输出轨迹的最大移动速度，单位cm/s，默认100", 100},
     {"0x23", "最大高度", "0~1000", "路径规划输出轨迹的最大高度，设置虚拟天花板防止轨迹超出该高度，单位cm，默认200", 200},
     {"0x24", "机器人半径", "0~1000", "根据中心点到最远端的距离加多至少5cm，设置为机器人半径作为路径规划，单位cm，默认30", 30},
-    {"0x25", "安全距离", "0~1000", "	设置机器人中心点到障碍的安全距离，建议=机器人半径+10，优先选择大于该安全半径的路径，单位cm，默认40", 40},
+    {"0x25", "安全距离", "0~1000", "设置机器人中心点到障碍的安全距离，建议=机器人半径+10，优先选择大于该安全半径的路径，单位cm，默认40", 40},
     {"0x26", "过滤半径", "0~1000", "若雷达会扫描到机器人自身结构则需加大该参数，建议=机器人半径，单位cm，默认30", 30},
-    {"0x99", "导航版偏移", "-500~500", "导航版相对于雷达的X偏移，单位厘米", 0},
+    {"0x99", "模块类型", "0~3", "0=3D定位模块，1=3D导航模块，2=2D定位模块，3=2D导航模块", 0},
     };
 
 Params::Params(QWidget *parent)
@@ -176,20 +176,7 @@ void Params::setupParameters()
         valueWidgets.append(valueWidget);
         ui->tableWidget->setCellWidget(row, 3, valueWidget);
 
-        /* ===== 管理员可见性控制 ===== */
-        if (param.id == "0x99") {
-            // 1. 先整行隐藏
-            ui->tableWidget->setRowHidden(row, !AdminMode::instance().isAdmin());
-
-            // 2. 监听状态变化，动态显隐
-            connect(&AdminMode::instance(), &AdminMode::adminStateChanged,
-                    this, [this, row](bool admin){
-                        ui->tableWidget->setRowHidden(row, !admin);
-                    });
-
-            // 3. 如果还想让输入框“仅管理员可编辑”，再单独注册 valueWidget 即可
-            AdminMode::instance().install(valueWidget, true, false);
-        }
+        // 0x99 模块类型已改为对所有用户可见
     }
 
     // 设置行高自适应内容
@@ -215,8 +202,9 @@ QWidget* Params::createValueWidget(const QString &id, const QString &range, int 
     if (id == "0x00") {
         QComboBox *comboBox = new QComboBox();
         comboBox->addItem("mid360", 0);
-        comboBox->addItem("unitree_L2", 1);
-        comboBox->setCurrentIndex(defaultValue);
+        comboBox->addItem("N10", 10);
+        comboBox->addItem("N10_P", 11);
+        comboBox->setCurrentIndex(defaultValue == 0 ? 0 : (defaultValue == 10 ? 1 : 2));
         layout->addWidget(comboBox);
     } else if(id == "0x10"){
         QComboBox *comboBox = new QComboBox();
@@ -236,6 +224,15 @@ QWidget* Params::createValueWidget(const QString &id, const QString &range, int 
         QComboBox *comboBox = new QComboBox();
         comboBox->addItem("不能", 0);
         comboBox->addItem("使能", 1);
+        comboBox->setCurrentIndex(defaultValue);
+        layout->addWidget(comboBox);
+    }
+    else if(id == "0x99"){
+        QComboBox *comboBox = new QComboBox();
+        comboBox->addItem("3D定位模块", 0);
+        comboBox->addItem("3D导航模块", 1);
+        comboBox->addItem("2D定位模块", 2);
+        comboBox->addItem("2D导航模块", 3);
         comboBox->setCurrentIndex(defaultValue);
         layout->addWidget(comboBox);
     }
@@ -365,13 +362,6 @@ void Params::on_writeButton_clicked()
 
         QString paramId = idItem->text();
 
-        // ========== 新增：权限拦截 ==========
-        // 如果参数是 0x99 且当前不是管理员模式，则跳过不发送
-        if (paramId == "0x99" && !AdminMode::instance().isAdmin()) {
-            continue;
-        }
-        // ===================================
-
         QWidget *widget = valueWidgets[row];
         QLayout *layout = widget->layout();
         if (layout && layout->count() > 0) {
@@ -398,7 +388,7 @@ void Params::on_writeButton_clicked()
         ui->optLabel->setText("参数写入完成");
         ui->optLabel->setStyleSheet("color: blue;");
     } else {
-        QMessageBox::warning(this, "警告", "没有找到需要写入的参数（或当前权限无权写入）");
+        QMessageBox::warning(this, "警告", "没有找到需要写入的参数");
     }
 }
 // 折叠按钮槽函数

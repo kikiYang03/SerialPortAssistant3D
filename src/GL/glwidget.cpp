@@ -3,6 +3,7 @@
 #include <QMouseEvent>
 #include <QDebug>
 #include <QDateTime>
+#include <cmath>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -161,6 +162,28 @@ void GLWidget::initializeGL()
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, nullptr);
     vaoOptimalPath_.release();
+
+    // 初始化2D激光雷达VAO/VBO
+    vaoScan2D_.create();
+    vaoScan2D_.bind();
+    vboScan2D_.create();
+    vboScan2D_.setUsagePattern(QOpenGLBuffer::DynamicDraw);
+    vboScan2D_.bind();
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, nullptr);
+    vaoScan2D_.release();
+
+    // 初始化2D地图VAO/VBO (支持颜色)
+    vaoMap2D_.create();
+    vaoMap2D_.bind();
+    vboMap2D_.create();
+    vboMap2D_.setUsagePattern(QOpenGLBuffer::DynamicDraw);
+    vboMap2D_.bind();
+    glEnableVertexAttribArray(0);  // 位置属性
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6*sizeof(float), (void*)0);
+    glEnableVertexAttribArray(1);  // 颜色属性
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6*sizeof(float), (void*)(3*sizeof(float)));
+    vaoMap2D_.release();
 
 }
 
@@ -336,8 +359,10 @@ void GLWidget::drawSolidArrow(const Eigen::Matrix4d &T, float len, float radius)
 
 void GLWidget::paintGL()
 {
-    doUploadCloud();  // 上传实时点云
-    doUploadMap();    // 上传地图点云
+    doUploadCloud();   // 上传实时点云
+    doUploadMap();     // 上传地图点云
+    doUploadScan2D();  // 上传2D激光数据
+    doUploadMap2D();   // 上传2D地图数据
 
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     glEnable(GL_DEPTH_TEST);
@@ -371,27 +396,7 @@ void GLWidget::paintGL()
     drawAxis(Eigen::Matrix4d::Identity(), 3.0f);  // 直接在 map 坐标系下渲染坐标轴
     drawGrid(Eigen::Matrix4d::Identity(), 40, 1.0f);  // 直接在 map 坐标系下渲染栅格
 
-    // ---------- 3. 渲染其他元素（如轨迹、点云等）----------
-    // 渲染轨迹线（白色）—— 现在直接在 map 坐标系下
-    if (trail_.points.size() > 1)
-    {
-        std::vector<Eigen::Vector3f> tmp(trail_.points.begin(), trail_.points.end());
-
-        progSimple_.bind();
-        // 关键点：直接使用 proj * view，因为点已经在 map 系下
-        progSimple_.setUniformValue("mvp", toQMatrix(proj_ * view_));
-        progSimple_.setUniformValue("col", QVector3D(1.0f, 1.0f, 1.0f));
-
-        vaoTrail_.bind();
-        vboTrail_.bind();
-        vboTrail_.allocate(tmp.data(), tmp.size() * sizeof(Eigen::Vector3f));
-        glLineWidth(3.0f);
-        glDrawArrays(GL_LINE_STRIP, 0, tmp.size());
-        vaoTrail_.release();
-        progSimple_.release();
-    }
-
-    // 渲染当前帧点云
+    // ---------- 3. 渲染点云 ----------
     if (hasLidarPose_){
         if (showRealtimeCloud_ && cloudPts_ > 0) {
             if (enableZFilter_) {
@@ -516,6 +521,56 @@ void GLWidget::paintGL()
         glDrawArrays(GL_POINTS, 0, static_cast<int>(optimalPathPts_.size()));
 
         vaoOptimalPath_.release();
+        progSimple_.release();
+    }
+
+    // 渲染2D激光雷达数据 (红色)
+    // 关联到实时点云开关，保持一致的显隐控制
+    if (showRealtimeCloud_ && showScan2D_ && scan2DPts_ > 0 && hasLidarPose_) {
+        progSimple_.bind();
+        progSimple_.setUniformValue("mvp", toQMatrix(proj_ * view_));
+        progSimple_.setUniformValue("col", QVector3D(1.0f, 0.3f, 0.3f)); // 浅红色
+        vaoScan2D_.bind();
+        glPointSize(2.0f);
+        glDrawArrays(GL_POINTS, 0, scan2DPts_);
+        vaoScan2D_.release();
+        progSimple_.release();
+    }
+
+    // 渲染2D地图数据 (使用颜色着色器)
+    // 关联到地图点云开关，保持一致的显隐控制
+    if (showMapCloud_ && showMap2D_ && map2DPts_ > 0) {
+        progColorCloud_.bind();
+        progColorCloud_.setUniformValue("mvp", toQMatrix(proj_ * view_));
+        progColorCloud_.setUniformValue("uPointSize", map2DPointSize_);
+        progColorCloud_.setUniformValue("uAlpha", 1.0f);
+        progColorCloud_.setUniformValue("uSoftEdge", 0.0f);
+        vaoMap2D_.bind();
+        glDrawArrays(GL_POINTS, 0, map2DPts_);
+        vaoMap2D_.release();
+        progColorCloud_.release();
+    }
+
+    // ---------- 渲染轨迹线（绿色）- 放在点云之后确保可见 ----------
+    if (trail_.points.size() > 1)
+    {
+        std::vector<Eigen::Vector3f> tmp(trail_.points.begin(), trail_.points.end());
+
+        // 将轨迹点z轴提高0.1，避免被点云遮挡
+        for (auto& pt : tmp) {
+            pt.z() += 0.1f;
+        }
+
+        progSimple_.bind();
+        progSimple_.setUniformValue("mvp", toQMatrix(proj_ * view_));
+        progSimple_.setUniformValue("col", QVector3D(0.0f, 1.0f, 0.0f)); // 绿色
+
+        vaoTrail_.bind();
+        vboTrail_.bind();
+        vboTrail_.allocate(tmp.data(), tmp.size() * sizeof(Eigen::Vector3f));
+        glLineWidth(5.0f);  // 增加线宽，确保在点云上方可见
+        glDrawArrays(GL_LINE_STRIP, 0, tmp.size());
+        vaoTrail_.release();
         progSimple_.release();
     }
 
@@ -747,6 +802,36 @@ void GLWidget::doUploadMap()
     update();   // 通知 Qt 立即重绘
 }
 
+void GLWidget::doUploadScan2D()
+{
+    QMutexLocker lk(&dataMtx_);
+    if (!scan2DDirty_.load(std::memory_order_acquire)) return;
+
+    if (scan2DPts_ > 0) {
+        vaoScan2D_.bind();
+        vboScan2D_.bind();
+        vboScan2D_.allocate(scan2DCpu_.data(),
+                            static_cast<int>(scan2DCpu_.size() * sizeof(Eigen::Vector3f)));
+        vaoScan2D_.release();
+    }
+    scan2DDirty_.store(false, std::memory_order_release);
+}
+
+void GLWidget::doUploadMap2D()
+{
+    QMutexLocker lk(&dataMtx_);
+    if (!map2DDirty_.load(std::memory_order_acquire)) return;
+
+    if (map2DPts_ > 0) {
+        vaoMap2D_.bind();
+        vboMap2D_.bind();
+        vboMap2D_.allocate(map2DCpu_.data(),
+                           static_cast<int>(map2DCpu_.size() * sizeof(Eigen::Vector3f)));
+        vaoMap2D_.release();
+    }
+    map2DDirty_.store(false, std::memory_order_release);
+}
+
 
 // ===========交互处理
 void GLWidget::mousePressEvent(QMouseEvent* e)
@@ -924,6 +1009,18 @@ void GLWidget::clearMap()
     // 清理实时点云
     clearCloud();
 
+    // 清理2D数据
+    {
+        QMutexLocker lk(&dataMtx_);
+        scan2DCpu_.clear();
+        scan2DPts_ = 0;
+        scan2DDirty_.store(false, std::memory_order_release);
+
+        map2DCpu_.clear();
+        map2DPts_ = 0;
+        map2DDirty_.store(false, std::memory_order_release);
+    }
+
     // 清空GPU buffer（主线程 / 当前 context）
     QMetaObject::invokeMethod(this, [this](){
         // 清空地图buffer
@@ -935,6 +1032,15 @@ void GLWidget::clearMap()
         vboCloud_.bind();
         vboCloud_.allocate(nullptr, 0);
         vboCloud_.release();
+
+        // 清空2D数据buffer
+        vboScan2D_.bind();
+        vboScan2D_.allocate(nullptr, 0);
+        vboScan2D_.release();
+
+        vboMap2D_.bind();
+        vboMap2D_.allocate(nullptr, 0);
+        vboMap2D_.release();
 
         update();
     }, Qt::QueuedConnection);
@@ -1043,4 +1149,113 @@ void GLWidget::updateNavTargetFromUI(double x, double y, double z, double yaw_de
     navYaw_ = yaw_deg * M_PI / 180.0;
     hasNavTarget_ = true; // 用户在界面输入也算作生成了目标
     update();
+}
+
+/* -------------- 2D激光雷达数据处理 -------------- */
+void GLWidget::onScan2D(const Scan2DMsg &msg)
+{
+    // 必须等待雷达位姿才能处理点云
+    if (!hasLidarPose_) {
+        return;
+    }
+
+    QMutexLocker lk(&dataMtx_);
+    scan2DCpu_.clear();
+    scan2DCpu_.reserve(msg.range_count);
+
+    for (int i = 0; i < msg.range_count; ++i) {
+        float r = msg.ranges[i];
+        if (r <= 0 || std::isinf(r) || std::isnan(r)) continue;
+
+        double angle = msg.angle_min + i * msg.angle_increment;
+
+        // 在 laser_link 坐标系下的点
+        float x = r * static_cast<float>(cos(angle));
+        float y = r * static_cast<float>(sin(angle));
+        float z = 0;  // 2D激光雷达，z=0
+
+        // 变换到 map 坐标系
+        Eigen::Vector4d p_laser(x, y, z, 1.0);
+        Eigen::Vector4d p_map = T_map_laser_ * p_laser;
+        scan2DCpu_.emplace_back(p_map.head<3>().cast<float>());
+    }
+
+    scan2DPts_ = static_cast<int>(scan2DCpu_.size());
+    scan2DDirty_.store(true, std::memory_order_release);
+
+    if (glReady_) update();  // 触发 paintGL 在 GL 线程上传数据
+}
+
+/* -------------- 2D地图数据处理 -------------- */
+void GLWidget::onMap2D(const Map2DMsg &msg)
+{
+    if (msg.data.isEmpty()) return;
+
+    QMutexLocker lk(&dataMtx_);
+    map2DCpu_.clear();
+
+    int step = map2DStep_;  // 采样步长
+    int estPts = (msg.width / step) * (msg.height / step);
+    map2DCpu_.reserve(estPts * 2);  // 位置+颜色
+
+    // 地图直接生成，不做坐标变化
+    for (int y = 0; y < msg.height; y += step) {
+        for (int x = 0; x < msg.width; x += step) {
+            int idx = y * msg.width + x;
+            if (idx >= msg.data.size()) break;
+
+            int8_t val = msg.data[idx];
+
+            // 计算位置
+            float px = static_cast<float>(msg.origin_x + x * msg.resolution);
+            float py = static_cast<float>(msg.origin_y + y * msg.resolution);
+            float pz = 0;  // 2D地图在Z=0平面
+
+            // 计算颜色: ROS occupancy: 0=自由, 100=障碍, -1=未知
+            float gray;
+            if (val < 0) {
+                // 未知区域显示为深灰色
+                gray = 0.3f;
+            } else {
+                // val=0(自由)→白色, val=100(障碍)→黑色
+                gray = 1.0f - (val / 100.0f);
+                gray = std::clamp(gray, 0.0f, 1.0f);
+            }
+
+            map2DCpu_.emplace_back(px, py, pz);       // 位置
+            map2DCpu_.emplace_back(gray, gray, gray); // 颜色 (灰度)
+        }
+    }
+
+    map2DPts_ = static_cast<int>(map2DCpu_.size() / 2);
+    map2DDirty_.store(true, std::memory_order_release);
+
+    if (glReady_) update();  // 触发 paintGL 在 GL 线程上传数据
+}
+
+void GLWidget::setShowScan2D(bool show)
+{
+    if (showScan2D_ == show) return;
+    showScan2D_ = show;
+    update();
+}
+
+void GLWidget::setShowMap2D(bool show)
+{
+    if (showMap2D_ == show) return;
+    showMap2D_ = show;
+    update();
+}
+
+void GLWidget::setMap2DPointSize(float size)
+{
+    map2DPointSize_ = size;
+    update();
+}
+
+void GLWidget::setMap2DStep(int step)
+{
+    map2DStep_ = std::max(1, step);
+    // 注意：改变步长需要重新处理地图数据，这里只更新参数
+    // 实际效果需要等下一次收到地图数据时生效
 }

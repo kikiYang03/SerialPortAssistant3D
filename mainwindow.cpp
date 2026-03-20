@@ -115,6 +115,13 @@ MainWindow::MainWindow(QWidget *parent)
     connect(protocolHandler, &ProtocolRos3D::goalPathUpdated,
             ros3dPage->glWidget(), &GLWidget::onGoalPath, Qt::QueuedConnection);
 
+    // === 连接2D数据信号 ===
+    connect(protocolHandler, &ProtocolRos3D::scan2DUpdated,
+            ros3dPage->glWidget(), &GLWidget::onScan2D, Qt::QueuedConnection);
+
+    connect(protocolHandler, &ProtocolRos3D::map2DUpdated,
+            ros3dPage->glWidget(), &GLWidget::onMap2D, Qt::QueuedConnection);
+
     // ----------------------------------------------------------
     // 绑定槽函数——显示页面
     // ----------------------------------------------------------
