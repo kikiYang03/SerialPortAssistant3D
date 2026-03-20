@@ -14,6 +14,7 @@
 #include <QTimer>
 #include <QCheckBox>
 #include <QMessageBox>
+#include <QScrollArea>
 
 Ros3DPage::Ros3DPage(QWidget* parent)
     : QWidget(parent)
@@ -210,11 +211,19 @@ Ros3DPage::Ros3DPage(QWidget* parent)
     sideLay->addSpacing(10);
     sideLay->addStretch(1);
 
+    // ---------- 将侧边栏放入滚动区域 ----------
+    auto* scrollArea = new QScrollArea(this);
+    scrollArea->setWidget(side);
+    scrollArea->setWidgetResizable(true);  // 允许内容自适应宽度
+    scrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);  // 禁用横向滚动
+    scrollArea->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);     // 需要时显示纵向滚动
+    scrollArea->setFixedWidth(300);  // 滚动区域宽度（比侧边栏稍宽以容纳滚动条）
+
     // ---------- 主布局 ----------
     auto* mainLay = new QHBoxLayout(this);
     mainLay->setContentsMargins(0,0,0,0);
     mainLay->addWidget(gl_, 1);
-    mainLay->addWidget(side, 0);
+    mainLay->addWidget(scrollArea, 0);
 
     // ---------- 连接原有按钮 ----------
     connect(btnClear, &QPushButton::clicked, gl_, &GLWidget::clearMap);
