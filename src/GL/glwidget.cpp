@@ -396,51 +396,9 @@ void GLWidget::paintGL()
     drawAxis(Eigen::Matrix4d::Identity(), 3.0f);  // 直接在 map 坐标系下渲染坐标轴
     drawGrid(Eigen::Matrix4d::Identity(), 40, 1.0f);  // 直接在 map 坐标系下渲染栅格
 
-    // ---------- 3. 渲染点云 ----------
+    // ---------- 3. 渲染点云（先地图，后实时，这样实时点云在上层）----------
     if (hasLidarPose_){
-        if (showRealtimeCloud_ && cloudPts_ > 0) {
-            if (enableZFilter_) {
-                // 使用过滤后的点云
-                progSimple_.bind();
-                const Eigen::Matrix4d mvp = proj_ * view_;
-                progSimple_.setUniformValue("mvp", toQMatrix(mvp));
-                progSimple_.setUniformValue("col", QVector3D(0.35f, 0.85f, 0.95f));
-
-                // 过滤点云
-                std::vector<Eigen::Vector3f> filteredCloud;
-                filteredCloud.reserve(cloudCpu_.size());
-                for (const auto& pt : cloudCpu_) {
-                    if (pt.z() >= zMinFilter_ && pt.z() <= zMaxFilter_) {
-                        filteredCloud.push_back(pt);
-                    }
-                }
-
-                if (!filteredCloud.empty()) {
-                    vaoCloud_.bind();
-                    vboCloud_.bind();
-                    vboCloud_.allocate(filteredCloud.data(),
-                                       static_cast<int>(filteredCloud.size() * sizeof(Eigen::Vector3f)));
-                    glPointSize(cloudPtSize_);
-                    glDrawArrays(GL_POINTS, 0, static_cast<int>(filteredCloud.size()));
-                    vboCloud_.release();
-                    vaoCloud_.release();
-                }
-                progSimple_.release();
-            } else {
-                // 原始渲染逻辑
-                progSimple_.bind();
-                const Eigen::Matrix4d mvp = proj_ * view_;
-                progSimple_.setUniformValue("mvp", toQMatrix(mvp));
-                progSimple_.setUniformValue("col", QVector3D(0.35f, 0.85f, 0.95f));
-                vaoCloud_.bind();
-                glPointSize(cloudPtSize_);
-                glDrawArrays(GL_POINTS, 0, cloudPts_);
-                vaoCloud_.release();
-                progSimple_.release();
-            }
-        }
-
-        // 修改地图点云渲染部分（约第318行附近）：
+        // 先渲染地图点云（Z=0，在下层）
         if (showMapCloud_ && mapPts_ > 0) {
             if (enableZFilter_) {
                 // 过滤地图点云
@@ -489,6 +447,49 @@ void GLWidget::paintGL()
             }
         }
 
+        // 再渲染实时点云（Z=2.0，在上层）
+        if (showRealtimeCloud_ && cloudPts_ > 0) {
+            if (enableZFilter_) {
+                // 使用过滤后的点云
+                progSimple_.bind();
+                const Eigen::Matrix4d mvp = proj_ * view_;
+                progSimple_.setUniformValue("mvp", toQMatrix(mvp));
+                progSimple_.setUniformValue("col", QVector3D(0.35f, 0.85f, 0.95f));
+
+                // 过滤点云
+                std::vector<Eigen::Vector3f> filteredCloud;
+                filteredCloud.reserve(cloudCpu_.size());
+                for (const auto& pt : cloudCpu_) {
+                    if (pt.z() >= zMinFilter_ && pt.z() <= zMaxFilter_) {
+                        filteredCloud.push_back(pt);
+                    }
+                }
+
+                if (!filteredCloud.empty()) {
+                    vaoCloud_.bind();
+                    vboCloud_.bind();
+                    vboCloud_.allocate(filteredCloud.data(),
+                                       static_cast<int>(filteredCloud.size() * sizeof(Eigen::Vector3f)));
+                    glPointSize(cloudPtSize_);
+                    glDrawArrays(GL_POINTS, 0, static_cast<int>(filteredCloud.size()));
+                    vboCloud_.release();
+                    vaoCloud_.release();
+                }
+                progSimple_.release();
+            } else {
+                // 原始渲染逻辑
+                progSimple_.bind();
+                const Eigen::Matrix4d mvp = proj_ * view_;
+                progSimple_.setUniformValue("mvp", toQMatrix(mvp));
+                progSimple_.setUniformValue("col", QVector3D(0.35f, 0.85f, 0.95f));
+                vaoCloud_.bind();
+                glPointSize(cloudPtSize_);
+                glDrawArrays(GL_POINTS, 0, cloudPts_);
+                vaoCloud_.release();
+                progSimple_.release();
+            }
+        }
+
     }
     else
     {
@@ -524,20 +525,7 @@ void GLWidget::paintGL()
         progSimple_.release();
     }
 
-    // 渲染2D激光雷达数据 (红色)
-    // 关联到实时点云开关，保持一致的显隐控制
-    if (showRealtimeCloud_ && showScan2D_ && scan2DPts_ > 0 && hasLidarPose_) {
-        progSimple_.bind();
-        progSimple_.setUniformValue("mvp", toQMatrix(proj_ * view_));
-        progSimple_.setUniformValue("col", QVector3D(1.0f, 0.3f, 0.3f)); // 浅红色
-        vaoScan2D_.bind();
-        glPointSize(2.0f);
-        glDrawArrays(GL_POINTS, 0, scan2DPts_);
-        vaoScan2D_.release();
-        progSimple_.release();
-    }
-
-    // 渲染2D地图数据 (使用颜色着色器)
+    // 渲染2D地图数据 (使用颜色着色器) - 先渲染地图(Z=0，下层)
     // 关联到地图点云开关，保持一致的显隐控制
     if (showMapCloud_ && showMap2D_ && map2DPts_ > 0) {
         progColorCloud_.bind();
@@ -549,6 +537,19 @@ void GLWidget::paintGL()
         glDrawArrays(GL_POINTS, 0, map2DPts_);
         vaoMap2D_.release();
         progColorCloud_.release();
+    }
+
+    // 渲染2D激光雷达数据 (红色) - 后渲染实时点云(Z=0.1，上层)
+    // 关联到实时点云开关，保持一致的显隐控制
+    if (showRealtimeCloud_ && showScan2D_ && scan2DPts_ > 0 && hasLidarPose_) {
+        progSimple_.bind();
+        progSimple_.setUniformValue("mvp", toQMatrix(proj_ * view_));
+        progSimple_.setUniformValue("col", QVector3D(1.0f, 0.3f, 0.3f)); // 浅红色
+        vaoScan2D_.bind();
+        glPointSize(4.0f);
+        glDrawArrays(GL_POINTS, 0, scan2DPts_);
+        vaoScan2D_.release();
+        progSimple_.release();
     }
 
     // ---------- 渲染轨迹线（绿色）- 放在点云之后确保可见 ----------
@@ -721,7 +722,14 @@ void GLWidget::onCloud(const CloudMsg &m)
     for (const auto &pt : m.points) {
         Eigen::Vector4d p_laser(pt.x(), pt.y(), pt.z(), 1.0);
         Eigen::Vector4d p_map = T_map_laser_ * p_laser;
-        cloudCpu_.emplace_back(p_map.head<3>().cast<float>());
+        Eigen::Vector3f p_result = p_map.head<3>().cast<float>();
+
+        // 2D模式下实时点云Z轴统一设为0.5（在地图点云之上）
+        if (is2DMode_) {
+            p_result.z() = 2.0f;
+        }
+
+        cloudCpu_.push_back(p_result);
     }
     cloudPts_ = static_cast<int>(cloudCpu_.size());
     cloudDirty_.store(true, std::memory_order_release);
@@ -736,10 +744,18 @@ void GLWidget::onCloud(const CloudMsg &m)
             // 变换到 map 系
             Eigen::Vector4d p_laser(pt.x(), pt.y(), pt.z(), 1.0);
             Eigen::Vector4d p_map = T_map_laser_ * p_laser;
-            mapInterleavedCpu_.emplace_back(p_map.head<3>().cast<float>());
+            Eigen::Vector3f p_result = p_map.head<3>().cast<float>();
 
-            // 颜色：基于 map.z
-            QVector3D c = heightToColor(static_cast<float>(p_map.z()), mapMinZ_, mapMaxZ_);
+            // 2D模式下地图点云Z轴统一设为0
+            if (is2DMode_) {
+                p_result.z() = 0.0f;
+            }
+
+            mapInterleavedCpu_.push_back(p_result);
+
+            // 颜色：基于 map.z（2D模式下使用固定Z值计算颜色）
+            float z_for_color = is2DMode_ ? 0.0f : static_cast<float>(p_map.z());
+            QVector3D c = heightToColor(z_for_color, mapMinZ_, mapMaxZ_);
             mapInterleavedCpu_.emplace_back(c.x(), c.y(), c.z());
         }
     }
@@ -767,6 +783,12 @@ void GLWidget::onGoalPath(const PathMsg &m)
     for (const auto &pt : m.points) {
         // 转换到 map 坐标系（与点云和机器人位置对齐）
         Eigen::Vector3d p_ci(pt.x(), pt.y(), pt.z());
+
+        // 2D模式下，将Z轴值统一设为0.1
+        if (is2DMode_) {
+            p_ci.z() = 0.1;
+        }
+
         // Eigen::Vector3d p_map = transformPointToMap(p_ci);
         optimalPathPts_.emplace_back(p_ci.cast<float>());
     }
@@ -1154,6 +1176,20 @@ void GLWidget::updateNavTargetFromUI(double x, double y, double z, double yaw_de
 /* -------------- 2D激光雷达数据处理 -------------- */
 void GLWidget::onScan2D(const Scan2DMsg &msg)
 {
+    // 首次进入2D模式时，清空已有的3D点云地图数据
+    if (!is2DMode_) {
+        is2DMode_ = true;
+        // 清空已有的地图点云，让它重新累积（Z值会统一设为0）
+        QMutexLocker lk(&dataMtx_);
+        mapInterleavedCpu_.clear();
+        mapPts_ = 0;
+        mapDirty_.store(false, std::memory_order_release);
+        mapVoxelSet_.clear();
+        cloudCpu_.clear();
+        cloudPts_ = 0;
+        cloudDirty_.store(false, std::memory_order_release);
+    }
+
     // 必须等待雷达位姿才能处理点云
     if (!hasLidarPose_) {
         return;
@@ -1177,7 +1213,12 @@ void GLWidget::onScan2D(const Scan2DMsg &msg)
         // 变换到 map 坐标系
         Eigen::Vector4d p_laser(x, y, z, 1.0);
         Eigen::Vector4d p_map = T_map_laser_ * p_laser;
-        scan2DCpu_.emplace_back(p_map.head<3>().cast<float>());
+        Eigen::Vector3f p_result = p_map.head<3>().cast<float>();
+
+        // 2D实时点云Z轴统一设为0.1（在地图点云之上）
+        p_result.z() = 0.1f;
+
+        scan2DCpu_.push_back(p_result);
     }
 
     scan2DPts_ = static_cast<int>(scan2DCpu_.size());

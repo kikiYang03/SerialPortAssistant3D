@@ -231,6 +231,9 @@ private:
     QOpenGLBuffer vboOptimalPath_;
     QOpenGLVertexArrayObject vaoOptimalPath_;
     bool hasOptimalPath_ = false;
+
+    // 2D模式标志（通过接收2D激光雷达数据判断）
+    bool is2DMode_ = false;
 };
 
 #endif // GLWIDGET_H

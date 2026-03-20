@@ -236,7 +236,6 @@ void SerialPort::on_sendBt_clicked()
 void SerialPort::onSendNavGoalRequested(double x, double y, double z, double yaw_deg)
 {
     TcpClient* tcpClient = TcpClient::getInstance();
-    double yaw_rad = yaw_deg * M_PI / 180.0;
     QByteArray frame;
 
     if (isSerialPortConnected) {
@@ -251,8 +250,10 @@ void SerialPort::onSendNavGoalRequested(double x, double y, double z, double yaw
         frame = ProtocolRouter::instance()->buildNavGoalFrame(val_x, val_y, val_z, 0, 0, val_yaw);
 
     } else if (tcpClient->isConnected()) {
-        // --- TCP 模式：调用 ProtocolRos3D 构建 JSON 帧 (0x04) ---
-        frame = ProtocolRos3D::buildNavGoalFrame(x, y, z, yaw_rad);
+        // --- TCP 模式：调用 ProtocolRos3D 构建 JSON 帧 (0x07) ---
+        // yaw 发送整数度数
+        int yaw_int = static_cast<int>(std::round(yaw_deg));
+        frame = ProtocolRos3D::buildNavGoalFrame(x, y, z, yaw_int);
 
     } else {
         QMessageBox::warning(this, "错误", "请先建立 TCP 联网或打开串口！");

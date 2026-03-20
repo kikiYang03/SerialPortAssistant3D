@@ -39,7 +39,7 @@ MainWindow::MainWindow(QWidget *parent)
     // 添加子菜单
     QAction *NewAction = fileMenu->addAction("连接设置");
     QAction *ReadAction = fileMenu->addAction("参数设置");
-    QAction *Ros3DAction = fileMenu->addAction("3D可视化");
+    QAction *Ros3DAction = fileMenu->addAction("可视化");
 
     // 创建工具栏
     QToolBar *toolBar = new QToolBar(this);
