@@ -122,6 +122,29 @@ private:
 
     GLWidget* glWidget_;   // 新增
 
+    // 数据打印和统计相关
+    QTimer* printTimer;              // 每1秒打印定时器
+    QTimer* statsPrintTimer;         // 每10秒统计打印定时器
+
+    // 缓存最新的位姿数据
+    struct PoseData {
+        qint16 x = 0, y = 0, z = 0, roll = 0, pitch = 0, yaw = 0;
+        bool valid = false;
+    };
+    PoseData latestPose01;    // 0x01 当前位姿
+    PoseData latestPose03;    // 0x03 位置控制指令
+    QByteArray latestFrame02; // 0x02 目标点回传原始数据
+
+    // 接收计数器（用于频率统计）
+    int count01 = 0;  // 0x01计数
+    int count02 = 0;  // 0x02计数
+    int count03 = 0;  // 0x03计数
+    int statsIntervalSeconds = 10;  // 统计间隔（秒）
+
+    // 打印数据槽函数
+    void onPrintTimerTimeout();
+    void onStatsPrintTimerTimeout();
+
 signals:
     void rawBytesArrived(QByteArray data, bool isSerialPortMode);
 

@@ -697,6 +697,27 @@ void GLWidget::onCloud(const CloudMsg &m)
 
     QMutexLocker lk(&dataMtx_);
 
+    // 首次进入3D模式时，清空已有的2D点云数据
+    if (is2DMode_) {
+        is2DMode_ = false;
+        // 清空已有的2D地图和实时点云数据
+        mapInterleavedCpu_.clear();
+        mapPts_ = 0;
+        mapDirty_.store(false, std::memory_order_release);
+        mapVoxelSet_.clear();
+        cloudCpu_.clear();
+        cloudPts_ = 0;
+        cloudDirty_.store(false, std::memory_order_release);
+
+        // 清空2D数据
+        scan2DCpu_.clear();
+        scan2DPts_ = 0;
+        scan2DDirty_.store(false, std::memory_order_release);
+        map2DCpu_.clear();
+        map2DPts_ = 0;
+        map2DDirty_.store(false, std::memory_order_release);
+    }
+
     // 统计本帧在 map 系下的高度范围
     float localMinZ_map = std::numeric_limits<float>::max();
     float localMaxZ_map = std::numeric_limits<float>::lowest();
@@ -1043,6 +1064,19 @@ void GLWidget::clearMap()
         map2DDirty_.store(false, std::memory_order_release);
     }
 
+    // 清理目标轨迹（规划路径）
+    {
+        QMutexLocker lk(&dataMtx_);
+        optimalPathPts_.clear();
+        hasOptimalPath_ = false;
+    }
+
+    // 清理指点模式目标点状态
+    hasNavTarget_ = false;
+    isNavGoalSet_ = false;
+    navTarget3D_ = Eigen::Vector3d(0, 0, is2DMode_ ? 0.0 : 1.0);  // 根据模式设置初始Z值
+    navYaw_ = 0.0;
+
     // 清空GPU buffer（主线程 / 当前 context）
     QMetaObject::invokeMethod(this, [this](){
         // 清空地图buffer
@@ -1064,6 +1098,11 @@ void GLWidget::clearMap()
         vboMap2D_.allocate(nullptr, 0);
         vboMap2D_.release();
 
+        // 清空规划路径buffer
+        vboOptimalPath_.bind();
+        vboOptimalPath_.allocate(nullptr, 0);
+        vboOptimalPath_.release();
+
         update();
     }, Qt::QueuedConnection);
 }
@@ -1073,6 +1112,7 @@ void GLWidget::clearTrail()
 {
     trail_.points.clear();
     trail_.hasValidTransform = false;
+    trail_.latestTransform.setIdentity();  // 清理TF轨迹变换矩阵
     update();
 }
 
@@ -1113,6 +1153,10 @@ void GLWidget::setNavMode(bool enable)
     if (enable) {
         // 进入模式：如果已经有目标点了，变为绿色(未确认状态)，保持位置不变
         isNavGoalSet_ = false;
+        // 如果还没有目标点，根据当前模式设置初始Z值
+        if (!hasNavTarget_) {
+            navTarget3D_.z() = is2DMode_ ? 0.0 : 1.0;
+        }
     } else {
         // 退出模式：锁定为黄色并发送目标信号
         if (hasNavTarget_) {

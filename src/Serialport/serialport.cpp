@@ -111,6 +111,16 @@ SerialPort::SerialPort(QWidget *parent)
     statsTimer = new QTimer(this);
     statsTimer->setInterval(10000); // 10秒
 
+    // 初始化打印定时器（每1秒打印0x01和0x03数据）
+    printTimer = new QTimer(this);
+    printTimer->setInterval(1000); // 1秒
+    connect(printTimer, &QTimer::timeout, this, &SerialPort::onPrintTimerTimeout);
+
+    // 初始化统计打印定时器（每10秒统计频率）
+    statsPrintTimer = new QTimer(this);
+    statsPrintTimer->setInterval(10000); // 10秒
+    connect(statsPrintTimer, &QTimer::timeout, this, &SerialPort::onStatsPrintTimerTimeout);
+
     connect(tcpClient, &TcpClient::reconnectTimeout, this, [this](){
         if (!m_reconnectWarningShown) {
             QMessageBox::warning(this, "网络中断",
@@ -127,13 +137,59 @@ SerialPort::SerialPort(QWidget *parent)
     });
 
     elapsedTimer.start();
-    // 串口数据解析
+    // 串口数据解析 - 缓存0x01和0x03数据，仅在串口模式下计数
     connect(ProtocolRouter::instance(), &ProtocolRouter::uartPoseReceived,
             this, [this](quint8 msgId, qint16 x, qint16 y, qint16 z, qint16 r, qint16 p, qint16 yaw){
-                QString typeStr = (msgId == 0x01) ? "当前位姿" : "规划指令";
-                QString ts = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss >> 串口接收 ");
-                ui->recvEdit->append(ts + typeStr + QString(": x=%1cm y=%2cm z=%3cm roll=%4 pitch=%5 yaw=%6°")
-                                                        .arg(x).arg(y).arg(z).arg(r).arg(p).arg(yaw));
+                // 仅在串口模式下处理
+                if (!isSerialPortConnected) return;
+
+                if (msgId == 0x01) {
+                    // 缓存0x01数据
+                    latestPose01.x = x;
+                    latestPose01.y = y;
+                    latestPose01.z = z;
+                    latestPose01.roll = r;
+                    latestPose01.pitch = p;
+                    latestPose01.yaw = yaw;
+                    latestPose01.valid = true;
+                    count01++;
+                } else if (msgId == 0x03) {
+                    // 缓存0x03数据
+                    latestPose03.x = x;
+                    latestPose03.y = y;
+                    latestPose03.z = z;
+                    latestPose03.roll = r;
+                    latestPose03.pitch = p;
+                    latestPose03.yaw = yaw;
+                    latestPose03.valid = true;
+                    count03++;
+                }
+            });
+
+    // 处理0x02目标点回传数据，仅在串口模式下
+    connect(ProtocolRouter::instance(), &ProtocolRouter::navGoalEchoReceived,
+            this, [this](const QByteArray &frame){
+                // 仅在串口模式下处理
+                if (!isSerialPortConnected) return;
+
+                count02++;
+                // 解析帧数据并打印
+                if (frame.size() == 15 && quint8(frame[0]) == 0xAA && quint8(frame[14]) == 0x0A) {
+                    // 大端序解析
+                    qint16 x = qFromBigEndian<qint16>(reinterpret_cast<const uchar*>(frame.constData() + 2));
+                    qint16 y = qFromBigEndian<qint16>(reinterpret_cast<const uchar*>(frame.constData() + 4));
+                    qint16 z = qFromBigEndian<qint16>(reinterpret_cast<const uchar*>(frame.constData() + 6));
+                    qint16 yaw = qFromBigEndian<qint16>(reinterpret_cast<const uchar*>(frame.constData() + 12));
+
+                    QString t = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss");
+                    ui->recvEdit->append(
+                        QString("%1  模块回传目标点：x=%2m y=%3m z=%4m yaw=%5°")
+                        .arg(t)
+                        .arg(x / 100.0, 0, 'f', 2)
+                        .arg(y / 100.0, 0, 'f', 2)
+                        .arg(z / 100.0, 0, 'f', 2)
+                        .arg(yaw));
+                }
             });
 
     connect(ProtocolRouter::instance(), &ProtocolRouter::printFrame,
@@ -165,6 +221,12 @@ SerialPort::~SerialPort()
 
     if (statsTimer && statsTimer->isActive()) {
         statsTimer->stop();
+    }
+    if (printTimer && printTimer->isActive()) {
+        printTimer->stop();
+    }
+    if (statsPrintTimer && statsPrintTimer->isActive()) {
+        statsPrintTimer->stop();
     }
     delete ui;
 }
@@ -521,6 +583,17 @@ void SerialPort::on_portOpenBt_clicked()
             ui->lblPortState->setText(status);
             ui->lblPortState->setStyleSheet("color:green");
             QMessageBox::warning(this, "提示", "仅用于测试串口输出坐标");
+
+            // 串口连接成功，启动打印定时器
+            if (!printTimer->isActive()) {
+                printTimer->start();
+            }
+            if (!statsPrintTimer->isActive()) {
+                statsPrintTimer->start();
+                count01 = 0;
+                count02 = 0;
+                count03 = 0;
+            }
         }else{
             QMessageBox::critical(this, "错误", "串口打开失败，请检查串口是否被占用");
             QString sm = "%1 串口不可用";
@@ -547,6 +620,14 @@ void SerialPort::on_portOpenBt_clicked()
         ui->groupBox_4->setEnabled(true);
         // 支持检测串口
         ui->portSearchBt->setEnabled(true);
+
+        // 串口关闭，停止打印定时器
+        if (printTimer->isActive()) {
+            printTimer->stop();
+        }
+        if (statsPrintTimer->isActive()) {
+            statsPrintTimer->stop();
+        }
     };
 }
 
@@ -576,4 +657,60 @@ void SerialPort::on_protocolComboBox_currentIndexChanged(int index)
     if (protocol == "UDP") {
         QMessageBox::warning(this, "功能未开放", "UDP功能未开放");
     }
+}
+
+// 每1秒打印0x01和0x03数据（仅串口模式）
+void SerialPort::onPrintTimerTimeout()
+{
+    // 仅在串口模式下打印
+    if (!isSerialPortConnected) return;
+
+    QString timestamp = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss");
+
+    // 打印0x01当前位姿数据
+    if (latestPose01.valid) {
+        ui->recvEdit->append(timestamp + " >> 当前位姿(0x01): x=" + QString::number(latestPose01.x) +
+                             "cm y=" + QString::number(latestPose01.y) + "cm z=" +
+                             QString::number(latestPose01.z) + "cm roll=" +
+                             QString::number(latestPose01.roll) + " pitch=" +
+                             QString::number(latestPose01.pitch) + " yaw=" +
+                             QString::number(latestPose01.yaw) + "°");
+    }
+
+    // 打印0x03位置控制指令数据
+    if (latestPose03.valid) {
+        ui->recvEdit->append(timestamp + " >> 位置指令(0x03): x=" + QString::number(latestPose03.x) +
+                             "cm y=" + QString::number(latestPose03.y) + "cm z=" +
+                             QString::number(latestPose03.z) + "cm roll=" +
+                             QString::number(latestPose03.roll) + " pitch=" +
+                             QString::number(latestPose03.pitch) + " yaw=" +
+                             QString::number(latestPose03.yaw) + "°");
+    }
+}
+
+// 每10秒统计频率（仅串口模式）
+void SerialPort::onStatsPrintTimerTimeout()
+{
+    // 仅在串口模式下打印统计
+    if (!isSerialPortConnected) return;
+
+    QString timestamp = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss");
+
+    double freq01 = count01 / (double)statsIntervalSeconds;
+    double freq02 = count02 / (double)statsIntervalSeconds;
+    double freq03 = count03 / (double)statsIntervalSeconds;
+
+    ui->recvEdit->append(timestamp + " >> ====== 数据接收频率统计 ======");
+    ui->recvEdit->append(timestamp + " >> 0x01(当前位姿): " + QString::number(count01) +
+                         "帧, 平均频率: " + QString::number(freq01, 'f', 2) + "Hz");
+    ui->recvEdit->append(timestamp + " >> 0x02(目标点回传): " + QString::number(count02) +
+                         "帧, 平均频率: " + QString::number(freq02, 'f', 2) + "Hz");
+    ui->recvEdit->append(timestamp + " >> 0x03(位置指令): " + QString::number(count03) +
+                         "帧, 平均频率: " + QString::number(freq03, 'f', 2) + "Hz");
+    ui->recvEdit->append(timestamp + " >> ==============================");
+
+    // 重置计数器
+    count01 = 0;
+    count02 = 0;
+    count03 = 0;
 }

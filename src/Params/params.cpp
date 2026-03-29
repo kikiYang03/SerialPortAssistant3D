@@ -282,8 +282,6 @@ void Params::sendParameterWriteRequest(const QString &paramId, int value)
     tcpClient->sendData(frame);
 
     // qDebug() << "发送参数写入请求:" << paramId << "值:" << value << "数据:" << frame.toHex(' ');
-    QString timestamp = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss >> 用户操作: ");
-    emit appendMessage(timestamp + "写入参数");
 }
 
 // 更新参数
@@ -385,6 +383,8 @@ void Params::on_writeButton_clicked()
         QByteArray completionFrame = ProtocolRouter::buildFrame(0x00, QVariantMap{{"sub_cmd", 0x04}});
         tcpClient->sendData(completionFrame);
 
+        QString timestamp = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss >> 用户操作: ");
+        emit appendMessage(timestamp + "写入参数");
         QMessageBox::information(this, "写入参数", "模块已更新参数并关机，请重新上电");
         ui->optLabel->setText("参数写入完成");
         ui->optLabel->setStyleSheet("color: blue;");
@@ -440,7 +440,7 @@ void Params::restoreDefaultValues()
 
         QWidget *valueControl = layout->itemAt(0)->widget();
         if (QComboBox *comboBox = qobject_cast<QComboBox*>(valueControl)) {
-            comboBox->setCurrentIndex(0);          // 枚举类仍选第 0 项
+            comboBox->setCurrentIndex(s_parameters.at(row).defaultValue); // 使用参数表中定义的默认值
         } else if (QSpinBox *spinBox = qobject_cast<QSpinBox*>(valueControl)) {
             spinBox->setValue(s_parameters.at(row).defaultValue); // 直接读表
         }

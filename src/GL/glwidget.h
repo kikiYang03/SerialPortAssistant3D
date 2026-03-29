@@ -114,7 +114,7 @@ private:
     // 👇 新增：记录是否正在按住左键拖动设定朝向
     bool isDraggingNavGoal_ = false;
 
-    Eigen::Vector3d navTarget3D_{0, 0, 0}; // 目标坐标
+    Eigen::Vector3d navTarget3D_{0, 0, 1}; // 目标坐标，Z默认1m
     double navYaw_ = 0.0;
 
     ColorMode colorMode_ = Height;

@@ -64,6 +64,9 @@ signals:
     void uartPoseReceived(quint8 msgId, qint16 x, qint16 y, qint16 z,
                           qint16 roll, qint16 pitch, qint16 yaw);
 
+    // 0x02目标点回传信号（下位机返回完整帧）
+    void navGoalEchoReceived(const QByteArray &frame);
+
     // 打印原来数据
     void printFrame(const QByteArray &frame);
 

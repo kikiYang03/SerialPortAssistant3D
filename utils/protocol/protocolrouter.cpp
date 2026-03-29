@@ -369,9 +369,13 @@ void ProtocolRouter::processUart15BFrame(const QByteArray &fr)
     qint16 pitch= i16(10);
     qint16 yaw  = i16(12);
 
-    // 只有 0x01 (当前位姿) 和 0x03 (位置控制指令) 是从模块发给上位机的
+    // 0x01 (当前位姿) 和 0x03 (位置控制指令) 是从模块发给上位机的
+    // 0x02 (导航目标点) 上位机发送后，模块会完整返回
     if (msgId == 0x01 || msgId == 0x03) {
         emit uartPoseReceived(msgId, x, y, z, roll, pitch, yaw);
+    } else if (msgId == 0x02) {
+        // 0x02目标点回传，发送完整原始帧
+        emit navGoalEchoReceived(fr);
     } else {
         qWarning() << "收到预期外的串口 MsgID:" << msgId;
     }
