@@ -139,14 +139,20 @@ void ProtocolRouter::processProtocolFrames(QByteArray &buffer)
 
         case ParseState::WaitPayload:
         {
-            int tail = m_parseBuf.indexOf(char(0x0A), 1); // 从第2字节找尾
-            if (tail < 0) return;        // 还没收全，继续等
-
-            QByteArray frame = m_parseBuf.left(tail + 1); // 包含头尾的完整帧
-            m_parseBuf.remove(0, tail + 1);              // 把这帧清掉
-            dispatchFrame(frame);        // 立刻分发（老逻辑不变）
-            m_parseState = ParseState::WaitHead;
-            break;
+            // 找帧尾：0x0A后面紧跟0xAA才是真正的帧尾（下一帧帧头）
+            for (int i = 1; i < m_parseBuf.size(); ++i) {
+                if (quint8(m_parseBuf[i]) == 0x0A) {
+                    // 检查后面是否紧跟0xAA（下一帧帧头）或者到达缓冲区末尾
+                    if (i + 1 >= m_parseBuf.size() || quint8(m_parseBuf[i + 1]) == 0xAA) {
+                        QByteArray frame = m_parseBuf.left(i + 1);
+                        m_parseBuf.remove(0, i + 1);
+                        dispatchFrame(frame);
+                        m_parseState = ParseState::WaitHead;
+                        break; // 重新进入循环处理下一帧
+                    }
+                }
+            }
+            return; // 没找到完整帧，继续等待
         }
         }
     }
@@ -261,6 +267,7 @@ void ProtocolRouter::handleControlFrame(const QByteArray &frame)
 // 参数配置
 void ProtocolRouter::handleParameterFrame(const QByteArray &frame)
 {
+    qDebug() << "参数帧：" << frame.toHex();
     if (frame.size() != 6) { // AA 10 ID VALUE_H VALUE_L 0A
         qWarning() << "参数帧长度错误：" << frame.size() << "应为6";
         return;
