@@ -267,7 +267,6 @@ void ProtocolRouter::handleControlFrame(const QByteArray &frame)
 // 参数配置
 void ProtocolRouter::handleParameterFrame(const QByteArray &frame)
 {
-    qDebug() << "参数帧：" << frame.toHex();
     if (frame.size() != 6) { // AA 10 ID VALUE_H VALUE_L 0A
         qWarning() << "参数帧长度错误：" << frame.size() << "应为6";
         return;
