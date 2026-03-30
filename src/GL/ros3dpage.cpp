@@ -89,6 +89,7 @@ Ros3DPage::Ros3DPage(QWidget* parent)
     setupNavSpinBox(spinNavX_, " m", -1000.0, 1000.0);
     setupNavSpinBox(spinNavY_, " m", -1000.0, 1000.0);
     setupNavSpinBox(spinNavZ_, " m", -100.0, 100.0);
+    spinNavZ_->setValue(1.0);  // Z轴初始化为1.00m
     setupNavSpinBox(spinNavYaw_, " °", -180.0, 180.0);
     spinNavYaw_->setDecimals(0);       // 小数位数设为 0
     spinNavYaw_->setSingleStep(1.0);   // 每次点击上下箭头增减 1 度
@@ -145,41 +146,15 @@ Ros3DPage::Ros3DPage(QWidget* parent)
 
     // 双滑块
     dualSlider_ = new DualRangeSlider(zFilterBox);
-    dualSlider_->setRange(-5.0, 20.0);  // 设置范围-5~20m
-    dualSlider_->setValues(-5.0, 5.0);  // 初始值
-    dualSlider_->setMinimumHeight(60);   // 新增这一行
+    dualSlider_->setRange(-1.0, 5.0);  // 设置范围-1~5m
+    dualSlider_->setValues(-1.0, 2.0);  // 初始值
+    dualSlider_->setMinimumHeight(60);
 
-    // 数值显示和微调框
-    labZMin_ = new QLabel("-5.0 m", zFilterBox);
-    labZMax_ = new QLabel("5.0 m", zFilterBox);
-
-    spinZMin_ = new QDoubleSpinBox(zFilterBox);
-    spinZMin_->setRange(-5.0, 20.0);
-    spinZMin_->setValue(-5.0);
-    spinZMin_->setSingleStep(0.5);
-    spinZMin_->setSuffix(" m");
-
-    spinZMax_ = new QDoubleSpinBox(zFilterBox);
-    spinZMax_->setRange(-5.0, 20.0);
-    spinZMax_->setValue(5.0);
-    spinZMax_->setSingleStep(0.5);
-    spinZMax_->setSuffix(" m");
-
-    // 布局
-    auto* zFilterLay = new QGridLayout(zFilterBox);
-    zFilterLay->addWidget(ckZFilter_, 0, 0, 1, 3);
-    zFilterLay->addWidget(dualSlider_, 1, 0, 1, 3);
-
-    zFilterLay->addWidget(new QLabel(tr("最小值:")), 2, 0);
-    zFilterLay->addWidget(spinZMin_, 2, 1);
-    zFilterLay->addWidget(labZMin_, 2, 2);
-
-    zFilterLay->addWidget(new QLabel(tr("最大值:")), 3, 0);
-    zFilterLay->addWidget(spinZMax_, 3, 1);
-    zFilterLay->addWidget(labZMax_, 3, 2);
-    // 新增：把滑块区域撑开
-    zFilterLay->setRowStretch(4, 1);   // 第4行（空行）占全部剩余空间
-    zFilterLay->addWidget(new QWidget(zFilterBox), 4, 0); // 占位widget
+    // 布局 - 只保留启用按钮和双滑块
+    auto* zFilterLay = new QVBoxLayout(zFilterBox);
+    zFilterLay->addWidget(ckZFilter_);
+    zFilterLay->addWidget(dualSlider_);
+    zFilterLay->addStretch();
     // ---------- 操作说明 ----------
     auto* instBox = new QGroupBox(tr("操作说明"), side);
     auto* labInstructions = new QLabel(
@@ -274,35 +249,9 @@ Ros3DPage::Ros3DPage(QWidget* parent)
     connect(ckMap,      &QCheckBox::toggled, gl_, &GLWidget::setShowMapCloud);
 
     // ---------- Z轴范围控制信号连接 ----------
-    // ---------- 修改：Z轴范围控制信号连接 ----------
     // 双滑块值改变
     connect(dualSlider_, &DualRangeSlider::rangeChanged,
             this, &Ros3DPage::onDualRangeChanged);
-
-    // 微调框值改变同步到双滑块
-    connect(spinZMin_, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
-            this, [this](double value) {
-                double upper = spinZMax_->value();
-                if (value > upper) {
-                    value = upper;
-                    spinZMin_->setValue(value);
-                }
-                dualSlider_->setValues(value, upper);
-                gl_->setZFilterRange(value, upper);
-                labZMin_->setText(QString::number(value, 'f', 1) + " m");
-            });
-
-    connect(spinZMax_, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
-            this, [this](double value) {
-                double lower = spinZMin_->value();
-                if (value < lower) {
-                    value = lower;
-                    spinZMax_->setValue(value);
-                }
-                dualSlider_->setValues(lower, value);
-                gl_->setZFilterRange(lower, value);
-                labZMax_->setText(QString::number(value, 'f', 1) + " m");
-            });
 
     // 启用/禁用过滤
     connect(ckZFilter_, &QCheckBox::toggled, gl_, &GLWidget::setZFilterEnabled);
@@ -353,19 +302,6 @@ Ros3DPage::Ros3DPage(QWidget* parent)
 // 新增槽函数
 void Ros3DPage::onDualRangeChanged(double lower, double upper)
 {
-    // 更新微调框（阻止信号循环）
-    spinZMin_->blockSignals(true);
-    spinZMin_->setValue(lower);
-    spinZMin_->blockSignals(false);
-
-    spinZMax_->blockSignals(true);
-    spinZMax_->setValue(upper);
-    spinZMax_->blockSignals(false);
-
-    // 更新标签
-    labZMin_->setText(QString::number(lower, 'f', 1) + " m");
-    labZMax_->setText(QString::number(upper, 'f', 1) + " m");
-
     // 更新GLWidget
     gl_->setZFilterRange(lower, upper);
 }

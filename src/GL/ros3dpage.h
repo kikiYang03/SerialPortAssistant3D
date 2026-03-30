@@ -36,13 +36,7 @@ private:
 
     // Z轴范围控制
     QCheckBox* ckZFilter_ = nullptr;
-    QLabel* labZMin_ = nullptr;
-    QLabel* labZMax_ = nullptr;
-    QSlider* sliderZMin_ = nullptr;
-    QSlider* sliderZMax_ = nullptr;
-    QDoubleSpinBox* spinZMin_ = nullptr;
-    QDoubleSpinBox* spinZMax_ = nullptr;
-    DualRangeSlider* dualSlider_ = nullptr;  // 新增：双滑块
+    DualRangeSlider* dualSlider_ = nullptr;  // 双滑块
 
     // 目标点控制组件
     QPushButton* btnNavGoal_ = nullptr;
