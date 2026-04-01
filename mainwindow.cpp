@@ -15,7 +15,6 @@ MainWindow::MainWindow(QWidget *parent)
     ros3dPage = new Ros3DPage;
     serialPort->setGLWidget(ros3dPage->glWidget());
 
-    ProtocolRouter* router = ProtocolRouter::instance();
 
     // 添加子页面
     ui->stackedWidget->addWidget(serialPort);
@@ -72,36 +71,48 @@ MainWindow::MainWindow(QWidget *parent)
 
     // 管理者模式，不需要则注释掉
     toolBar->addAction(adminLogin);
-    // 1) 创建线程
-    QThread* protoThread = nullptr;
-    protoThread = new QThread(this);
 
+    //==========================================================
+    // 1) 创建协议处理线程（ProtocolRouter + ProtocolRos3D 都在此线程）
+    QThread* protoThread = new QThread(this);
+
+    // 2) ProtocolRouter 单例移到工作线程
+    ProtocolRouter* router = ProtocolRouter::instance();
+    router->moveToThread(protoThread);
+
+    // 3) ProtocolRos3D 也移到同一工作线程
     protocolHandler = new ProtocolRos3D;
     protocolHandler->moveToThread(protoThread);
 
-    // 2) 线程退出时清理
+    // 4) 线程退出时清理
     connect(protoThread, &QThread::finished, protocolHandler, &QObject::deleteLater);
     protoThread->start();
 
     //==========================================================
-    // SerialPort只负责原始数据收发
+    // 数据流：SerialPort(主线程) -> ProtocolRouter(工作线程) -> ProtocolRos3D(工作线程) -> GLWidget(主线程)
+
+    // SerialPort只负责原始数据收发，直接发给工作线程处理
     connect(serialPort, &SerialPort::rawBytesArrived,
             router, &ProtocolRouter::processDataStream,
+            Qt::QueuedConnection);  // 跨线程，用队列连接
+
+    // 测试指令处理（回到主线程）
+    connect(router, &ProtocolRouter::testFrameReceived,
+            serialPort, &SerialPort::handleTestFrame,
             Qt::QueuedConnection);
 
-    // 测试指令处理
-    connect(router, &ProtocolRouter::testFrameReceived,
-            serialPort, &SerialPort::handleTestFrame);
-
-    // ROS数据交给ProtocolRos3D处理
+    // ROS数据交给ProtocolRos3D处理（都在同一工作线程，直接连接）
     connect(router, &ProtocolRouter::ros3dDataReceived,
-            protocolHandler, &ProtocolRos3D::onRawBytes);
+            protocolHandler, &ProtocolRos3D::onRawBytes,
+            Qt::DirectConnection);  // 同一线程，直接调用更高效
 
-    // 参数数据
+    // 参数数据（回到主线程）
     connect(router, &ProtocolRouter::parameterFrameReceived,
-            params, &Params::updateParameter);
+            params, &Params::updateParameter,
+            Qt::QueuedConnection);
 
-    // 4) 解析结果 -> 渲染（回主线程 queued）
+    //==========================================================
+    // 解析结果 -> 渲染（回到主线程，QueuedConnection）
     connect(protocolHandler, &ProtocolRos3D::robotPoseUpdated,
             ros3dPage->glWidget(), &GLWidget::onRobotPose, Qt::QueuedConnection);
 

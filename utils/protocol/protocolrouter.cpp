@@ -120,41 +120,61 @@ void ProtocolRouter::processUartFrames()
 
 void ProtocolRouter::processProtocolFrames(QByteArray &buffer)
 {
-    m_parseBuf.append(buffer);          // 1. 把新字节喂进来
-    buffer.clear();                     // 2. 外部 buffer 清掉，避免重复处理
+    m_parseBuf.append(buffer);          // 把新字节追加到缓冲区
+    buffer.clear();                     // 外部 buffer 清掉，避免重复处理
 
     while (true) {
-        switch (m_parseState) {
-        case ParseState::WaitHead:
-        {
-            int pos = m_parseBuf.indexOf(char(0xAA));
-            if (pos < 0) {              // 一整包都没找到头
-                m_parseBuf.clear();     // 全扔掉
-                return;
-            }
-            m_parseBuf.remove(0, pos);  // 把 0xAA 前面的废数据清掉
-            m_parseState = ParseState::WaitPayload;
-            break;
+        // 1. 找帧头 0xAA
+        int headPos = m_parseBuf.indexOf(char(0xAA));
+        if (headPos < 0) {
+            m_parseBuf.clear();         // 没有帧头，清空
+            return;
+        }
+        if (headPos > 0) {
+            m_parseBuf.remove(0, headPos);  // 清理帧头前的废数据
         }
 
-        case ParseState::WaitPayload:
-        {
-            // 找帧尾：0x0A后面紧跟0xAA才是真正的帧尾（下一帧帧头）
-            for (int i = 1; i < m_parseBuf.size(); ++i) {
+        // 2. 检查是否有足够数据读取CMD（至少需要2字节：AA + CMD）
+        if (m_parseBuf.size() < 2) {
+            return;                     // 等待更多数据
+        }
+
+        quint8 cmd = static_cast<quint8>(m_parseBuf[1]);
+
+        // 3. 根据CMD判断期望帧长度
+        int expectedLen = -1;           // -1表示变长帧
+
+        if (cmd == 0x00) {
+            // 控制指令：固定4字节 AA 00 子命令 0A
+            expectedLen = 4;
+        } else if (cmd == 0x10) {
+            // 参数配置：固定6字节 AA 10 [ID] [值H] [值L] 0A
+            expectedLen = 6;
+        } else {
+            // ROS数据(0x01~0x09)：变长JSON帧，需要找帧尾
+            // 帧格式：AA CMD [JSON数据] 0A
+            for (int i = 2; i < m_parseBuf.size(); ++i) {
                 if (quint8(m_parseBuf[i]) == 0x0A) {
-                    // 检查后面是否紧跟0xAA（下一帧帧头）或者到达缓冲区末尾
-                    if (i + 1 >= m_parseBuf.size() || quint8(m_parseBuf[i + 1]) == 0xAA) {
-                        QByteArray frame = m_parseBuf.left(i + 1);
-                        m_parseBuf.remove(0, i + 1);
-                        dispatchFrame(frame);
-                        m_parseState = ParseState::WaitHead;
-                        break; // 重新进入循环处理下一帧
-                    }
+                    expectedLen = i + 1;
+                    break;
                 }
             }
-            return; // 没找到完整帧，继续等待
         }
+
+        // 4. 检查是否已接收完整帧
+        if (expectedLen < 0) {
+            return;                     // 变长帧还没找到帧尾，等待更多数据
         }
+        if (m_parseBuf.size() < expectedLen) {
+            return;                     // 数据不足，等待更多数据
+        }
+
+        // 5. 提取完整帧并处理
+        QByteArray frame = m_parseBuf.left(expectedLen);
+        m_parseBuf.remove(0, expectedLen);
+        dispatchFrame(frame);
+
+        // 继续循环，处理可能存在的后续帧
     }
 }
 
@@ -246,17 +266,23 @@ void ProtocolRouter::dispatchFrameBySignal(const QByteArray &frame, quint8 comma
 
 void ProtocolRouter::handleControlFrame(const QByteArray &frame)
 {
-    if (frame.size() < 4) return;
+    // 控制帧格式：AA 00 子命令 0A（固定4字节）
+    if (frame.size() != 4) return;
 
     quint8 subCmd = static_cast<quint8>(frame.at(2));
 
     switch (subCmd) {
-    case 0x01: // 测试指令
-        if (frame.size() == 4) {
-            // AA 00 01 0A - 完整的测试帧
-            bool isResponse = true; // 假设这是响应
-            emit testFrameReceived(frame, isResponse);
-        }
+    case 0x01: // 通信测试指令
+        emit testFrameReceived(frame, true);
+        break;
+    case 0x02: // 保存地图指令
+        emit saveMapCommandReceived();
+        break;
+    case 0x03: // 读取参数指令
+        emit readParamCommandReceived();
+        break;
+    case 0x04: // 保存参数指令
+        qDebug() << "收到保存参数指令响应";
         break;
     default:
         qWarning() << "未知控制子命令：" << subCmd;
