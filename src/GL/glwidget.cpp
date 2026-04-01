@@ -575,16 +575,12 @@ void GLWidget::paintGL()
         progSimple_.release();
     }
 
-    // 添加箭头渲染的Z轴过滤
+    // 箭头渲染 - 不受Z轴过滤影响，始终显示
     if (trail_.hasValidTransform && hasRobotPose_)
     {
-        // 检查箭头位置是否在Z轴范围内
-        Eigen::Vector3d arrowPos = T_map_base_link_.block<3,1>(0,3);
-        if (!enableZFilter_ || (arrowPos.z() >= zMinFilter_ && arrowPos.z() <= zMaxFilter_)) {
-            progSimple_.bind();
-            drawSolidArrow(T_map_base_link_, 1.0f, 0.15f);
-            progSimple_.release();
-        }
+        progSimple_.bind();
+        drawSolidArrow(T_map_base_link_, 1.0f, 0.15f);
+        progSimple_.release();
     }
 
     // 绘制指点模式的箭头（未完成：绿色，已完成：黄色）
