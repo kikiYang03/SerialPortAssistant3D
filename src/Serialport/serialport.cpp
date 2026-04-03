@@ -669,7 +669,7 @@ void SerialPort::onPrintTimerTimeout()
 
     // 打印0x01当前位姿数据
     if (latestPose01.valid) {
-        ui->recvEdit->append(timestamp + " >> 当前位姿(0x01): x=" + QString::number(latestPose01.x) +
+        ui->recvEdit->append(timestamp + " >> 当前位姿: x=" + QString::number(latestPose01.x) +
                              "cm y=" + QString::number(latestPose01.y) + "cm z=" +
                              QString::number(latestPose01.z) + "cm roll=" +
                              QString::number(latestPose01.roll) + " pitch=" +
@@ -679,7 +679,7 @@ void SerialPort::onPrintTimerTimeout()
 
     // 打印0x03位置控制指令数据
     if (latestPose03.valid) {
-        ui->recvEdit->append(timestamp + " >> 位置指令(0x03): x=" + QString::number(latestPose03.x) +
+        ui->recvEdit->append(timestamp + " >> 位置指令: x=" + QString::number(latestPose03.x) +
                              "cm y=" + QString::number(latestPose03.y) + "cm z=" +
                              QString::number(latestPose03.z) + "cm roll=" +
                              QString::number(latestPose03.roll) + " pitch=" +
@@ -701,12 +701,9 @@ void SerialPort::onStatsPrintTimerTimeout()
     double freq03 = count03 / (double)statsIntervalSeconds;
 
     ui->recvEdit->append(timestamp + " >> ====== 数据接收频率统计 ======");
-    ui->recvEdit->append(timestamp + " >> 0x01(当前位姿): " + QString::number(count01) +
-                         "帧, 平均频率: " + QString::number(freq01, 'f', 2) + "Hz");
-    ui->recvEdit->append(timestamp + " >> 0x02(目标点回传): " + QString::number(count02) +
-                         "帧, 平均频率: " + QString::number(freq02, 'f', 2) + "Hz");
-    ui->recvEdit->append(timestamp + " >> 0x03(位置指令): " + QString::number(count03) +
-                         "帧, 平均频率: " + QString::number(freq03, 'f', 2) + "Hz");
+    ui->recvEdit->append(timestamp + " >> 位姿话题：" + QString::number(freq01, 'f', 2) + "Hz");
+    ui->recvEdit->append(timestamp + " >> 目标点话题：" + QString::number(freq02, 'f', 2) + "Hz");
+    ui->recvEdit->append(timestamp + " >> 位置指令话题：" + QString::number(freq03, 'f', 2) + "Hz");
     ui->recvEdit->append(timestamp + " >> ==============================");
 
     // 重置计数器

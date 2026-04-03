@@ -102,7 +102,7 @@ void ProtocolRos3D::parseRobotPose(const QJsonObject& obj)
     m.qz             = obj["qz"].toDouble();
     m.qw             = obj["qw"].toDouble();
 
-    ++m_tfCnt;
+    ++m_poseCnt;
     emit robotPoseUpdated(m);
 }
 
@@ -173,7 +173,8 @@ void ProtocolRos3D::parseCloud(const QJsonObject& obj)
     }
 
     m.points = extractXYZFromPointCloud2Raw(raw, width, height, point_step, row_step, is_dense);
-    ++m_cloudCnt;
+    ++m_cloudCnt;  // 点云话题 (0x03+0x05)
+    ++m_mapCnt;    // 地图话题 (0x03+0x06)
     emit cloudUpdated(m);
 }
 
@@ -235,6 +236,7 @@ void ProtocolRos3D::parseGoalPath(const QJsonObject& obj)
     }
 
     emit goalPathUpdated(m);
+    ++m_pathCnt;
 }
 
 /* 2D激光雷达数据解析 (0x05) */
@@ -294,6 +296,7 @@ void ProtocolRos3D::parseMap2D(const QJsonObject& obj)
                       .arg(m.width).arg(m.height).arg(m.resolution, 0, 'f', 3);
     AdminMode::appendMessage(msg);
 
+    ++m_mapCnt;
     emit map2DUpdated(m);
 }
 
@@ -345,18 +348,32 @@ void ProtocolRos3D::calcHz()
 {
     if (!m_linkAlive) return;
     constexpr double WIN = 10.0;
-    double tfHz    = (m_tfCnt    - m_tfLast)    / WIN;
-    double cloudHz = (m_cloudCnt - m_cloudLast) / WIN;
 
-    m_tfLast     = m_tfCnt;
+    // 先计算本周期帧数
+    quint32 poseFrames  = m_poseCnt  - m_poseLast;
+    quint32 cloudFrames = m_cloudCnt - m_cloudLast;
+    quint32 mapFrames   = m_mapCnt   - m_mapLast;
+    quint32 pathFrames  = m_pathCnt  - m_pathLast;
+
+    // 计算频率
+    double poseHz  = poseFrames  / WIN;
+    double cloudHz = cloudFrames / WIN;
+    double mapHz   = mapFrames   / WIN;
+    double pathHz  = pathFrames  / WIN;
+
+    // 更新上周期计数
+    m_poseLast   = m_poseCnt;
     m_cloudLast  = m_cloudCnt;
+    m_mapLast    = m_mapCnt;
+    m_pathLast   = m_pathCnt;
 
-    QString msg = QStringLiteral("%1 >> 话题统计: /tf=%2Hz, /cloud=%3Hz")
-                      .arg(QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss"))
-                      .arg(tfHz,    0, 'f', 2)
-                      .arg(cloudHz, 0, 'f', 2);
-
-    emit appendMessage(msg);
+    QString ts = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss");
+    emit appendMessage(QStringLiteral("%1 >> ====== 数据接收频率统计 ======").arg(ts));
+    emit appendMessage(QStringLiteral("%1 >> 位姿话题：%2Hz").arg(ts).arg(poseHz, 0, 'f', 2));
+    emit appendMessage(QStringLiteral("%1 >> 点云话题：%2Hz").arg(ts).arg(cloudHz, 0, 'f', 2));
+    emit appendMessage(QStringLiteral("%1 >> 地图话题：%2Hz").arg(ts).arg(mapHz, 0, 'f', 2));
+    emit appendMessage(QStringLiteral("%1 >> 轨迹话题：%2Hz").arg(ts).arg(pathHz, 0, 'f', 2));
+    emit appendMessage(QStringLiteral("%1 >> ==============================").arg(ts));
 }
 
 // 设置目标点

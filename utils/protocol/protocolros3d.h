@@ -53,14 +53,16 @@ private:
 
     static QVector<int8_t> decompressRLE(const QVector<int8_t>& rle);
     // 计数器
-    quint32 m_tfCnt    = 0;
-    quint32 m_cloudCnt = 0;  // 统一统计3D点云和2D激光数据
-    quint32 m_mapCnt   = 0;
+    quint32 m_poseCnt   = 0;  // 位姿话题 (0x01)
+    quint32 m_cloudCnt  = 0;  // 点云话题 (0x03 + 0x05)
+    quint32 m_mapCnt    = 0;  // 地图话题 (0x06)
+    quint32 m_pathCnt   = 0;  // 轨迹话题 (0x09)
 
     // 上一周期计数
-    quint32 m_tfLast     = 0;
-    quint32 m_cloudLast  = 0;
-    quint32 m_mapLast    = 0;
+    quint32 m_poseLast  = 0;
+    quint32 m_cloudLast = 0;
+    quint32 m_mapLast   = 0;
+    quint32 m_pathLast  = 0;
 
     QTimer *m_hzTimer = nullptr;
     bool m_linkAlive = false;
