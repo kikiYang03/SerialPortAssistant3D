@@ -25,7 +25,7 @@ const QVector<Parameter> Params::s_parameters = {
     {"0x25", "机器人半径", "0~1000", "根据中心点到最远端的距离加多至少5cm，设置为机器人半径作为路径规划，单位cm，默认30", 30},
     {"0x26", "安全距离", "0~1000", "设置机器人中心点到障碍的安全距离，建议=机器人半径+10，优先选择大于该安全半径的路径，单位cm，默认40", 40},
     {"0x27", "过滤半径", "0~1000", "若雷达会扫描到机器人自身结构则需加大该参数，建议=机器人半径，单位cm，默认30", 30},
-    {"0x99", "模块类型", "0~3", "0=3D定位模块，1=3D导航模块，2=2D定位模块，3=2D导航模块", 0},
+    // {"0x99", "模块类型", "0~3", "0=3D定位模块，1=3D导航模块，2=2D定位模块，3=2D导航模块", 0},
     };
 
 Params::Params(QWidget *parent)
@@ -141,8 +141,13 @@ void Params::setupParameters()
 
             // 使用动态属性记录该按钮的状态和需要控制的行号范围
             foldButton->setProperty("folded", false);
-            foldButton->setProperty("startRow", row + 1); // 开始折叠的行 (2 或 11)
-            foldButton->setProperty("endRow", row + 7);   // 结束折叠的行 (7 或 18)，新增起飞高度参数后增加1行
+            if (row == 1) {
+                foldButton->setProperty("startRow", 2);
+                foldButton->setProperty("endRow", 7);   // 0x01-0x06
+            } else if (row == 10) {
+                foldButton->setProperty("startRow", 11);
+                foldButton->setProperty("endRow", 17);  // 0x21-0x27
+            }
 
             connect(foldButton, &QPushButton::clicked, this, &Params::onFoldButtonClicked);
 

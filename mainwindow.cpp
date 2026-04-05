@@ -70,7 +70,7 @@ MainWindow::MainWindow(QWidget *parent)
             serialPort, &SerialPort::appendMessage);
 
     // 管理者模式，不需要则注释掉
-    toolBar->addAction(adminLogin);
+    // toolBar->addAction(adminLogin);
 
     //==========================================================
     // 1) 创建协议处理线程（ProtocolRouter + ProtocolRos3D 都在此线程）
