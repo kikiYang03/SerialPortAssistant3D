@@ -38,9 +38,15 @@ public:
 
     void setShowRealtimeCloud(bool show);   // 实时点云开关
     void setShowMapCloud(bool show);        // 地图点云开关
+    void setShowScan2D(bool show);          // 2D激光雷达开关
+    void setShowMap2D(bool show);           // 2D地图开关
+    void setMap2DPointSize(float size);     // 设置地图点大小
+    void setMap2DStep(int step);            // 设置地图采样步长
 
     void setZFilterRange(float minZ, float maxZ);
     void setZFilterEnabled(bool enabled);
+
+    void setNavMode(bool enable);
 
 
 signals:
@@ -49,10 +55,18 @@ signals:
     // 添加消息显示信号
     void appendMessage(const QString &message);
 
+    void navGoalSet(double x, double y, double z, double yaw);
+    void navModeChanged(bool isNavMode);
+
+    // 通知UI更新目标点数值
+    void navTargetUpdated(double x, double y, double z, double yaw_deg);
+
 public slots:
-    void onTf(const TFMsg &);
+    void onRobotPose(const RobotPoseMsg &);  // 机器人位姿 (map → base_link)
+    void onLidarPose(const LidarPoseMsg &);  // 雷达位姿 (map → laser)
     void onCloud(const CloudMsg &);
-    void onMap(const MapCloudMsg &);
+    void onScan2D(const Scan2DMsg &);        // 2D激光雷达数据 (0x05)
+    void onMap2D(const Map2DMsg &);          // 2D地图数据 (0x06)
 
     void clearMap();        // 清理点云地图
     void clearTrail();  // 新增
@@ -64,29 +78,48 @@ public slots:
     void addYaw  (int degrees);   // 正数右转，负数左转
     void addPitch(int degrees);   // 正数下俯，负数上仰
 
+    // 接收UI微调框传来的目标点数值
+    void updateNavTargetFromUI(double x, double y, double z, double yaw_deg);
+
+    void onGoalPath(const PathMsg &m);
+
 private slots:   // 新增
     void doUploadCloud();   // 在主线程里把 cloudCpu_ 塞进 vboCloud_
     void doUploadMap();     // 在主线程里把 mapInterleavedCpu_ 塞进 vboMap_
+    void doUploadScan2D();  // 在主线程里把 scan2DCpu_ 塞进 vboScan2D_
+    void doUploadMap2D();   // 在主线程里把 map2DCpu_ 塞进 vboMap2D_
 
 protected:
     void initializeGL() override;
     void resizeGL(int w, int h) override;
     void paintGL() override;
 
+    void mouseReleaseEvent(QMouseEvent *e) override;
+
 private:
 
-    // =========== TF相关 ===========
-    Eigen::Matrix4d T_map_ci_;          // map → camera_init
-    Eigen::Matrix4d T_ci_map_;          // camera_init → map
-    Eigen::Matrix4d T_body_baselink_;   // 新增：body → base_link 静态变换矩阵
-    Eigen::Matrix4d T_map_baselink_;    // map → base_link 动态计算结果
-    bool hasReceivedMapToCameraInitTf_ = false;
-    bool hasReceivedBodyToBaseLinkTf_ = false;   // 已存在，正确
+    // =========== 新协议TF相关 ===========
+    Eigen::Matrix4d T_map_base_link_;    // map → base_link (机器人位姿)
+    Eigen::Matrix4d T_map_laser_;        // map → laser (雷达位姿)
+    bool hasRobotPose_ = false;          // 是否收到机器人位姿
+    bool hasLidarPose_ = false;          // 是否收到雷达位姿
+
+    // 修改这行：
+    Eigen::Vector3d screenToWorld(const QPoint& pos, double targetZ);
+
+    bool isNavMode_ = false;
+    bool hasNavTarget_ = false;  // 是否已经生成了箭头
+    bool isNavGoalSet_ = false;  // 是否已经最终确认了目标（退出指点模式后）
+
+    // 👇 新增：记录是否正在按住左键拖动设定朝向
+    bool isDraggingNavGoal_ = false;
+
+    Eigen::Vector3d navTarget3D_{0, 0, 1}; // 目标坐标，Z默认1m
+    double navYaw_ = 0.0;
 
     ColorMode colorMode_ = Height;
     TfTree tf_;
 
-    Eigen::Vector3d transformPointToMap(const Eigen::Vector3d& pt_in_camera_init);
     // 点云大小
     float cloudPtSize_ = 3.0f;
     float mapPtSize_   = 3.0f;
@@ -105,6 +138,16 @@ private:
     QOpenGLBuffer vboMap_  {QOpenGLBuffer::VertexBuffer};
     QOpenGLVertexArrayObject vaoCloud_, vaoMap_;
     int cloudPts_ = 0, mapPts_ = 0;
+
+    // 2D数据 GPU对象
+    std::vector<Eigen::Vector3f> scan2DCpu_;
+    std::vector<Eigen::Vector3f> map2DCpu_;       // 位置+颜色交错存储
+    QOpenGLBuffer vboScan2D_{QOpenGLBuffer::VertexBuffer};
+    QOpenGLBuffer vboMap2D_{QOpenGLBuffer::VertexBuffer};
+    QOpenGLVertexArrayObject vaoScan2D_, vaoMap2D_;
+    int scan2DPts_ = 0, map2DPts_ = 0;
+    std::atomic_bool scan2DDirty_{false};
+    std::atomic_bool map2DDirty_{false};
 
     QOpenGLShaderProgram progSimple_;
     QOpenGLShaderProgram progColorCloud_;
@@ -140,12 +183,6 @@ private:
     void mouseMoveEvent(QMouseEvent *e) override;
     void wheelEvent(QWheelEvent *e) override;
 
-    // TF关系链
-    Eigen::Matrix4d T_map_ci__latest_      = Eigen::Matrix4d::Identity(); // map→camera_init
-    Eigen::Matrix4d T_body_baselink_latest_= Eigen::Matrix4d::Identity(); // body→base_link
-
-
-    // 放在 private 段
     QOpenGLBuffer vboAxis_;
     QOpenGLVertexArrayObject vaoAxis_;
 
@@ -168,6 +205,12 @@ private:
     bool showRealtimeCloud_ = true;         // 默认显示
     bool showMapCloud_      = true;
 
+    // 2D数据显示控制
+    bool showScan2D_ = true;
+    bool showMap2D_  = true;
+    float map2DPointSize_ = 6.0f;  // 2D地图点大小
+    int map2DStep_ = 1;             // 2D地图采样步长 (1=全部, 2=隔1取1, 3=隔2取1)
+
 
     // Z轴范围控制
     float zMinFilter_ = -10.0f;   // 默认最小Z值
@@ -183,6 +226,14 @@ private:
                             float pointSize,
                             const QVector3D& color = QVector3D(1,1,1),
                             bool useColorProgram = false);
+
+    std::vector<Eigen::Vector3f> optimalPathPts_; // 存储规划路径点
+    QOpenGLBuffer vboOptimalPath_;
+    QOpenGLVertexArrayObject vaoOptimalPath_;
+    bool hasOptimalPath_ = false;
+
+    // 2D模式标志（通过接收2D激光雷达数据判断）
+    bool is2DMode_ = false;
 };
 
 #endif // GLWIDGET_H

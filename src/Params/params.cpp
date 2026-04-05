@@ -6,7 +6,7 @@
 #include <adminmode.h>
 
 const QVector<Parameter> Params::s_parameters = {
-    {"0x00", "雷达型号", "0~1", "0=mid360, 1=unitree_L2", 0},
+    {"0x00", "雷达型号", "0~11", "0=mid360, 10=N10, 11=N10_P，默认0", 0},
     {"-", "雷达放置位置", "-", "雷达安装位置相对于机器人中心的位置，即tf树中：base_link->laser_link，坐标系遵循FLU（x为前，Y为左，Z为上）", 0},
     {"0x01", "X坐标", "-100~100", "雷达位置X坐标值，单位厘米", 0},
     {"0x02", "Y坐标", "-100~100", "雷达位置Y坐标值，单位厘米", 0},
@@ -25,7 +25,7 @@ const QVector<Parameter> Params::s_parameters = {
     {"0x25", "机器人半径", "0~1000", "根据中心点到最远端的距离加多至少5cm，设置为机器人半径作为路径规划，单位cm，默认30", 30},
     {"0x26", "安全距离", "0~1000", "设置机器人中心点到障碍的安全距离，建议=机器人半径+10，优先选择大于该安全半径的路径，单位cm，默认40", 40},
     {"0x27", "过滤半径", "0~1000", "若雷达会扫描到机器人自身结构则需加大该参数，建议=机器人半径，单位cm，默认30", 30},
-    // {"0x99", "模块类型", "0~3", "0=3D定位模块，1=3D导航模块，2=2D定位模块，3=2D导航模块", 0},
+    {"0x99", "模块类型", "0~3", "0=3D定位模块，1=3D导航模块，2=2D定位模块，3=2D导航模块", 0},
     };
 
 Params::Params(QWidget *parent)
@@ -127,8 +127,8 @@ void Params::setupParameters()
     for (int row = 0; row < parameters.size(); ++row) {
         const Parameter &param = parameters[row];
 
-        // 在0x01添加折叠按钮
-        if (row == 1) {
+        // 在 row == 1 ("雷达放置位置") 和 row == 10 ("路径规划参数") 添加折叠按钮
+        if (row == 1 || row == 10) {
             // 创建容器widget确保按钮居中
             QWidget *container = new QWidget();
             QHBoxLayout *layout = new QHBoxLayout(container);
@@ -138,13 +138,11 @@ void Params::setupParameters()
             QPushButton *foldButton = new QPushButton();
             foldButton->setText("−");
             foldButton->setFixedSize(20, 20);
+
+            // 使用动态属性记录该按钮的状态和需要控制的行号范围
             foldButton->setProperty("folded", false);
             foldButton->setProperty("startRow", row + 1); // 开始折叠的行 (2 或 11)
-            if (row == 1) {
-                foldButton->setProperty("endRow", row + 6);   // 0x01-0x06: row 2-7
-            } else if (row == 10) {
-                foldButton->setProperty("endRow", row + 7);   // 0x21-0x27: row 11-17
-            }
+            foldButton->setProperty("endRow", row + 7);   // 结束折叠的行 (7 或 18)，新增起飞高度参数后增加1行
 
             connect(foldButton, &QPushButton::clicked, this, &Params::onFoldButtonClicked);
 
@@ -169,10 +167,8 @@ void Params::setupParameters()
         QTableWidgetItem *rangeItem = new QTableWidgetItem(param.range);
         ui->tableWidget->setItem(row, 4, rangeItem);
 
-
         // 说明 - 正确设置文本换行
         QTableWidgetItem *descItem = new QTableWidgetItem(param.description);
-        // 移除错误的flags设置，改用正确的方式
         descItem->setToolTip(param.description); // 添加tooltip以便鼠标悬停时显示完整文本
         ui->tableWidget->setItem(row, 5, descItem);
 
@@ -180,20 +176,8 @@ void Params::setupParameters()
         QWidget *valueWidget = createValueWidget(param.id, param.range, param.defaultValue);
         valueWidgets.append(valueWidget);
         ui->tableWidget->setCellWidget(row, 3, valueWidget);
-        /* ===== 管理员可见性控制 ===== */
-        if (param.id == "0x99") {
-            // 1. 先整行隐藏
-            ui->tableWidget->setRowHidden(row, !AdminMode::instance().isAdmin());
 
-            // 2. 监听状态变化，动态显隐
-            connect(&AdminMode::instance(), &AdminMode::adminStateChanged,
-                    this, [this, row](bool admin){
-                        ui->tableWidget->setRowHidden(row, !admin);
-                    });
-
-            // 3. 如果还想让输入框“仅管理员可编辑”，再单独注册 valueWidget 即可
-            AdminMode::instance().install(valueWidget, true, false);
-        }
+        // 0x99 模块类型已改为对所有用户可见
     }
 
     // 设置行高自适应内容
@@ -202,10 +186,10 @@ void Params::setupParameters()
     // 额外优化：强制紧凑布局
     for (int row = 0; row < ui->tableWidget->rowCount(); ++row) {
         // 设置行高更紧凑
-        ui->tableWidget->setRowHeight(row,qMax(ui->tableWidget->rowHeight(row), 25)); // 最小行高25px
+        ui->tableWidget->setRowHeight(row, qMax(ui->tableWidget->rowHeight(row), 25)); // 最小行高25px
     }
 
-    // 默认展开所有行
+    // （保留原有的代码，尽管使用属性后 m_isGroupFolded 可能不再用于多组折叠，但保留防止头文件报错）
     m_isGroupFolded = false;
 }
 
@@ -219,8 +203,9 @@ QWidget* Params::createValueWidget(const QString &id, const QString &range, int 
     if (id == "0x00") {
         QComboBox *comboBox = new QComboBox();
         comboBox->addItem("mid360", 0);
-        comboBox->addItem("unitree_L2", 1);
-        comboBox->setCurrentIndex(defaultValue);
+        comboBox->addItem("N10", 10);
+        comboBox->addItem("N10_P", 11);
+        comboBox->setCurrentIndex(defaultValue == 0 ? 0 : (defaultValue == 10 ? 1 : 2));
         layout->addWidget(comboBox);
     } else if(id == "0x10"){
         QComboBox *comboBox = new QComboBox();
@@ -231,8 +216,24 @@ QWidget* Params::createValueWidget(const QString &id, const QString &range, int 
     }
     else if(id == "0x11"){
         QComboBox *comboBox = new QComboBox();
-        comboBox->addItem("串口输出坐标", 0);
-        comboBox->addItem("mavlink格式输出", 1);
+        comboBox->addItem("不能", 0);
+        comboBox->addItem("使能", 1);
+        comboBox->setCurrentIndex(defaultValue);
+        layout->addWidget(comboBox);
+    }
+    else if(id == "0x12"){
+        QComboBox *comboBox = new QComboBox();
+        comboBox->addItem("不能", 0);
+        comboBox->addItem("使能", 1);
+        comboBox->setCurrentIndex(defaultValue);
+        layout->addWidget(comboBox);
+    }
+    else if(id == "0x99"){
+        QComboBox *comboBox = new QComboBox();
+        comboBox->addItem("3D定位模块", 0);
+        comboBox->addItem("3D导航模块", 1);
+        comboBox->addItem("2D定位模块", 2);
+        comboBox->addItem("2D导航模块", 3);
         comboBox->setCurrentIndex(defaultValue);
         layout->addWidget(comboBox);
     }
@@ -281,8 +282,6 @@ void Params::sendParameterWriteRequest(const QString &paramId, int value)
     tcpClient->sendData(frame);
 
     // qDebug() << "发送参数写入请求:" << paramId << "值:" << value << "数据:" << frame.toHex(' ');
-    QString timestamp = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss >> 用户操作: ");
-    emit appendMessage(timestamp + "写入参数");
 }
 
 // 更新参数
@@ -360,6 +359,8 @@ void Params::on_writeButton_clicked()
         QTableWidgetItem *idItem = ui->tableWidget->item(row, 1);
         if (!idItem || idItem->text() == "-") continue; // 跳过无参数ID的行
 
+        QString paramId = idItem->text();
+
         QWidget *widget = valueWidgets[row];
         QLayout *layout = widget->layout();
         if (layout && layout->count() > 0) {
@@ -367,11 +368,11 @@ void Params::on_writeButton_clicked()
             // 按照样式按钮类型获取值
             if (QComboBox *comboBox = qobject_cast<QComboBox*>(valueControl)) {
                 int value = comboBox->currentData().toInt();
-                sendParameterWriteRequest(idItem->text(), value); // 发送写入请求
+                sendParameterWriteRequest(paramId, value); // 发送写入请求
                 writeCount++;
             } else if (QSpinBox *spinBox = qobject_cast<QSpinBox*>(valueControl)) {
                 int value = spinBox->value();
-                sendParameterWriteRequest(idItem->text(), value); // 发送写入请求
+                sendParameterWriteRequest(paramId, value); // 发送写入请求
                 writeCount++;
             }
         }
@@ -382,6 +383,8 @@ void Params::on_writeButton_clicked()
         QByteArray completionFrame = ProtocolRouter::buildFrame(0x00, QVariantMap{{"sub_cmd", 0x04}});
         tcpClient->sendData(completionFrame);
 
+        QString timestamp = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss >> 用户操作: ");
+        emit appendMessage(timestamp + "写入参数");
         QMessageBox::information(this, "写入参数", "模块已更新参数并关机，请重新上电");
         ui->optLabel->setText("参数写入完成");
         ui->optLabel->setStyleSheet("color: blue;");
@@ -389,26 +392,31 @@ void Params::on_writeButton_clicked()
         QMessageBox::warning(this, "警告", "没有找到需要写入的参数");
     }
 }
-// 折叠按钮
+// 折叠按钮槽函数
 void Params::onFoldButtonClicked()
 {
     QPushButton *button = qobject_cast<QPushButton*>(sender());
     if (!button) return;
 
-    if (m_isGroupFolded) {
-        // 展开第3-8行（索引2-7）
-        for (int row = 2; row <= 7; ++row) {
+    // 从按钮属性中获取控制范围和当前状态
+    bool isFolded = button->property("folded").toBool();
+    int startRow = button->property("startRow").toInt();
+    int endRow = button->property("endRow").toInt();
+
+    if (isFolded) {
+        // 当前为折叠状态 -> 执行展开
+        for (int row = startRow; row <= endRow; ++row) {
             ui->tableWidget->setRowHidden(row, false);
         }
         button->setText("−");
-        m_isGroupFolded = false;
+        button->setProperty("folded", false); // 更新状态
     } else {
-        // 折叠第3-8行（索引2-7）
-        for (int row = 2; row <= 7; ++row) {
+        // 当前为展开状态 -> 执行折叠
+        for (int row = startRow; row <= endRow; ++row) {
             ui->tableWidget->setRowHidden(row, true);
         }
         button->setText("+");
-        m_isGroupFolded = true;
+        button->setProperty("folded", true); // 更新状态
     }
 }
 // 点击恢复默认参数按钮
@@ -432,7 +440,7 @@ void Params::restoreDefaultValues()
 
         QWidget *valueControl = layout->itemAt(0)->widget();
         if (QComboBox *comboBox = qobject_cast<QComboBox*>(valueControl)) {
-            comboBox->setCurrentIndex(0);          // 枚举类仍选第 0 项
+            comboBox->setCurrentIndex(s_parameters.at(row).defaultValue); // 使用参数表中定义的默认值
         } else if (QSpinBox *spinBox = qobject_cast<QSpinBox*>(valueControl)) {
             spinBox->setValue(s_parameters.at(row).defaultValue); // 直接读表
         }

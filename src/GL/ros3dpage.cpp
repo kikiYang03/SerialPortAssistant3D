@@ -1,4 +1,6 @@
 ﻿#include "ros3dpage.h"
+#include "tcpclient.h"
+#include "protocolros3d.h"
 
 #include <QHBoxLayout>
 #include <QVBoxLayout>
@@ -11,6 +13,8 @@
 #include <QtMath>
 #include <QTimer>
 #include <QCheckBox>
+#include <QMessageBox>
+#include <QScrollArea>
 
 Ros3DPage::Ros3DPage(QWidget* parent)
     : QWidget(parent)
@@ -60,12 +64,51 @@ Ros3DPage::Ros3DPage(QWidget* parent)
     auto* controlBox = new QGroupBox(tr("操作按钮"), side);
     auto* btnClear = new QPushButton(tr("清理地图"), controlBox);
     auto* btnReset = new QPushButton(tr("初始化相机"), controlBox);
+
+    // ---------- 目标点设置 (新增面板) ----------
+    auto* targetBox = new QGroupBox(tr("目标点指引"), side);
+    auto* btnNavGoal = new QPushButton(tr("设置目标点"), targetBox);
+    btnNavGoal->setCheckable(true);
+
+    // 发送目标点按钮
+    btnSendNavGoal_ = new QPushButton(tr("发送目标点"), targetBox);
+    btnSendNavGoal_->setEnabled(false); // 初始状态为不可用，直到目标点确认
+
+    spinNavX_ = new QDoubleSpinBox(targetBox);
+    spinNavY_ = new QDoubleSpinBox(targetBox);
+    spinNavZ_ = new QDoubleSpinBox(targetBox);
+    spinNavYaw_ = new QDoubleSpinBox(targetBox);
+
+    // 配置数值框范围和精度
+    auto setupNavSpinBox = [](QDoubleSpinBox* sp, const QString& suffix, double min, double max) {
+        sp->setRange(min, max);
+        sp->setDecimals(2);
+        sp->setSingleStep(0.1);
+        sp->setSuffix(suffix);
+    };
+    setupNavSpinBox(spinNavX_, " m", -1000.0, 1000.0);
+    setupNavSpinBox(spinNavY_, " m", -1000.0, 1000.0);
+    setupNavSpinBox(spinNavZ_, " m", -100.0, 100.0);
+    spinNavZ_->setValue(1.0);  // Z轴初始化为1.00m
+    setupNavSpinBox(spinNavYaw_, " °", -180.0, 180.0);
+    spinNavYaw_->setDecimals(0);       // 小数位数设为 0
+    spinNavYaw_->setSingleStep(1.0);   // 每次点击上下箭头增减 1 度
+
+    auto* targetLay = new QGridLayout(targetBox);
+    targetLay->addWidget(btnNavGoal, 0, 0, 1, 2);
+    targetLay->addWidget(btnSendNavGoal_, 0, 2, 1, 2);
+    targetLay->addWidget(new QLabel("X:"), 1, 0); targetLay->addWidget(spinNavX_, 1, 1);
+    targetLay->addWidget(new QLabel("Y:"), 1, 2); targetLay->addWidget(spinNavY_, 1, 3);
+    targetLay->addWidget(new QLabel("Z:"), 2, 0); targetLay->addWidget(spinNavZ_, 2, 1);
+    targetLay->addWidget(new QLabel("Yaw:"), 2, 2); targetLay->addWidget(spinNavYaw_, 2, 3);
+
     // auto* btnSave  = new QPushButton(tr("保存地图"), controlBox);
 
 
     auto* controlLay = new QVBoxLayout(controlBox);
     controlLay->addWidget(btnClear);
     controlLay->addWidget(btnReset);
+    // controlLay->addWidget(btnNavGoal);
     // controlLay->addWidget(btnSave);
     controlLay->addStretch();   // 把按钮顶到上面
 
@@ -103,41 +146,15 @@ Ros3DPage::Ros3DPage(QWidget* parent)
 
     // 双滑块
     dualSlider_ = new DualRangeSlider(zFilterBox);
-    dualSlider_->setRange(-5.0, 20.0);  // 设置范围-5~20m
-    dualSlider_->setValues(-5.0, 5.0);  // 初始值
-    dualSlider_->setMinimumHeight(60);   // 新增这一行
+    dualSlider_->setRange(-1.0, 5.0);  // 设置范围-1~5m
+    dualSlider_->setValues(-1.0, 2.0);  // 初始值
+    dualSlider_->setMinimumHeight(60);
 
-    // 数值显示和微调框
-    labZMin_ = new QLabel("-5.0 m", zFilterBox);
-    labZMax_ = new QLabel("5.0 m", zFilterBox);
-
-    spinZMin_ = new QDoubleSpinBox(zFilterBox);
-    spinZMin_->setRange(-5.0, 20.0);
-    spinZMin_->setValue(-5.0);
-    spinZMin_->setSingleStep(0.5);
-    spinZMin_->setSuffix(" m");
-
-    spinZMax_ = new QDoubleSpinBox(zFilterBox);
-    spinZMax_->setRange(-5.0, 20.0);
-    spinZMax_->setValue(5.0);
-    spinZMax_->setSingleStep(0.5);
-    spinZMax_->setSuffix(" m");
-
-    // 布局
-    auto* zFilterLay = new QGridLayout(zFilterBox);
-    zFilterLay->addWidget(ckZFilter_, 0, 0, 1, 3);
-    zFilterLay->addWidget(dualSlider_, 1, 0, 1, 3);
-
-    zFilterLay->addWidget(new QLabel(tr("最小值:")), 2, 0);
-    zFilterLay->addWidget(spinZMin_, 2, 1);
-    zFilterLay->addWidget(labZMin_, 2, 2);
-
-    zFilterLay->addWidget(new QLabel(tr("最大值:")), 3, 0);
-    zFilterLay->addWidget(spinZMax_, 3, 1);
-    zFilterLay->addWidget(labZMax_, 3, 2);
-    // 新增：把滑块区域撑开
-    zFilterLay->setRowStretch(4, 1);   // 第4行（空行）占全部剩余空间
-    zFilterLay->addWidget(new QWidget(zFilterBox), 4, 0); // 占位widget
+    // 布局 - 只保留启用按钮和双滑块
+    auto* zFilterLay = new QVBoxLayout(zFilterBox);
+    zFilterLay->addWidget(ckZFilter_);
+    zFilterLay->addWidget(dualSlider_);
+    zFilterLay->addStretch();
     // ---------- 操作说明 ----------
     auto* instBox = new QGroupBox(tr("操作说明"), side);
     auto* labInstructions = new QLabel(
@@ -155,6 +172,8 @@ Ros3DPage::Ros3DPage(QWidget* parent)
     auto* sideLay = new QVBoxLayout(side);
     sideLay->addWidget(tfBox);
     sideLay->addSpacing(10);
+    sideLay->addWidget(targetBox);   // <--- 加入目标面板
+    sideLay->addSpacing(10);
     // sideLay->addWidget(rotBox);
     // sideLay->addSpacing(10);
     sideLay->addWidget(cloudBox);
@@ -167,11 +186,19 @@ Ros3DPage::Ros3DPage(QWidget* parent)
     sideLay->addSpacing(10);
     sideLay->addStretch(1);
 
+    // ---------- 将侧边栏放入滚动区域 ----------
+    auto* scrollArea = new QScrollArea(this);
+    scrollArea->setWidget(side);
+    scrollArea->setWidgetResizable(true);  // 允许内容自适应宽度
+    scrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);  // 禁用横向滚动
+    scrollArea->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);     // 需要时显示纵向滚动
+    scrollArea->setFixedWidth(300);  // 滚动区域宽度（比侧边栏稍宽以容纳滚动条）
+
     // ---------- 主布局 ----------
     auto* mainLay = new QHBoxLayout(this);
     mainLay->setContentsMargins(0,0,0,0);
     mainLay->addWidget(gl_, 1);
-    mainLay->addWidget(side, 0);
+    mainLay->addWidget(scrollArea, 0);
 
     // ---------- 连接原有按钮 ----------
     connect(btnClear, &QPushButton::clicked, gl_, &GLWidget::clearMap);
@@ -222,56 +249,128 @@ Ros3DPage::Ros3DPage(QWidget* parent)
     connect(ckMap,      &QCheckBox::toggled, gl_, &GLWidget::setShowMapCloud);
 
     // ---------- Z轴范围控制信号连接 ----------
-    // ---------- 修改：Z轴范围控制信号连接 ----------
     // 双滑块值改变
     connect(dualSlider_, &DualRangeSlider::rangeChanged,
             this, &Ros3DPage::onDualRangeChanged);
 
-    // 微调框值改变同步到双滑块
-    connect(spinZMin_, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
-            this, [this](double value) {
-                double upper = spinZMax_->value();
-                if (value > upper) {
-                    value = upper;
-                    spinZMin_->setValue(value);
-                }
-                dualSlider_->setValues(value, upper);
-                gl_->setZFilterRange(value, upper);
-                labZMin_->setText(QString::number(value, 'f', 1) + " m");
-            });
-
-    connect(spinZMax_, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
-            this, [this](double value) {
-                double lower = spinZMin_->value();
-                if (value < lower) {
-                    value = lower;
-                    spinZMax_->setValue(value);
-                }
-                dualSlider_->setValues(lower, value);
-                gl_->setZFilterRange(lower, value);
-                labZMax_->setText(QString::number(value, 'f', 1) + " m");
-            });
-
     // 启用/禁用过滤
     connect(ckZFilter_, &QCheckBox::toggled, gl_, &GLWidget::setZFilterEnabled);
+
+    connect(gl_, &GLWidget::navGoalSet, this, [this](double x, double y, double z, double yaw) {
+        double yaw_deg = yaw * 180.0 / M_PI;
+        QString msg = QString("生成目标点 -> X: %1, Y: %2, Z: %3, Yaw: %4°")
+                          .arg(x, 0, 'f', 2)
+                          .arg(y, 0, 'f', 2)
+                          .arg(z, 0, 'f', 2)
+                          .arg(yaw_deg, 0, 'f', 1);
+        qDebug() << msg;
+
+        // 目标点已设置，启用发送按钮
+        btnSendNavGoal_->setEnabled(true);
+    });
+
+    // 监听 Toggle 状态改变
+    connect(btnNavGoal, &QPushButton::toggled, this, [=](bool checked) {
+        if (checked) {
+            btnNavGoal->setText(tr("退出指点模式"));
+            gl_->setNavMode(true);
+            // 正在指点时，禁用发送按钮，防止误触
+            btnSendNavGoal_->setEnabled(false);
+        } else {
+            btnNavGoal->setText(tr("设置目标点"));
+            gl_->setNavMode(false);
+            // 这里不需要写 setEnabled(true)，因为 gl_->setNavMode(false) 会触发 gl_ 发射 navGoalSet 信号，
+            // 从而在上面的 connect 里启用发送按钮。
+        }
+    });
+
+    // 【新增】连接发送按钮的点击槽函数
+    connect(btnSendNavGoal_, &QPushButton::clicked, this, &Ros3DPage::onSendNavGoalClicked);
+
+
+    // 接收GLWidget鼠标拖动时的坐标更新信号
+    connect(gl_, &GLWidget::navTargetUpdated, this, &Ros3DPage::onNavTargetUpdated);
+
+    // 监听UI上微调框的修改信号
+    void (QDoubleSpinBox::*valueChangedSignal)(double) = &QDoubleSpinBox::valueChanged;
+    connect(spinNavX_, valueChangedSignal, this, &Ros3DPage::onNavSpinBoxChanged);
+    connect(spinNavY_, valueChangedSignal, this, &Ros3DPage::onNavSpinBoxChanged);
+    connect(spinNavZ_, valueChangedSignal, this, &Ros3DPage::onNavSpinBoxChanged);
+    connect(spinNavYaw_, valueChangedSignal, this, &Ros3DPage::onNavSpinBoxChanged);
 }
 
 // 新增槽函数
 void Ros3DPage::onDualRangeChanged(double lower, double upper)
 {
-    // 更新微调框（阻止信号循环）
-    spinZMin_->blockSignals(true);
-    spinZMin_->setValue(lower);
-    spinZMin_->blockSignals(false);
-
-    spinZMax_->blockSignals(true);
-    spinZMax_->setValue(upper);
-    spinZMax_->blockSignals(false);
-
-    // 更新标签
-    labZMin_->setText(QString::number(lower, 'f', 1) + " m");
-    labZMax_->setText(QString::number(upper, 'f', 1) + " m");
-
     // 更新GLWidget
     gl_->setZFilterRange(lower, upper);
+}
+
+
+void Ros3DPage::onNavTargetUpdated(double x, double y, double z, double yaw_deg)
+{
+    // 收到画布上的点位置，更新UI，但屏蔽信号避免循环触发
+    spinNavX_->blockSignals(true);
+    spinNavY_->blockSignals(true);
+    spinNavZ_->blockSignals(true);
+    spinNavYaw_->blockSignals(true);
+
+    spinNavX_->setValue(x);
+    spinNavY_->setValue(y);
+    spinNavZ_->setValue(z);
+    spinNavYaw_->setValue(yaw_deg);
+
+    spinNavX_->blockSignals(false);
+    spinNavY_->blockSignals(false);
+    spinNavZ_->blockSignals(false);
+    spinNavYaw_->blockSignals(false);
+}
+
+void Ros3DPage::onNavSpinBoxChanged()
+{
+    // UI框数值发生变动时，把新值喂给 GL 画布
+    gl_->updateNavTargetFromUI(
+        spinNavX_->value(),
+        spinNavY_->value(),
+        spinNavZ_->value(),
+        spinNavYaw_->value()
+        );
+}
+
+
+void Ros3DPage::onSendNavGoalClicked()
+{
+    // TcpClient* tcpClient = TcpClient::getInstance();
+
+    // if (!tcpClient->isConnected()) {
+    //     QMessageBox::warning(this, "错误", "请先建立TCP连接");
+    //     return;
+    // }
+
+    // 从界面微调框获取坐标和角度
+    double x = spinNavX_->value();
+    double y = spinNavY_->value();
+    double z = spinNavZ_->value();
+    double yaw_deg = spinNavYaw_->value();
+
+    // 触发信号，将数据交给专门处理通信的模块
+    emit sendNavGoalRequested(x, y, z, yaw_deg);
+
+    // (可选) 打印日志
+    qDebug() << "界面触发发送导航目标点请求...";
+
+    // 将角度转换为 ego-planner 需要的弧度制
+    // double yaw_rad = yaw_deg * M_PI / 180.0;
+
+    // // 构建下发给 ego-planner 的目标点帧: AA 04 [JSON] 0A
+    // QByteArray frame = ProtocolRos3D::buildNavGoalFrame(x, y, z, yaw_rad);
+
+    // 发送数据
+    // tcpClient->sendData(frame);
+
+    // qDebug() << "发送导航目标点请求，数据:" << frame.toHex(' ');
+
+    // 如果你在界面底部有日志栏，可以打印相关信息
+    // QString timestamp = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss >> 用户操作: ");
+    // emit appendMessage(timestamp + QString("发送目标点 (X:%1, Y:%2, Z:%3, Yaw:%4°)").arg(x).arg(y).arg(z).arg(yaw_deg));
 }

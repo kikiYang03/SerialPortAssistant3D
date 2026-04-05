@@ -1,4 +1,4 @@
-﻿#ifndef TFTREE_H
+#ifndef TFTREE_H
 #define TFTREE_H
 
 #include <QString>
@@ -6,7 +6,6 @@
 #include <Eigen/Geometry>
 #include <optional>
 #include <mutex>
-#include <map>
 
 using Vec3 = Eigen::Vector3d;
 using Quat = Eigen::Quaterniond;
@@ -15,39 +14,24 @@ using Mat4 = Eigen::Matrix4d;
 class TfTree
 {
 public:
-    void setTransform(const QString &parent,
-                      const QString &child,
-                      const Vec3 &t,
-                      const Quat &q);
+    // 设置变换矩阵
+    void setMapToBaseLink(const Mat4& T);
+    void setMapToLaser(const Mat4& T);
 
-    // 固定路径 lookup，O(1)
-    std::optional<Mat4> lookupMapCameraInit() const;
-    std::optional<Mat4> lookupCameraInitBody() const;
+    // 获取变换矩阵
+    std::optional<Mat4> getMapToBaseLink() const;
+    std::optional<Mat4> getMapToLaser() const;
 
+    // 检查是否有有效变换
+    bool hasMapToBaseLink() const;
+    bool hasMapToLaser() const;
 
-    std::optional<Mat4> lookup(const QString &target,
-                               const QString &source) const
-    {
-        if(target == source) return Mat4::Identity();
-        std::lock_guard<std::mutex> lk(m_);
-        return dfs(target, source);
-    }
-
-    // 给 paint 时遍历用
-    using Edge = std::pair<QString,QString>;
-    std::map<Edge,Mat4> allEdges() const
-    { std::lock_guard<std::mutex> lk(m_); return data_; }
+    // 清空所有变换
+    void clear();
 
 private:
     mutable std::mutex m_;
-    std::map<Edge,Mat4> data_;
-
-    std::optional<Mat4> dfs(const QString &cur,
-                            const QString &target) const;
-
-    // 新增：只存最新
-    std::optional<Mat4> T_map_camInit_;      // map -> camera_init
-    std::optional<Mat4> T_camInit_body_;     // camera_init -> body
-    std::optional<Mat4> T_body_baselink;     // body -> base_link
+    std::optional<Mat4> T_map_base_link_;  // map → base_link (机器人位姿)
+    std::optional<Mat4> T_map_laser_;       // map → laser (雷达位姿)
 };
 #endif // TFTREE_H

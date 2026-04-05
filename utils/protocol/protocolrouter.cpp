@@ -5,9 +5,10 @@
 
 static int frameType(const QByteArray &buf)
 {
-    if (buf.size() < 3)                    return -1;
-    if (quint8(buf[0]) != 0xAA)            return -1;
-    if (buf.size() >= 14 && quint8(buf[13]) == 0x0A) return 0;   // 串口
+    if (buf.size() < 3) return -1;
+    if (quint8(buf[0]) != 0xAA) return -1;
+    // 将 14 改为 15，索引 13 改为 14
+    if (buf.size() >= 15 && quint8(buf[14]) == 0x0A) return 0;   // 串口
     if (quint8(buf.back()) == 0x0A)        return 1;             // 网络
     return -1;
 }
@@ -45,16 +46,29 @@ void ProtocolRouter::initDefaultHandlers()
         handleParameterFrame(frame);
     });
 
-    registerHandler(0x01, [this](const QByteArray &frame) {
+    // 新协议命令ID
+    registerHandler(0x01, [this](const QByteArray &frame) {  // 机器人位姿
         handleRos3dData(0x01, frame);
     });
 
-    registerHandler(0x02, [this](const QByteArray &frame) {
+    registerHandler(0x02, [this](const QByteArray &frame) {  // 雷达安装位姿
         handleRos3dData(0x02, frame);
     });
 
-    registerHandler(0x03, [this](const QByteArray &frame) {
+    registerHandler(0x03, [this](const QByteArray &frame) {  // 3D点云
         handleRos3dData(0x03, frame);
+    });
+
+    registerHandler(0x05, [this](const QByteArray &frame) {  // 2D激光雷达数据
+        handleRos3dData(0x05, frame);
+    });
+
+    registerHandler(0x06, [this](const QByteArray &frame) {  // 2D地图数据
+        handleRos3dData(0x06, frame);
+    });
+
+    registerHandler(0x09, [this](const QByteArray &frame) {  // 最优轨迹线
+        handleRos3dData(0x09, frame);
     });
 }
 
@@ -77,31 +91,27 @@ void ProtocolRouter::processDataStream(QByteArray buffer, bool isSerialPortMode)
 
 void ProtocolRouter::processUartFrames()
 {
-    // emit printFrame(m_uartBuffer);  // 打印累积缓冲区数据
-
-    while (m_uartBuffer.size() >= 14) {
+    // 将所有的 14 改为 15，索引 13 改为 14
+    while (m_uartBuffer.size() >= 15) {
         int head = m_uartBuffer.indexOf(char(0xAA));
-        if (head < 0 || m_uartBuffer.size() - head < 14) {
-            // 如果没找到头或剩余数据不足14字节，保留数据等待下次
-            break;
+        if (head < 0 || m_uartBuffer.size() - head < 15) {
+            break; // 剩余数据不足 15 字节，等待
         }
 
-        // 提取14字节候选帧
-        QByteArray frame = m_uartBuffer.mid(head, 14);
+        // 提取 15 字节候选帧
+        QByteArray frame = m_uartBuffer.mid(head, 15);
 
         // 验证帧头帧尾
-        if (quint8(frame[0]) != 0xAA || quint8(frame[13]) != 0x0A) {
-            // 格式错误，移除帧头，滑窗继续查找
+        if (quint8(frame[0]) != 0xAA || quint8(frame[14]) != 0x0A) {
             m_uartBuffer.remove(head, 1);
             continue;
         }
 
         // 解析成功
-        processUart14BFrame(frame);
-        m_uartBuffer.remove(head, 14);
+        processUart15BFrame(frame);
+        m_uartBuffer.remove(head, 15);
     }
 
-    // 防止缓冲区无限增长：如果缓冲区太大且没有有效帧头，清空
     if (m_uartBuffer.size() > 1024 && !m_uartBuffer.contains(0xAA)) {
         qWarning() << "串口缓冲区无有效帧头，清空:" << m_uartBuffer.size() << "字节";
         m_uartBuffer.clear();
@@ -110,35 +120,61 @@ void ProtocolRouter::processUartFrames()
 
 void ProtocolRouter::processProtocolFrames(QByteArray &buffer)
 {
-    m_parseBuf.append(buffer);          // 1. 把新字节喂进来
-    buffer.clear();                     // 2. 外部 buffer 清掉，避免重复处理
+    m_parseBuf.append(buffer);          // 把新字节追加到缓冲区
+    buffer.clear();                     // 外部 buffer 清掉，避免重复处理
 
     while (true) {
-        switch (m_parseState) {
-        case ParseState::WaitHead:
-        {
-            int pos = m_parseBuf.indexOf(char(0xAA));
-            if (pos < 0) {              // 一整包都没找到头
-                m_parseBuf.clear();     // 全扔掉
-                return;
+        // 1. 找帧头 0xAA
+        int headPos = m_parseBuf.indexOf(char(0xAA));
+        if (headPos < 0) {
+            m_parseBuf.clear();         // 没有帧头，清空
+            return;
+        }
+        if (headPos > 0) {
+            m_parseBuf.remove(0, headPos);  // 清理帧头前的废数据
+        }
+
+        // 2. 检查是否有足够数据读取CMD（至少需要2字节：AA + CMD）
+        if (m_parseBuf.size() < 2) {
+            return;                     // 等待更多数据
+        }
+
+        quint8 cmd = static_cast<quint8>(m_parseBuf[1]);
+
+        // 3. 根据CMD判断期望帧长度
+        int expectedLen = -1;           // -1表示变长帧
+
+        if (cmd == 0x00) {
+            // 控制指令：固定4字节 AA 00 子命令 0A
+            expectedLen = 4;
+        } else if (cmd == 0x10) {
+            // 参数配置：固定6字节 AA 10 [ID] [值H] [值L] 0A
+            expectedLen = 6;
+        } else {
+            // ROS数据(0x01~0x09)：变长JSON帧，需要找帧尾
+            // 帧格式：AA CMD [JSON数据] 0A
+            for (int i = 2; i < m_parseBuf.size(); ++i) {
+                if (quint8(m_parseBuf[i]) == 0x0A) {
+                    expectedLen = i + 1;
+                    break;
+                }
             }
-            m_parseBuf.remove(0, pos);  // 把 0xAA 前面的废数据清掉
-            m_parseState = ParseState::WaitPayload;
-            break;
         }
 
-        case ParseState::WaitPayload:
-        {
-            int tail = m_parseBuf.indexOf(char(0x0A), 1); // 从第2字节找尾
-            if (tail < 0) return;        // 还没收全，继续等
+        // 4. 检查是否已接收完整帧
+        if (expectedLen < 0) {
+            return;                     // 变长帧还没找到帧尾，等待更多数据
+        }
+        if (m_parseBuf.size() < expectedLen) {
+            return;                     // 数据不足，等待更多数据
+        }
 
-            QByteArray frame = m_parseBuf.left(tail + 1); // 包含头尾的完整帧
-            m_parseBuf.remove(0, tail + 1);              // 把这帧清掉
-            dispatchFrame(frame);        // 立刻分发（老逻辑不变）
-            m_parseState = ParseState::WaitHead;
-            break;
-        }
-        }
+        // 5. 提取完整帧并处理
+        QByteArray frame = m_parseBuf.left(expectedLen);
+        m_parseBuf.remove(0, expectedLen);
+        dispatchFrame(frame);
+
+        // 继续循环，处理可能存在的后续帧
     }
 }
 
@@ -212,32 +248,41 @@ void ProtocolRouter::dispatchFrameBySignal(const QByteArray &frame, quint8 comma
         handleParameterFrame(frame);
         break;
 
-    case 0x01: // TF数据
-    case 0x02: // 点云数据
-    case 0x03: // 地图数据
+    case 0x01: // 机器人位姿 (map → base_link)
+    case 0x02: // 雷达安装位姿 (map → laser)
+    case 0x03: // 3D点云数据
+    case 0x05: // 2D激光雷达数据
+    case 0x06: // 2D地图数据
+    case 0x09: // 最优轨迹线
         handleRos3dData(command, frame);
         break;
 
     default:
-        qWarning() << "未知命令：" << QString::number(command, 16)
-                   << "帧数据：" << frame.toHex();
+        // qWarning() << "未知命令：" << QString::number(command, 16)
+        //            << "帧数据：" << frame.toHex();
         break;
     }
 }
 
 void ProtocolRouter::handleControlFrame(const QByteArray &frame)
 {
-    if (frame.size() < 4) return;
+    // 控制帧格式：AA 00 子命令 0A（固定4字节）
+    if (frame.size() != 4) return;
 
     quint8 subCmd = static_cast<quint8>(frame.at(2));
 
     switch (subCmd) {
-    case 0x01: // 测试指令
-        if (frame.size() == 4) {
-            // AA 00 01 0A - 完整的测试帧
-            bool isResponse = true; // 假设这是响应
-            emit testFrameReceived(frame, isResponse);
-        }
+    case 0x01: // 通信测试指令
+        emit testFrameReceived(frame, true);
+        break;
+    case 0x02: // 保存地图指令
+        emit saveMapCommandReceived();
+        break;
+    case 0x03: // 读取参数指令
+        emit readParamCommandReceived();
+        break;
+    case 0x04: // 保存参数指令
+        qDebug() << "收到保存参数指令响应";
         break;
     default:
         qWarning() << "未知控制子命令：" << subCmd;
@@ -317,20 +362,55 @@ QByteArray ProtocolRouter::buildFrame(quint8 command, const QVariantMap &params)
 }
 
 // 新增解析串口数据函数
-void ProtocolRouter::processUart14BFrame(const QByteArray &fr)
+// void ProtocolRouter::processUart14BFrame(const QByteArray &fr)
+// {
+//     if (fr.size() != 14 || quint8(fr[0]) != 0xAA || quint8(fr[13]) != 0x0A)
+//         return ;
+
+//     auto i16 = [&](int off){ return qFromBigEndian<qint16>(
+//                                   reinterpret_cast<const uchar*>(fr.constData()+off)); };
+//     qint16 x    = i16(1);
+//     qint16 y    = i16(3);
+//     qint16 z    = i16(5);
+//     qint16 roll = i16(7);
+//     qint16 pitch= i16(9);
+//     qint16 yaw  = i16(11);
+//     emit uart14BFrameReceived(x,y,z,roll,pitch,yaw);
+// }
+
+
+void ProtocolRouter::processUart15BFrame(const QByteArray &fr)
 {
-    if (fr.size() != 14 || quint8(fr[0]) != 0xAA || quint8(fr[13]) != 0x0A)
+    if (fr.size() != 15 || quint8(fr[0]) != 0xAA || quint8(fr[14]) != 0x0A)
         return ;
 
+    quint8 msgId = quint8(fr[1]); // 提取 MsgID
+
+    // 偏移量统一 +1 (因为中间插入了 MsgID)
     auto i16 = [&](int off){ return qFromBigEndian<qint16>(
                                   reinterpret_cast<const uchar*>(fr.constData()+off)); };
-    qint16 x    = i16(1);
-    qint16 y    = i16(3);
-    qint16 z    = i16(5);
-    qint16 roll = i16(7);
-    qint16 pitch= i16(9);
-    qint16 yaw  = i16(11);
-    emit uart14BFrameReceived(x,y,z,roll,pitch,yaw);
+
+    // 解析改为小端
+    // auto i16 = [&](int off){ return qFromLittleEndian<qint16>(
+    //                               reinterpret_cast<const uchar*>(fr.constData()+off)); };
+
+    qint16 x    = i16(2);
+    qint16 y    = i16(4);
+    qint16 z    = i16(6);
+    qint16 roll = i16(8);
+    qint16 pitch= i16(10);
+    qint16 yaw  = i16(12);
+
+    // 0x01 (当前位姿) 和 0x03 (位置控制指令) 是从模块发给上位机的
+    // 0x02 (导航目标点) 上位机发送后，模块会完整返回
+    if (msgId == 0x01 || msgId == 0x03) {
+        emit uartPoseReceived(msgId, x, y, z, roll, pitch, yaw);
+    } else if (msgId == 0x02) {
+        // 0x02目标点回传，发送完整原始帧
+        emit navGoalEchoReceived(fr);
+    } else {
+        qWarning() << "收到预期外的串口 MsgID:" << msgId;
+    }
 }
 
 QByteArray ProtocolRouter::buildTestFrame(bool isResponse)
@@ -376,6 +456,37 @@ QByteArray ProtocolRouter::buildRosFrame(quint8 topicId, const QJsonObject &data
     params["data_object"] = QJsonValue(data);
 
     return buildFrame(topicId, params);
+}
+
+QByteArray ProtocolRouter::buildNavGoalFrame(qint16 x, qint16 y, qint16 z,
+                                             qint16 roll, qint16 pitch, qint16 yaw)
+{
+    QByteArray frame;
+    frame.resize(15);
+    frame[0] = static_cast<char>(0xAA);
+    frame[1] = static_cast<char>(0x02); // 消息ID: 0x02 (导航目标点)
+
+    // // 使用 qToBigEndian 快速写入大端数据
+    qToBigEndian<qint16>(x, frame.data() + 2);
+    qToBigEndian<qint16>(y, frame.data() + 4);
+    qToBigEndian<qint16>(z, frame.data() + 6);
+    qToBigEndian<qint16>(roll, frame.data() + 8);
+    qToBigEndian<qint16>(pitch, frame.data() + 10);
+    qToBigEndian<qint16>(yaw, frame.data() + 12);
+
+    // 小端序
+    // qToLittleEndian<qint16>(x, frame.data() + 2);
+    // qToLittleEndian<qint16>(y, frame.data() + 4);
+    // qToLittleEndian<qint16>(z, frame.data() + 6);
+    // qToLittleEndian<qint16>(roll, frame.data() + 8);
+    // qToLittleEndian<qint16>(pitch, frame.data() + 10);
+    // qToLittleEndian<qint16>(yaw, frame.data() + 12);
+
+
+    frame[14] = static_cast<char>(0x0A);
+
+    qDebug() << "构建 0x02 导航帧：" << frame.toHex(' ').toUpper();
+    return frame;
 }
 
 bool ProtocolRouter::validateFrame(const QByteArray &frame)

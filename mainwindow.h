@@ -38,8 +38,6 @@ public:
     ProtocolRos3D * protocolHandler;
     Ros3DPage *ros3dPage;
 
-    ProtocolRouter *router;
-
 private:
     Ui::MainWindow *ui;
 

@@ -8,9 +8,14 @@
 #include <QTimer>
 
 
-static const uint8_t CMD_TF   = 0x01;
-static const uint8_t CMD_CLOUD = 0x02;
-static const uint8_t CMD_MAP  = 0x03;
+// 新协议命令ID定义
+static const uint8_t CMD_ROBOT_POSE  = 0x01;  // 机器人位姿 (map → base_link)
+static const uint8_t CMD_LIDAR_POSE  = 0x02;  // 雷达安装位姿 (map → laser)
+static const uint8_t CMD_CLOUD       = 0x03;  // 3D点云数据
+static const uint8_t CMD_SCAN_2D     = 0x05;  // 2D激光雷达数据
+static const uint8_t CMD_MAP_2D      = 0x06;  // 2D地图数据
+static const uint8_t CMD_NAV_GOAL    = 0x07;  // 目标点指令
+static const uint8_t CMD_GOAL_PATH   = 0x09;  // 最优轨迹线
 
 ProtocolRos3D::ProtocolRos3D(QObject* parent)
     : QObject(parent)
@@ -59,9 +64,12 @@ quint8 ProtocolRos3D::crc8(const QByteArray& data)
 void ProtocolRos3D::parseJsonFrame(uint8_t cmd, const QJsonObject& obj)
 {
     switch (cmd) {
-    case CMD_TF:   parseTF(obj);   break;
-    case CMD_CLOUD: parseCloud(obj); break;
-    case CMD_MAP:  parseMap(obj);  break;
+    case CMD_ROBOT_POSE:  parseRobotPose(obj);  break;
+    case CMD_LIDAR_POSE:  parseLidarPose(obj);  break;
+    case CMD_CLOUD:       parseCloud(obj);      break;
+    case CMD_SCAN_2D:     parseScan2D(obj);     break;
+    case CMD_MAP_2D:      parseMap2D(obj);      break;
+    case CMD_GOAL_PATH:   parseGoalPath(obj);   break;
     default: qWarning() << "unknown cmd" << cmd;
     }
 }
@@ -70,33 +78,53 @@ void ProtocolRos3D::parseJsonFrame(uint8_t cmd, const QJsonObject& obj)
 static qint64 g_lastTfLogMS   = 0;
 static qint64 g_lastCloudLogMS = 0;
 
-/* TF 解析 */
-void ProtocolRos3D::parseTF(const QJsonObject& obj)
+/* 机器人位姿解析 (map → base_link) */
+void ProtocolRos3D::parseRobotPose(const QJsonObject& obj)
 {
-    /* ---- 节流打印 ---- */
     qint64 nowMS = QDateTime::currentMSecsSinceEpoch();
-    if (nowMS - g_lastTfLogMS >= 1000) {      // 距离上次 ≥1 s 才打印
+    if (nowMS - g_lastTfLogMS >= 1000) {
         g_lastTfLogMS = nowMS;
-        QString msg = QStringLiteral("接收到TF: %1")
-                          .arg(QString::fromUtf8(QJsonDocument(obj).toJson(QJsonDocument::Compact)));
+        QString msg = QStringLiteral("接收到机器人位姿: x=%1, y=%2, z=%3")
+                          .arg(obj["x"].toDouble(), 0, 'f', 2)
+                          .arg(obj["y"].toDouble(), 0, 'f', 2)
+                          .arg(obj["z"].toDouble(), 0, 'f', 2);
         AdminMode::appendMessage(msg);
     }
 
-    TFMsg m;
+    RobotPoseMsg m;
     m.frame_id       = obj["frame_id"].toString();
     m.child_frame_id = obj["child_frame_id"].toString();
-    m.t              = QVector3D(obj["x"].toDouble(),
-                    obj["y"].toDouble(),
-                    obj["z"].toDouble());
-    m.q              = QQuaternion(obj["qw"].toDouble(),
-                      obj["qx"].toDouble(),
-                      obj["qy"].toDouble(),
-                      obj["qz"].toDouble());
+    m.x              = obj["x"].toDouble();
+    m.y              = obj["y"].toDouble();
+    m.z              = obj["z"].toDouble();
+    m.qx             = obj["qx"].toDouble();
+    m.qy             = obj["qy"].toDouble();
+    m.qz             = obj["qz"].toDouble();
+    m.qw             = obj["qw"].toDouble();
 
-    if (m.frame_id == "camera_init" && m.child_frame_id == "body"){
-        ++m_tfCnt;          // 计数
-    }
-    emit tfUpdated(m);
+    ++m_poseCnt;
+    emit robotPoseUpdated(m);
+}
+
+/* 雷达位姿解析 (map → laser) */
+void ProtocolRos3D::parseLidarPose(const QJsonObject& obj)
+{
+    LidarPoseMsg m;
+    m.frame_id       = obj["frame_id"].toString();
+    m.child_frame_id = obj["child_frame_id"].toString();
+    m.x              = obj["x"].toDouble();
+    m.y              = obj["y"].toDouble();
+    m.z              = obj["z"].toDouble();
+    m.qx             = obj["qx"].toDouble();
+    m.qy             = obj["qy"].toDouble();
+    m.qz             = obj["qz"].toDouble();
+    m.qw             = obj["qw"].toDouble();
+
+    QString msg = QStringLiteral("接收到雷达位姿: x=%1, y=%2, z=%3")
+                      .arg(m.x, 0, 'f', 2).arg(m.y, 0, 'f', 2).arg(m.z, 0, 'f', 2);
+    AdminMode::appendMessage(msg);
+
+    emit lidarPoseUpdated(m);
 }
 
 
@@ -145,7 +173,8 @@ void ProtocolRos3D::parseCloud(const QJsonObject& obj)
     }
 
     m.points = extractXYZFromPointCloud2Raw(raw, width, height, point_step, row_step, is_dense);
-    ++m_cloudCnt;
+    ++m_cloudCnt;  // 点云话题 (0x03+0x05)
+    ++m_mapCnt;    // 地图话题 (0x03+0x06)
     emit cloudUpdated(m);
 }
 
@@ -187,6 +216,88 @@ void ProtocolRos3D::parseMap(const QJsonObject& obj)
     // qDebug() << "MapCloudMsg: " << m.points.size();
     // ++m_mapCnt;
     emit mapCloudUpdated(m);
+}
+
+/* 目标轨迹解析 */
+void ProtocolRos3D::parseGoalPath(const QJsonObject& obj)
+{
+    PathMsg m;
+
+    QJsonArray ptsArr = obj["points"].toArray();
+    m.points.reserve(ptsArr.size());
+
+    for (int i = 0; i < ptsArr.size(); ++i) {
+        QJsonObject pObj = ptsArr[i].toObject();
+        m.points.append(QVector3D(
+            pObj["x"].toDouble(),
+            pObj["y"].toDouble(),
+            pObj["z"].toDouble()
+            ));
+    }
+
+    emit goalPathUpdated(m);
+    ++m_pathCnt;
+}
+
+/* 2D激光雷达数据解析 (0x05) */
+void ProtocolRos3D::parseScan2D(const QJsonObject& obj)
+{
+    Scan2DMsg m;
+    m.frame_id = obj["frame_id"].toString();
+    m.angle_min = obj["angle_min"].toDouble();
+    m.angle_max = obj["angle_max"].toDouble();
+    m.angle_increment = obj["angle_increment"].toDouble();
+    m.range_count = obj["range_count"].toInt();
+
+    QJsonArray rangesArr = obj["ranges"].toArray();
+    m.ranges.reserve(rangesArr.size());
+    for (int i = 0; i < rangesArr.size(); ++i) {
+        m.ranges.append(static_cast<float>(rangesArr[i].toDouble()));
+    }
+
+    QString msg = QStringLiteral("接收到2D激光数据: %1个点, 角度范围[%2, %3]")
+                      .arg(m.range_count)
+                      .arg(m.angle_min, 0, 'f', 2)
+                      .arg(m.angle_max, 0, 'f', 2);
+    AdminMode::appendMessage(msg);
+
+    ++m_cloudCnt;  // 2D激光数据也计入cloud频率
+    emit scan2DUpdated(m);
+}
+
+/* 2D地图数据解析 (0x06) */
+void ProtocolRos3D::parseMap2D(const QJsonObject& obj)
+{
+    Map2DMsg m;
+    m.frame_id = obj["frame_id"].toString();
+    m.width = obj["width"].toInt();
+    m.height = obj["height"].toInt();
+    m.resolution = obj["resolution"].toDouble();
+    m.origin_x = obj["origin_x"].toDouble();
+    m.origin_y = obj["origin_y"].toDouble();
+
+    // 解析RLE压缩数据
+    QJsonArray rleArr = obj["rle"].toArray();
+    m.data.clear();
+    m.data.reserve(m.width * m.height);
+
+    for (int i = 0; i < rleArr.size(); ++i) {
+        QJsonArray pair = rleArr[i].toArray();
+        if (pair.size() >= 2) {
+            int8_t value = static_cast<int8_t>(pair[0].toInt());
+            int count = pair[1].toInt();
+            for (int j = 0; j < count; ++j) {
+                m.data.append(value);
+            }
+        }
+    }
+
+    QString msg = QStringLiteral("接收到2D地图: %1x%2, 分辨率%3")
+                      .arg(m.width).arg(m.height).arg(m.resolution, 0, 'f', 3);
+    AdminMode::appendMessage(msg);
+
+    ++m_mapCnt;
+    emit map2DUpdated(m);
 }
 
 
@@ -237,18 +348,54 @@ void ProtocolRos3D::calcHz()
 {
     if (!m_linkAlive) return;
     constexpr double WIN = 10.0;
-    double tfHz   = (m_tfCnt   - m_tfLast)   / WIN;
-    double scanHz = (m_cloudCnt - m_cloudLast) / WIN;
-    // double mapHz  = (m_mapCnt  - m_mapLast)  / WIN;
 
-    m_tfLast    = m_tfCnt;
-    m_cloudLast = m_cloudCnt;
-    // m_mapLast   = m_mapCnt;
+    // 先计算本周期帧数
+    quint32 poseFrames  = m_poseCnt  - m_poseLast;
+    quint32 cloudFrames = m_cloudCnt - m_cloudLast;
+    quint32 mapFrames   = m_mapCnt   - m_mapLast;
+    quint32 pathFrames  = m_pathCnt  - m_pathLast;
 
-    QString msg = QStringLiteral("%1 >> 话题统计:  /tf = %2 Hz, /cloud = %3 Hz")
-                      .arg(QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss"))
-                      .arg(tfHz,   0, 'f', 2)
-                      .arg(scanHz, 0, 'f', 2);
+    // 计算频率
+    double poseHz  = poseFrames  / WIN;
+    double cloudHz = cloudFrames / WIN;
+    double mapHz   = mapFrames   / WIN;
+    double pathHz  = pathFrames  / WIN;
 
-    emit appendMessage(msg);
+    // 更新上周期计数
+    m_poseLast   = m_poseCnt;
+    m_cloudLast  = m_cloudCnt;
+    m_mapLast    = m_mapCnt;
+    m_pathLast   = m_pathCnt;
+
+    QString ts = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss");
+    emit appendMessage(QStringLiteral("%1 >> ====== 数据接收频率统计 ======").arg(ts));
+    emit appendMessage(QStringLiteral("%1 >> 位姿话题：%2Hz").arg(ts).arg(poseHz, 0, 'f', 2));
+    emit appendMessage(QStringLiteral("%1 >> 点云话题：%2Hz").arg(ts).arg(cloudHz, 0, 'f', 2));
+    emit appendMessage(QStringLiteral("%1 >> 地图话题：%2Hz").arg(ts).arg(mapHz, 0, 'f', 2));
+    emit appendMessage(QStringLiteral("%1 >> 轨迹话题：%2Hz").arg(ts).arg(pathHz, 0, 'f', 2));
+    emit appendMessage(QStringLiteral("%1 >> ==============================").arg(ts));
+}
+
+// 设置目标点
+QByteArray ProtocolRos3D::buildNavGoalFrame(double x, double y, double z, double yaw)
+{
+    // 1. 构建 JSON 对象
+    QJsonObject obj;
+    obj["x"] = x;
+    obj["y"] = y;
+    obj["z"] = z;
+    obj["yaw"] = yaw;
+
+    // 2. 转换为紧凑的 JSON 字节串
+    QJsonDocument doc(obj);
+    QByteArray jsonData = doc.toJson(QJsonDocument::Compact);
+
+    // 3. 组装完整数据帧: AA 07 [JSON] 0A (导航目标点)
+    QByteArray frame;
+    frame.append(static_cast<char>(0xAA));
+    frame.append(static_cast<char>(CMD_NAV_GOAL));
+    frame.append(jsonData);
+    frame.append(static_cast<char>(0x0A));
+
+    return frame;
 }

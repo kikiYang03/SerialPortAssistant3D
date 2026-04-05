@@ -11,24 +11,38 @@ class ProtocolRos3D : public QObject {
 public:
     explicit ProtocolRos3D(QObject* parent = nullptr);
 
+    // 【新增】构建目标点下发帧: AA 04 [JSON] 0A
+    static QByteArray buildNavGoalFrame(double x, double y, double z, double yaw);
+
 public slots:
     void onRawBytes(quint8 cmd,const QByteArray& data);
     void setLinkAlive(bool alive) { m_linkAlive = alive; }
 
 signals:
-    void tfUpdated(const TFMsg& msg);
+    void robotPoseUpdated(const RobotPoseMsg& msg);  // 机器人位姿 (map → base_link)
+    void lidarPoseUpdated(const LidarPoseMsg& msg);  // 雷达位姿 (map → laser)
     void cloudUpdated(const CloudMsg& msg);
     void mapCloudUpdated(const MapCloudMsg& m);
+
+    // 2D数据信号
+    void scan2DUpdated(const Scan2DMsg& msg);        // 2D激光雷达数据 (0x05)
+    void map2DUpdated(const Map2DMsg& msg);          // 2D地图数据 (0x06)
 
     // 添加消息显示信号
     void appendMessage(const QString &message);
 
+    void goalPathUpdated(const PathMsg& msg);
+
 private:
     void parseJsonFrame(uint8_t cmd, const QJsonObject& obj);
 
-    void parseTF(const QJsonObject& obj);
-    void parseCloud(const QJsonObject& obj);   // cloud_registered / Laser_map 共用
+    void parseRobotPose(const QJsonObject& obj);  // 解析机器人位姿 (0x01)
+    void parseLidarPose(const QJsonObject& obj);  // 解析雷达位姿 (0x02)
+    void parseCloud(const QJsonObject& obj);      // 解析3D点云 (0x03)
     void parseMap(const QJsonObject& obj);
+    void parseGoalPath(const QJsonObject& obj);   // 解析最优轨迹 (0x09)
+    void parseScan2D(const QJsonObject& obj);     // 解析2D激光雷达 (0x05)
+    void parseMap2D(const QJsonObject& obj);      // 解析2D地图 (0x06)
 
     /* 工具 */
     static quint8 crc8(const QByteArray& data);
@@ -39,14 +53,16 @@ private:
 
     static QVector<int8_t> decompressRLE(const QVector<int8_t>& rle);
     // 计数器
-    quint32 m_tfCnt   = 0;
-    quint32 m_cloudCnt= 0;
-    quint32 m_mapCnt  = 0;
+    quint32 m_poseCnt   = 0;  // 位姿话题 (0x01)
+    quint32 m_cloudCnt  = 0;  // 点云话题 (0x03 + 0x05)
+    quint32 m_mapCnt    = 0;  // 地图话题 (0x06)
+    quint32 m_pathCnt   = 0;  // 轨迹话题 (0x09)
 
     // 上一周期计数
-    quint32 m_tfLast   = 0;
-    quint32 m_cloudLast= 0;
-    quint32 m_mapLast  = 0;
+    quint32 m_poseLast  = 0;
+    quint32 m_cloudLast = 0;
+    quint32 m_mapLast   = 0;
+    quint32 m_pathLast  = 0;
 
     QTimer *m_hzTimer = nullptr;
     bool m_linkAlive = false;

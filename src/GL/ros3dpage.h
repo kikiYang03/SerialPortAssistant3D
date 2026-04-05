@@ -20,6 +20,9 @@ public:
 
     GLWidget* glWidget() const { return gl_; }
 
+signals:
+    void sendNavGoalRequested(double x, double y, double z, double yaw_deg);
+
 private:
     GLWidget* gl_ = nullptr;
 
@@ -33,16 +36,24 @@ private:
 
     // Z轴范围控制
     QCheckBox* ckZFilter_ = nullptr;
-    QLabel* labZMin_ = nullptr;
-    QLabel* labZMax_ = nullptr;
-    QSlider* sliderZMin_ = nullptr;
-    QSlider* sliderZMax_ = nullptr;
-    QDoubleSpinBox* spinZMin_ = nullptr;
-    QDoubleSpinBox* spinZMax_ = nullptr;
-    DualRangeSlider* dualSlider_ = nullptr;  // 新增：双滑块
+    DualRangeSlider* dualSlider_ = nullptr;  // 双滑块
+
+    // 目标点控制组件
+    QPushButton* btnNavGoal_ = nullptr;
+    QDoubleSpinBox* spinNavX_ = nullptr;
+    QDoubleSpinBox* spinNavY_ = nullptr;
+    QDoubleSpinBox* spinNavZ_ = nullptr;
+    QDoubleSpinBox* spinNavYaw_ = nullptr;
+
+    QPushButton* btnSendNavGoal_ = nullptr;
 
 private slots:
-    void onDualRangeChanged(double lower, double upper);  // 新增
+    void onDualRangeChanged(double lower, double upper);  // 双滑块的取值
+
+    void onNavTargetUpdated(double x, double y, double z, double yaw_deg);
+    void onNavSpinBoxChanged();
+
+    void onSendNavGoalClicked();
 };
 
 #endif // ROS3DPAGE_H
