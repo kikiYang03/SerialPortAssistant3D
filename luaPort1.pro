@@ -77,4 +77,9 @@ COPIES += ini
 ini.files = $$PWD/config/config.ini
 ini.path   = $$OUT_PWD
 
-win32:LIBS += -lopengl32
+# win32:LIBS += -lopengl32
+win32 {
+    LIBS += -lopengl32
+} else {
+    LIBS += -lGL
+}
