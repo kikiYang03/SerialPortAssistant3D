@@ -17,3 +17,5 @@ config/config.ini
 et --hard 7a2c21d
 .vscode
 tmp.txt
+通讯协议.md
+linux编译指令.md
