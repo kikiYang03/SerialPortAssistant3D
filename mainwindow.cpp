@@ -113,11 +113,14 @@ MainWindow::MainWindow(QWidget *parent)
 
     //==========================================================
     // 解析结果 -> 渲染（回到主线程，QueuedConnection）
+    // 0x01 机器人位姿 (base_init_map → base_link)：拖尾、箭头、TF 数值标签，也是 0x05 的摆放依据
     connect(protocolHandler, &ProtocolRos3D::robotPoseUpdated,
             ros3dPage->glWidget(), &GLWidget::onRobotPose, Qt::QueuedConnection);
 
-    connect(protocolHandler, &ProtocolRos3D::lidarPoseUpdated,
-            ros3dPage->glWidget(), &GLWidget::onLidarPose, Qt::QueuedConnection);
+    // 0x02 重定位结果 (base_init_map → base_init)：**不参与任何摆放**，只落成那条静态边
+    // （v2.6 时它是「雷达位姿」，还是嫁接的依据 —— 名字换了、载荷没换，所以这一行必须跟着换）
+    connect(protocolHandler, &ProtocolRos3D::relocResultUpdated,
+            ros3dPage->glWidget(), &GLWidget::onRelocResult, Qt::QueuedConnection);
 
     connect(protocolHandler, &ProtocolRos3D::cloudUpdated,
             ros3dPage->glWidget(), &GLWidget::onCloud, Qt::QueuedConnection);

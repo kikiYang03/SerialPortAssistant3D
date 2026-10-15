@@ -48,24 +48,33 @@ struct NavStatusMsg {
 };
 
 // 新协议消息结构体
-// 父系名 v2.7/14 起回归 base_init（机器人建图那趟的起点）；v2.5/03~v2.7/10 的中间名 world 已废。
+// 父系名一律是**图的原点系** `base_init_map`（机器人建图那趟开机那一刻的中心所在的位置）；
+// v2.5/03~v2.7/10 的中间名 `world` 已废。
 struct RobotPoseMsg {
-    QString frame_id;        // "base_init"
+    QString frame_id;        // "base_init_map"
     QString child_frame_id;  // "base_link"
     double x, y, z;
     double qx, qy, qz, qw;
 };
 
-struct LidarPoseMsg {
-    QString frame_id;        // "base_init"
-    QString child_frame_id;  // "laser_link"
+// 重定位结果 (0x02)：**本次开机**的原点在图里的位姿——不是雷达位姿。
+//
+// v2.6 时这一帧是「雷达位姿 `base_init -> laser_link`」，载荷字段**一个都没变**，
+// 所以沿用旧名字（LidarPoseMsg）会是一条静默通道：名字还在旧义、行为已换新义。
+// 这条边整条是静态的，模块**定位成功前一条都不发**，收端按超时判「还没定位」。
+struct RelocResultMsg {
+    QString frame_id;        // "base_init_map"
+    QString child_frame_id;  // "base_init"
     double x, y, z;
     double qx, qy, qz, qw;
 };
 
 // 2D激光雷达扫描数据 (0x05)
+//
+// ⚠️ 载荷里**没有帧名字段**：帧是硬约定 `base_link`（模块侧 /scan 已按安装位姿折进机器人中心），
+// 上位机读不到、**不可校验**。所以这里刻意不留一个永远是空串的 frame_id 成员
+// ——留了就会有人当它可读。
 struct Scan2DMsg {
-    QString frame_id;
     double angle_min;
     double angle_max;
     double angle_increment;
@@ -74,8 +83,10 @@ struct Scan2DMsg {
 };
 
 // 2D占用栅格地图 (0x06)
+//
+// ⚠️ 同样**没有帧名字段**：帧硬约定 `base_init_map`（栅格像素天生长在图的原点系上），
+// 载荷只有 origin_x / origin_y 两个**平移**数、没有姿态字段。
 struct Map2DMsg {
-    QString frame_id;
     int width;
     int height;
     double resolution;
@@ -111,7 +122,7 @@ Q_DECLARE_METATYPE(PathMsg)
 Q_DECLARE_METATYPE(PosCmdMsg)
 Q_DECLARE_METATYPE(NavStatusMsg)
 Q_DECLARE_METATYPE(RobotPoseMsg)
-Q_DECLARE_METATYPE(LidarPoseMsg)
+Q_DECLARE_METATYPE(RelocResultMsg)
 Q_DECLARE_METATYPE(Scan2DMsg)
 Q_DECLARE_METATYPE(Map2DMsg)
 Q_DECLARE_METATYPE(MapChunkMsg)
@@ -188,10 +199,10 @@ inline QDebug operator<<(QDebug dbg, const RobotPoseMsg &m)
     return dbg;
 }
 
-inline QDebug operator<<(QDebug dbg, const LidarPoseMsg &m)
+inline QDebug operator<<(QDebug dbg, const RelocResultMsg &m)
 {
     QDebugStateSaver saver(dbg);
-    dbg.nospace() << "LidarPoseMsg{frame=" << m.frame_id
+    dbg.nospace() << "RelocResultMsg{frame=" << m.frame_id
                   << ", child=" << m.child_frame_id
                   << ", pos=(" << m.x << "," << m.y << "," << m.z << ")}";
     return dbg;
@@ -200,8 +211,8 @@ inline QDebug operator<<(QDebug dbg, const LidarPoseMsg &m)
 inline QDebug operator<<(QDebug dbg, const Scan2DMsg &m)
 {
     QDebugStateSaver saver(dbg);
-    dbg.nospace() << "Scan2DMsg{frame=" << m.frame_id
-                  << ", ranges=" << m.range_count << " points}";
+    // 不打帧名：载荷里没有这个字段，帧是硬约定的 base_link
+    dbg.nospace() << "Scan2DMsg{ranges=" << m.range_count << " points}";
     return dbg;
 }
 

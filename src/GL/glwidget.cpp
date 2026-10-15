@@ -148,10 +148,8 @@ void GLWidget::initializeGL()
     // 初始化TF相关标志
     glReady_ = true;
 
-    hasRobotPose_ = false;
-    hasLidarPose_ = false;
-    T_map_base_link_.setIdentity();
-    T_map_laser_.setIdentity();
+    // 两条边都从「没喂过」起步：宁可查不到（不画），也不留恒等兜底
+    tf_.clear();
 
 
     vboOptimalPath_.create();
@@ -397,106 +395,100 @@ void GLWidget::paintGL()
     drawGrid(Eigen::Matrix4d::Identity(), 40, 1.0f);  // 直接在 map 坐标系下渲染栅格
 
     // ---------- 3. 渲染点云（先地图，后实时，这样实时点云在上层）----------
-    if (hasLidarPose_){
-        // 先渲染地图点云（Z=0，在下层）
-        if (showMapCloud_ && mapPts_ > 0) {
-            if (enableZFilter_) {
-                // 过滤地图点云
-                progColorCloud_.bind();
-                progColorCloud_.setUniformValue("mvp", toQMatrix(proj_ * view_));
-                progColorCloud_.setUniformValue("uPointSize", mapPtSize_);
-                progColorCloud_.setUniformValue("uAlpha", 1.0f);
-                progColorCloud_.setUniformValue("uSoftEdge", 0.35f);
+    //
+    // ⚠️ 这一段**没有**「等位姿」那道门了。0x03 的点云与 0x06 的栅格图都发在**图的原点系**
+    // base_init_map 里，上位机一行变换都不做 ⇒ 「有没有位姿」与「能不能画」是两件事。
+    // 以前把两者绑在一起（`if (hasLidarPose_)` 套住整段），未定位时点云整条不画 —— 静默错。
 
-                // 过滤点云数据
-                std::vector<Eigen::Vector3f> filteredMap;
-                filteredMap.reserve(mapInterleavedCpu_.size());
+    // 先渲染地图点云（Z=0，在下层）
+    if (showMapCloud_ && mapPts_ > 0) {
+        if (enableZFilter_) {
+            // 过滤地图点云
+            progColorCloud_.bind();
+            progColorCloud_.setUniformValue("mvp", toQMatrix(proj_ * view_));
+            progColorCloud_.setUniformValue("uPointSize", mapPtSize_);
+            progColorCloud_.setUniformValue("uAlpha", 1.0f);
+            progColorCloud_.setUniformValue("uSoftEdge", 0.35f);
 
-                // 注意：mapInterleavedCpu_ 是交错的 [位置, 颜色, 位置, 颜色, ...]
-                for (size_t i = 0; i < mapInterleavedCpu_.size(); i += 2) {
-                    const auto& position = mapInterleavedCpu_[i];
-                    const auto& color = mapInterleavedCpu_[i + 1];
+            // 过滤点云数据
+            std::vector<Eigen::Vector3f> filteredMap;
+            filteredMap.reserve(mapInterleavedCpu_.size());
 
-                    if (position.z() >= zMinFilter_ && position.z() <= zMaxFilter_) {
-                        filteredMap.push_back(position);
-                        filteredMap.push_back(color);
-                    }
+            // 注意：mapInterleavedCpu_ 是交错的 [位置, 颜色, 位置, 颜色, ...]
+            for (size_t i = 0; i < mapInterleavedCpu_.size(); i += 2) {
+                const auto& position = mapInterleavedCpu_[i];
+                const auto& color = mapInterleavedCpu_[i + 1];
+
+                if (position.z() >= zMinFilter_ && position.z() <= zMaxFilter_) {
+                    filteredMap.push_back(position);
+                    filteredMap.push_back(color);
                 }
+            }
 
-                if (!filteredMap.empty()) {
-                    vaoMap_.bind();
-                    vboMap_.bind();
-                    vboMap_.allocate(filteredMap.data(),
-                                     static_cast<int>(filteredMap.size() * sizeof(Eigen::Vector3f)));
-                    glDrawArrays(GL_POINTS, 0, static_cast<int>(filteredMap.size() / 2));
-                    vboMap_.release();
-                    vaoMap_.release();
-                }
-                progColorCloud_.release();
-            } else {
-                // 原始渲染逻辑
-                progColorCloud_.bind();
-                progColorCloud_.setUniformValue("mvp", toQMatrix(proj_ * view_));
-                progColorCloud_.setUniformValue("uPointSize", mapPtSize_);
-                progColorCloud_.setUniformValue("uAlpha", 1.0f);
-                progColorCloud_.setUniformValue("uSoftEdge", 0.35f);
+            if (!filteredMap.empty()) {
                 vaoMap_.bind();
-                glDrawArrays(GL_POINTS, 0, mapPts_);
+                vboMap_.bind();
+                vboMap_.allocate(filteredMap.data(),
+                                 static_cast<int>(filteredMap.size() * sizeof(Eigen::Vector3f)));
+                glDrawArrays(GL_POINTS, 0, static_cast<int>(filteredMap.size() / 2));
+                vboMap_.release();
                 vaoMap_.release();
-                progColorCloud_.release();
             }
+            progColorCloud_.release();
+        } else {
+            // 原始渲染逻辑
+            progColorCloud_.bind();
+            progColorCloud_.setUniformValue("mvp", toQMatrix(proj_ * view_));
+            progColorCloud_.setUniformValue("uPointSize", mapPtSize_);
+            progColorCloud_.setUniformValue("uAlpha", 1.0f);
+            progColorCloud_.setUniformValue("uSoftEdge", 0.35f);
+            vaoMap_.bind();
+            glDrawArrays(GL_POINTS, 0, mapPts_);
+            vaoMap_.release();
+            progColorCloud_.release();
         }
-
-        // 再渲染实时点云（Z=2.0，在上层）
-        if (showRealtimeCloud_ && cloudPts_ > 0) {
-            if (enableZFilter_) {
-                // 使用过滤后的点云
-                progSimple_.bind();
-                const Eigen::Matrix4d mvp = proj_ * view_;
-                progSimple_.setUniformValue("mvp", toQMatrix(mvp));
-                progSimple_.setUniformValue("col", QVector3D(0.35f, 0.85f, 0.95f));
-
-                // 过滤点云
-                std::vector<Eigen::Vector3f> filteredCloud;
-                filteredCloud.reserve(cloudCpu_.size());
-                for (const auto& pt : cloudCpu_) {
-                    if (pt.z() >= zMinFilter_ && pt.z() <= zMaxFilter_) {
-                        filteredCloud.push_back(pt);
-                    }
-                }
-
-                if (!filteredCloud.empty()) {
-                    vaoCloud_.bind();
-                    vboCloud_.bind();
-                    vboCloud_.allocate(filteredCloud.data(),
-                                       static_cast<int>(filteredCloud.size() * sizeof(Eigen::Vector3f)));
-                    glPointSize(cloudPtSize_);
-                    glDrawArrays(GL_POINTS, 0, static_cast<int>(filteredCloud.size()));
-                    vboCloud_.release();
-                    vaoCloud_.release();
-                }
-                progSimple_.release();
-            } else {
-                // 原始渲染逻辑
-                progSimple_.bind();
-                const Eigen::Matrix4d mvp = proj_ * view_;
-                progSimple_.setUniformValue("mvp", toQMatrix(mvp));
-                progSimple_.setUniformValue("col", QVector3D(0.35f, 0.85f, 0.95f));
-                vaoCloud_.bind();
-                glPointSize(cloudPtSize_);
-                glDrawArrays(GL_POINTS, 0, cloudPts_);
-                vaoCloud_.release();
-                progSimple_.release();
-            }
-        }
-
     }
-    else
-    {
-        // 可以在这里添加一些提示信息或调试输出
-        static int frameCnt = 0;
-        if (++frameCnt % 60 == 0) {  // 每秒显示一次（假设60fps）
-            qDebug() << "等待 base_init -> laser_link 变换，暂不绘制点云...";
+
+    // 再渲染实时点云（Z=2.0，在上层）
+    if (showRealtimeCloud_ && cloudPts_ > 0) {
+        if (enableZFilter_) {
+            // 使用过滤后的点云
+            progSimple_.bind();
+            const Eigen::Matrix4d mvp = proj_ * view_;
+            progSimple_.setUniformValue("mvp", toQMatrix(mvp));
+            progSimple_.setUniformValue("col", QVector3D(0.35f, 0.85f, 0.95f));
+
+            // 过滤点云
+            std::vector<Eigen::Vector3f> filteredCloud;
+            filteredCloud.reserve(cloudCpu_.size());
+            for (const auto& pt : cloudCpu_) {
+                if (pt.z() >= zMinFilter_ && pt.z() <= zMaxFilter_) {
+                    filteredCloud.push_back(pt);
+                }
+            }
+
+            if (!filteredCloud.empty()) {
+                vaoCloud_.bind();
+                vboCloud_.bind();
+                vboCloud_.allocate(filteredCloud.data(),
+                                   static_cast<int>(filteredCloud.size() * sizeof(Eigen::Vector3f)));
+                glPointSize(cloudPtSize_);
+                glDrawArrays(GL_POINTS, 0, static_cast<int>(filteredCloud.size()));
+                vboCloud_.release();
+                vaoCloud_.release();
+            }
+            progSimple_.release();
+        } else {
+            // 原始渲染逻辑
+            progSimple_.bind();
+            const Eigen::Matrix4d mvp = proj_ * view_;
+            progSimple_.setUniformValue("mvp", toQMatrix(mvp));
+            progSimple_.setUniformValue("col", QVector3D(0.35f, 0.85f, 0.95f));
+            vaoCloud_.bind();
+            glPointSize(cloudPtSize_);
+            glDrawArrays(GL_POINTS, 0, cloudPts_);
+            vaoCloud_.release();
+            progSimple_.release();
         }
     }
 
@@ -541,7 +533,9 @@ void GLWidget::paintGL()
 
     // 渲染2D激光雷达数据 (红色) - 后渲染实时点云(Z=0.1，上层)
     // 关联到实时点云开关，保持一致的显隐控制
-    if (showRealtimeCloud_ && showScan2D_ && scan2DPts_ > 0 && hasLidarPose_) {
+    //
+    // 不再判「有没有位姿」：扫描点要么已经按 0x01 那条边摆好了，要么整帧没摆（点数归零）。
+    if (showRealtimeCloud_ && showScan2D_ && scan2DPts_ > 0) {
         progSimple_.bind();
         progSimple_.setUniformValue("mvp", toQMatrix(proj_ * view_));
         progSimple_.setUniformValue("col", QVector3D(1.0f, 0.3f, 0.3f)); // 浅红色
@@ -576,11 +570,17 @@ void GLWidget::paintGL()
     }
 
     // 箭头渲染 - 不受Z轴过滤影响，始终显示
-    if (trail_.hasValidTransform && hasRobotPose_)
-    {
-        progSimple_.bind();
-        drawSolidArrow(T_map_base_link_, 1.0f, 0.15f);
-        progSimple_.release();
+    //
+    // 用 edgeTransform（**不判新鲜度**）：界面上「最后一帧停在哪儿」照旧要画得出来，
+    // 只是 0x01 断掉期间它不再跟着动。从没喂过 ⇒ 查不到 ⇒ 不画（**不用恒等兜底**——
+    // 兜底会画一个「机器人就在图原点」的假箭头）。
+    if (trail_.hasValidTransform) {
+        const std::optional<Mat4> T_link = tf_.edgeTransform(TfTree::Edge::BaseLink);
+        if (T_link.has_value()) {
+            progSimple_.bind();
+            drawSolidArrow(*T_link, 1.0f, 0.15f);
+            progSimple_.release();
+        }
     }
 
     // 绘制指点模式的箭头（未完成：绿色，已完成：黄色）
@@ -630,27 +630,29 @@ void GLWidget::setZFilterEnabled(bool enabled)
 
 // =========== 数据处理
 
-/* -------------- 新协议：机器人位姿处理 -------------- */
+/* -------------- 新协议：机器人位姿处理 (0x01) -------------- */
 void GLWidget::onRobotPose(const RobotPoseMsg &m)
 {
-    // 构建变换矩阵 base_init → base_link
-    Eigen::Matrix4d T = Eigen::Matrix4d::Identity();
-    T.block<3,3>(0,0) = Eigen::Quaterniond(m.qw, m.qx, m.qy, m.qz).matrix();
-    T.block<3,1>(0,3) = Eigen::Vector3d(m.x, m.y, m.z);
-
-    T_map_base_link_ = T;
-    hasRobotPose_ = true;
+    // 位姿 → 矩阵只在 tf_ 里折一次（调用点不得自建矩阵）。
+    // Eigen 的构造是 w 在前，线上发的是 qx,qy,qz,qw，别顺手把线上顺序喂进来。
+    const Eigen::Vector3d t(m.x, m.y, m.z);
+    const Eigen::Quaterniond q(m.qw, m.qx, m.qy, m.qz);
+    tf_.setPose(TfTree::Edge::BaseLink, t, q, TfTree::Clock::now());
 
     // 更新轨迹
-    Eigen::Vector3f pt = T.block<3,1>(0,3).cast<float>();
+    Eigen::Vector3f pt = t.cast<float>();
     trail_.points.push_back(pt);
     while (trail_.points.size() > kMaxTrail) trail_.points.pop_front();
 
-    trail_.latestTransform = T;
-    trail_.hasValidTransform = true;
+    // 拖尾用的矩阵走同一条边、同一个出口，不另建一份
+    const auto T = tf_.edgeTransform(TfTree::Edge::BaseLink);
+    if (T.has_value()) {
+        trail_.latestTransform = *T;
+        trail_.hasValidTransform = true;
+    }
 
     // 发出位姿信号
-    const Eigen::Matrix3d &R = T.block<3,3>(0,0);
+    Eigen::Matrix3d R = q.toRotationMatrix();
     double ypr_yaw, ypr_pitch, ypr_roll;
     rotToYPR_ZYX(R, ypr_yaw, ypr_pitch, ypr_roll);
 
@@ -661,26 +663,31 @@ void GLWidget::onRobotPose(const RobotPoseMsg &m)
     emit tfInfoChanged(m.x, m.y, m.z, deg_yaw, deg_pitch, deg_roll);
 }
 
-/* -------------- 新协议：雷达位姿处理 -------------- */
-void GLWidget::onLidarPose(const LidarPoseMsg &m)
+/* -------------- 新协议：重定位结果处理 (0x02) --------------
+ *
+ * v2.6 时 0x02 是「雷达位姿 base_init → laser_link」，是**嫁接的依据**；现在它是
+ * 「本次开机的原点在图里哪儿」，**不参与任何摆放**——它只落成 Edge::BaseInit 这条静态边，
+ * 供显示与「已定位 / 未定位」判据用。
+ *
+ * ⚠️ 载荷字段与 v2.6 逐字相同，所以「照旧拿它去摆位置」不会报任何错，只会静默摆偏。
+ */
+void GLWidget::onRelocResult(const RelocResultMsg &m)
 {
-    // 构建变换矩阵 base_init → laser_link
-    Eigen::Matrix4d T = Eigen::Matrix4d::Identity();
-    T.block<3,3>(0,0) = Eigen::Quaterniond(m.qw, m.qx, m.qy, m.qz).matrix();
-    T.block<3,1>(0,3) = Eigen::Vector3d(m.x, m.y, m.z);
-
-    T_map_laser_ = T;
-    hasLidarPose_ = true;
+    tf_.setPose(TfTree::Edge::BaseInit,
+                Eigen::Vector3d(m.x, m.y, m.z),
+                Eigen::Quaterniond(m.qw, m.qx, m.qy, m.qz),
+                TfTree::Clock::now());
 }
 
 void GLWidget::onCloud(const CloudMsg &m)
 {
     if (m.points.empty()) return;
 
-    // 必须等待雷达位姿才能处理点云
-    if (!hasLidarPose_) {
-        return;
-    }
+    // ⚠️ 这里**没有**「等位姿」那道门了。0x03 的载荷本来就发在**图的原点系** base_init_map 里
+    // （模块侧 /cloud_registered 已经折好），上位机对它**一行变换都不做**。
+    //
+    // 以前那道 `if (!hasLidarPose_) return;` 是 v2.6 的产物：那时点云在 laser_link 系、
+    // 没位姿就摆不出来。现在留着它只会让**未定位时点云整条不画**——又一个不报错的静默错。
 
     QMutexLocker lk(&dataMtx_);
 
@@ -705,17 +712,13 @@ void GLWidget::onCloud(const CloudMsg &m)
         map2DDirty_.store(false, std::memory_order_release);
     }
 
-    // 统计本帧在 map 系下的高度范围
+    // 统计本帧的高度范围：点**已经在图的原点系里**，直接取 z，不做任何变换
     float localMinZ_map = std::numeric_limits<float>::max();
     float localMaxZ_map = std::numeric_limits<float>::lowest();
 
     for (const auto &pt : m.points) {
-        // 点云在 laser 坐标系下，变换到 map 系
-        Eigen::Vector4d p_laser(pt.x(), pt.y(), pt.z(), 1.0);
-        Eigen::Vector4d p_map = T_map_laser_ * p_laser;
-        float z_map = static_cast<float>(p_map.z());
-        localMinZ_map = std::min(localMinZ_map, z_map);
-        localMaxZ_map = std::max(localMaxZ_map, z_map);
+        localMinZ_map = std::min(localMinZ_map, pt.z());
+        localMaxZ_map = std::max(localMaxZ_map, pt.z());
     }
     if (localMaxZ_map - localMinZ_map < 1e-6f) localMaxZ_map = localMinZ_map + 1.0f;
 
@@ -723,16 +726,14 @@ void GLWidget::onCloud(const CloudMsg &m)
     mapMinZ_ = std::min(mapMinZ_, localMinZ_map);
     mapMaxZ_ = std::max(mapMaxZ_, localMaxZ_map);
 
-    // 转换实时帧到 map 系
+    // 实时帧：原样收（一行变换都不做）
     cloudCpu_.clear();
     cloudCpu_.reserve(m.points.size());
 
     for (const auto &pt : m.points) {
-        Eigen::Vector4d p_laser(pt.x(), pt.y(), pt.z(), 1.0);
-        Eigen::Vector4d p_map = T_map_laser_ * p_laser;
-        Eigen::Vector3f p_result = p_map.head<3>().cast<float>();
+        Eigen::Vector3f p_result(pt.x(), pt.y(), pt.z());
 
-        // 2D模式下实时点云Z轴统一设为0.5（在地图点云之上）
+        // 2D模式下实时点云Z轴统一设为2.0（在地图点云之上）
         if (is2DMode_) {
             p_result.z() = 2.0f;
         }
@@ -742,17 +743,13 @@ void GLWidget::onCloud(const CloudMsg &m)
     cloudPts_ = static_cast<int>(cloudCpu_.size());
     cloudDirty_.store(true, std::memory_order_release);
 
-    // 累加到地图点云（带体素去重）
+    // 累加到地图点云（带体素去重）：去重用的坐标就是**图里**的坐标，不再另折一次
     for (const auto &pt : m.points) {
-        // 在 laser 系下做去重
         auto [vx, vy, vz] = posToVoxel(Eigen::Vector3f(pt.x(), pt.y(), pt.z()));
         uint64_t h = voxelHash(vx, vy, vz);
 
         if (mapVoxelSet_.insert(h).second) {
-            // 变换到 map 系
-            Eigen::Vector4d p_laser(pt.x(), pt.y(), pt.z(), 1.0);
-            Eigen::Vector4d p_map = T_map_laser_ * p_laser;
-            Eigen::Vector3f p_result = p_map.head<3>().cast<float>();
+            Eigen::Vector3f p_result(pt.x(), pt.y(), pt.z());
 
             // 2D模式下地图点云Z轴统一设为0
             if (is2DMode_) {
@@ -761,8 +758,8 @@ void GLWidget::onCloud(const CloudMsg &m)
 
             mapInterleavedCpu_.push_back(p_result);
 
-            // 颜色：基于 map.z（2D模式下使用固定Z值计算颜色）
-            float z_for_color = is2DMode_ ? 0.0f : static_cast<float>(p_map.z());
+            // 颜色：基于 z（2D模式下使用固定Z值计算颜色）
+            float z_for_color = is2DMode_ ? 0.0f : pt.z();
             QVector3D c = heightToColor(z_for_color, mapMinZ_, mapMaxZ_);
             mapInterleavedCpu_.emplace_back(c.x(), c.y(), c.z());
         }
@@ -1009,11 +1006,9 @@ QVector3D GLWidget::normalToColor(const Eigen::Vector3f& n)
 // ========操作栏===============
 void GLWidget::clearMap()
 {
-    // 清理TF数据
-    hasRobotPose_ = false;
-    hasLidarPose_ = false;
-    T_map_base_link_.setIdentity();
-    T_map_laser_.setIdentity();
+    // 清理TF数据：两条边一起清（位姿与到达时刻都清）。
+    // 清掉之后「机器人位姿」查不到 ⇒ 箭头与拖尾自己就不画了；扫描那条路会整帧不摆。
+    tf_.clear();
     // 清理地图点云
     {
         QMutexLocker lk(&dataMtx_);
@@ -1205,6 +1200,16 @@ void GLWidget::updateNavTargetFromUI(double x, double y, double z, double yaw_de
 }
 
 /* -------------- 2D激光雷达数据处理 -------------- */
+
+// 清掉扫描缓存（调用方须已持 dataMtx_）。点数归零后，paintGL 里那道 `scan2DPts_ > 0`
+// 自己就不会再画 —— 不需要额外去清 GPU buffer。
+void GLWidget::clearScan2DCacheLocked()
+{
+    scan2DCpu_.clear();
+    scan2DPts_ = 0;
+    scan2DDirty_.store(true, std::memory_order_release);
+}
+
 void GLWidget::onScan2D(const Scan2DMsg &msg)
 {
     // 首次进入2D模式时，清空已有的3D点云地图数据
@@ -1221,12 +1226,26 @@ void GLWidget::onScan2D(const Scan2DMsg &msg)
         cloudDirty_.store(false, std::memory_order_release);
     }
 
-    // 必须等待雷达位姿才能处理点云
-    if (!hasLidarPose_) {
+    QMutexLocker lk(&dataMtx_);
+
+    // 摆放依据**只有 0x01 那条边**（base_init_map → base_link）。
+    //
+    // 0x05 的载荷在 base_link 系下——这是**硬约定**（载荷里根本没有帧名字段，不可校验）。
+    // 模块侧 /scan 已经按安装位姿折进机器人中心了，所以这里**只折这一跳、不再折 T**；
+    // 再折一次就是把 T 罚两遍。本模块的入口里没有 T 这个量，这条由接口形状自带。
+    //
+    // v2.6 时这一步走的是 0x02（那时它是雷达位姿）。0x02 现在**退出位姿链路**：
+    // 它发得再勤也摆不动扫描——这正是实机上看不出来的那个静默差（安装位姿 T 全 0）。
+    //
+    // 整帧**一次性**判新鲜度：过窗就整帧不摆（不拿旧位姿凑、也不用恒等兜底），
+    // 并清掉缓存——只做到「不摆」的话，最后一帧扫描会冻在屏幕上。
+    const TfTree::Stamp now = TfTree::Clock::now();
+    if (!tf_.isFresh(TfTree::Edge::BaseLink, now)) {
+        clearScan2DCacheLocked();
+        if (glReady_) update();
         return;
     }
 
-    QMutexLocker lk(&dataMtx_);
     scan2DCpu_.clear();
     scan2DCpu_.reserve(msg.range_count);
 
@@ -1234,17 +1253,15 @@ void GLWidget::onScan2D(const Scan2DMsg &msg)
         float r = msg.ranges[i];
         if (r <= 0 || std::isinf(r) || std::isnan(r)) continue;
 
-        double angle = msg.angle_min + i * msg.angle_increment;
+        const double angle = msg.angle_min + i * msg.angle_increment;
 
-        // 在 laser_link 坐标系下的点
-        float x = r * static_cast<float>(cos(angle));
-        float y = r * static_cast<float>(sin(angle));
-        float z = 0;  // 2D激光雷达，z=0
+        // base_link 系下的点（2D 激光雷达，z=0）
+        const Eigen::Vector3d p_link(r * std::cos(angle), r * std::sin(angle), 0.0);
 
-        // 变换到 map 坐标系
-        Eigen::Vector4d p_laser(x, y, z, 1.0);
-        Eigen::Vector4d p_map = T_map_laser_ * p_laser;
-        Eigen::Vector3f p_result = p_map.head<3>().cast<float>();
+        const std::optional<Vec3> p_map = tf_.placeInMap(TfTree::Edge::BaseLink, p_link, now);
+        if (!p_map.has_value()) continue;   // 上面已判过新鲜，这里到不了
+
+        Eigen::Vector3f p_result = p_map->cast<float>();
 
         // 2D实时点云Z轴统一设为0.1（在地图点云之上）
         p_result.z() = 0.1f;

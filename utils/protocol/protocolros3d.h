@@ -19,8 +19,8 @@ public slots:
     void setLinkAlive(bool alive) { m_linkAlive = alive; }
 
 signals:
-    void robotPoseUpdated(const RobotPoseMsg& msg);  // 机器人位姿 (base_init → base_link)
-    void lidarPoseUpdated(const LidarPoseMsg& msg);  // 雷达位姿 (base_init → laser_link，3D/2D 相同)
+    void robotPoseUpdated(const RobotPoseMsg& msg);  // 机器人位姿 (base_init_map → base_link)
+    void relocResultUpdated(const RelocResultMsg& msg);  // 重定位结果 (base_init_map → base_init)
     void cloudUpdated(const CloudMsg& msg);
     void mapCloudUpdated(const MapCloudMsg& m);
 
@@ -47,8 +47,8 @@ signals:
 private:
     void parseJsonFrame(uint8_t cmd, const QJsonObject& obj);
 
-    void parseRobotPose(const QJsonObject& obj);  // 解析机器人位姿 (0x01)
-    void parseLidarPose(const QJsonObject& obj);  // 解析雷达位姿 (0x02)
+    void parseRobotPose(const QJsonObject& obj);   // 解析机器人位姿 (0x01)
+    void parseRelocResult(const QJsonObject& obj); // 解析重定位结果 (0x02)
     void parseCloud(const QJsonObject& obj);      // 解析3D点云 (0x03)
     void parseMap(const QJsonObject& obj);
     void parseGoalPath(const QJsonObject& obj);   // 解析最优轨迹 (0x09)

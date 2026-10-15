@@ -47,11 +47,11 @@ void ProtocolRouter::initDefaultHandlers()
     });
 
     // 新协议命令ID
-    registerHandler(0x01, [this](const QByteArray &frame) {  // 机器人位姿
+    registerHandler(0x01, [this](const QByteArray &frame) {  // 机器人位姿 (base_init_map → base_link)
         handleRos3dData(0x01, frame);
     });
 
-    registerHandler(0x02, [this](const QByteArray &frame) {  // 雷达安装位姿
+    registerHandler(0x02, [this](const QByteArray &frame) {  // 重定位结果 (base_init_map → base_init)
         handleRos3dData(0x02, frame);
     });
 
@@ -262,9 +262,9 @@ void ProtocolRouter::dispatchFrameBySignal(const QByteArray &frame, quint8 comma
         handleParameterFrame(frame);
         break;
 
-    case 0x01: // 机器人位姿 (base_init → base_link)
-    case 0x02: // 雷达位姿 (base_init → laser_link)
-    case 0x03: // 3D点云数据
+    case 0x01: // 机器人位姿 (base_init_map → base_link)
+    case 0x02: // 重定位结果 (base_init_map → base_init)
+    case 0x03: // 3D点云数据（载荷自带 frame_id = base_init_map，收端不折）
     case 0x05: // 2D激光雷达数据
     case 0x06: // 2D地图数据
     case 0x08: // 位置控制指令

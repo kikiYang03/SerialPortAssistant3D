@@ -62,9 +62,9 @@ signals:
     void navTargetUpdated(double x, double y, double z, double yaw_deg);
 
 public slots:
-    void onRobotPose(const RobotPoseMsg &);  // 机器人位姿 (base_init → base_link)
-    void onLidarPose(const LidarPoseMsg &);  // 雷达位姿 (base_init → laser_link)
-    void onCloud(const CloudMsg &);
+    void onRobotPose(const RobotPoseMsg &);        // 机器人位姿 (base_init_map → base_link)
+    void onRelocResult(const RelocResultMsg &);    // 重定位结果 (base_init_map → base_init)
+    void onCloud(const CloudMsg &);                // 3D点云（**已在图的原点系，一行变换都不做**）
     void onScan2D(const Scan2DMsg &);        // 2D激光雷达数据 (0x05)
     void onMap2D(const Map2DMsg &);          // 2D地图数据 (0x06)
 
@@ -99,10 +99,9 @@ protected:
 private:
 
     // =========== 新协议TF相关 ===========
-    Eigen::Matrix4d T_map_base_link_;    // base_init → base_link (机器人位姿；俩成员名沿用旧 map 命名)
-    Eigen::Matrix4d T_map_laser_;        // base_init → laser_link (雷达位姿)
-    bool hasRobotPose_ = false;          // 是否收到机器人位姿
-    bool hasLidarPose_ = false;          // 是否收到雷达位姿
+    // 两条边、一个摆放出口，全在 tf_ 里（见 utils/protocol/tftree.h）。
+    // v2.6 那套「两个裸矩阵 + 两个裸标志」已删：那时候 0x02 是雷达位姿、被拿来当嫁接依据，
+    // 现在 0x02 是重定位结果，**退出位姿链路**。
 
     // 修改这行：
     Eigen::Vector3d screenToWorld(const QPoint& pos, double targetZ);
@@ -172,6 +171,10 @@ private:
     std::unordered_set<uint64_t> mapVoxelSet_;
 
     // 工具函数
+    // 清掉 2D 扫描的 CPU 缓存与点数（调用方须已持 dataMtx_）。
+    // 「0x01 陈旧 ⇒ 不摆放扫描」这条只做到「不摆」是不够的：不清缓存的话，最后一帧扫描
+    // 会**冻在屏幕上**，看起来跟实时一样 —— 又是一个不报错的静默错。
+    void clearScan2DCacheLocked();
     static QMatrix4x4 toQMatrix(const Eigen::Matrix4d &m);
     void drawAxis(const Eigen::Matrix4d &T, float len = 5.f);
     void drawGrid(const Eigen::Matrix4d &T, int cells = 20, float step = 1.f);

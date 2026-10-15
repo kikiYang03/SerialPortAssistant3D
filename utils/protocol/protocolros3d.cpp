@@ -1,4 +1,5 @@
 ﻿#include "protocolros3d.h"
+#include "tftree.h"          // 帧名期望表与校验入口（frameNamesAccepted）
 #include <QJsonDocument>
 #include <QJsonValue>
 #include <QDebug>
@@ -9,8 +10,8 @@
 
 
 // 新协议命令ID定义
-static const uint8_t CMD_ROBOT_POSE  = 0x01;  // 机器人位姿 (base_init → base_link)
-static const uint8_t CMD_LIDAR_POSE  = 0x02;  // 雷达位姿 (base_init → laser_link)
+static const uint8_t CMD_ROBOT_POSE   = 0x01;  // 机器人位姿 (base_init_map → base_link)
+static const uint8_t CMD_RELOC_RESULT = 0x02;  // 重定位结果 (base_init_map → base_init)
 static const uint8_t CMD_CLOUD       = 0x03;  // 3D点云数据
 static const uint8_t CMD_SCAN_2D     = 0x05;  // 2D激光雷达数据
 static const uint8_t CMD_MAP_2D      = 0x06;  // 2D地图数据
@@ -63,12 +64,42 @@ quint8 ProtocolRos3D::crc8(const QByteArray& data)
     return crc;
 }
 
+/* 全局节流时间戳，单位 ms */
+static qint64 g_lastTfLogMS   = 0;
+static qint64 g_lastCloudLogMS = 0;
+static qint64 g_lastPosCmdLogMS = 0;
+static qint64 g_lastFrameRejectLogMS = 0;
+
 /* 根据 cmd 分发 */
 void ProtocolRos3D::parseJsonFrame(uint8_t cmd, const QJsonObject& obj)
 {
+    // 帧名闸门（全仓唯一调用点，期望值只存在 tftree.cpp 那张表里）：对不上就**丢帧**
+    // ——不解析、不渲染。
+    //
+    // 本次协议换帧名而**载荷字段一个都没变**（0x01 的父系 world → base_init_map；
+    // 0x02 由「雷达位姿」换义成「重定位结果」），不读帧名的话这种改动是**静默**的：
+    // 模块还是老版本、照旧发老帧名，这里也照旧收下、照旧拿去摆位置。
+    //
+    // `0x05` / `0x06` 载荷里根本没有帧名字段 ⇒ 表里没有期望 ⇒ 恒接受
+    // （**不是**「校验通过」，是「没有可比的东西」）。
+    if (!frameNamesAccepted(cmd,
+                            obj["frame_id"].toString().toStdString(),
+                            obj["child_frame_id"].toString().toStdString())) {
+        qint64 nowMS = QDateTime::currentMSecsSinceEpoch();
+        if (nowMS - g_lastFrameRejectLogMS >= 1000) {   // 同上：每路最多每秒一条
+            g_lastFrameRejectLogMS = nowMS;
+            AdminMode::appendMessage(
+                QStringLiteral("帧名不符，已丢弃 cmd=0x%1（frame_id=\"%2\", child_frame_id=\"%3\"）")
+                    .arg(cmd, 2, 16, QLatin1Char('0'))
+                    .arg(obj["frame_id"].toString())
+                    .arg(obj["child_frame_id"].toString()));
+        }
+        return;
+    }
+
     switch (cmd) {
-    case CMD_ROBOT_POSE:  parseRobotPose(obj);  break;
-    case CMD_LIDAR_POSE:  parseLidarPose(obj);  break;
+    case CMD_ROBOT_POSE:   parseRobotPose(obj);   break;
+    case CMD_RELOC_RESULT: parseRelocResult(obj); break;
     case CMD_CLOUD:       parseCloud(obj);      break;
     case CMD_SCAN_2D:     parseScan2D(obj);     break;
     case CMD_MAP_2D:      parseMap2D(obj);      break;
@@ -80,12 +111,7 @@ void ProtocolRos3D::parseJsonFrame(uint8_t cmd, const QJsonObject& obj)
     }
 }
 
-/* 全局节流时间戳，单位 ms */
-static qint64 g_lastTfLogMS   = 0;
-static qint64 g_lastCloudLogMS = 0;
-static qint64 g_lastPosCmdLogMS = 0;
-
-/* 机器人位姿解析 (base_init → base_link) */
+/* 机器人位姿解析 (base_init_map → base_link) */
 void ProtocolRos3D::parseRobotPose(const QJsonObject& obj)
 {
     qint64 nowMS = QDateTime::currentMSecsSinceEpoch();
@@ -113,10 +139,10 @@ void ProtocolRos3D::parseRobotPose(const QJsonObject& obj)
     emit robotPoseUpdated(m);
 }
 
-/* 雷达位姿解析 (base_init → laser_link) */
-void ProtocolRos3D::parseLidarPose(const QJsonObject& obj)
+/* 重定位结果解析 (base_init_map → base_init) */
+void ProtocolRos3D::parseRelocResult(const QJsonObject& obj)
 {
-    LidarPoseMsg m;
+    RelocResultMsg m;
     m.frame_id       = obj["frame_id"].toString();
     m.child_frame_id = obj["child_frame_id"].toString();
     m.x              = obj["x"].toDouble();
@@ -127,11 +153,11 @@ void ProtocolRos3D::parseLidarPose(const QJsonObject& obj)
     m.qz             = obj["qz"].toDouble();
     m.qw             = obj["qw"].toDouble();
 
-    QString msg = QStringLiteral("接收到雷达位姿: x=%1, y=%2, z=%3")
+    QString msg = QStringLiteral("接收到重定位结果: x=%1, y=%2, z=%3")
                       .arg(m.x, 0, 'f', 2).arg(m.y, 0, 'f', 2).arg(m.z, 0, 'f', 2);
     AdminMode::appendMessage(msg);
 
-    emit lidarPoseUpdated(m);
+    emit relocResultUpdated(m);
 }
 
 
@@ -274,7 +300,7 @@ void ProtocolRos3D::parseGoalPath(const QJsonObject& obj)
 void ProtocolRos3D::parseScan2D(const QJsonObject& obj)
 {
     Scan2DMsg m;
-    m.frame_id = obj["frame_id"].toString();
+    // 不读 frame_id：协议里 0x05 的载荷**没有这个字段**，帧是硬约定的 base_link
     m.angle_min = obj["angle_min"].toDouble();
     m.angle_max = obj["angle_max"].toDouble();
     m.angle_increment = obj["angle_increment"].toDouble();
@@ -300,7 +326,7 @@ void ProtocolRos3D::parseScan2D(const QJsonObject& obj)
 void ProtocolRos3D::parseMap2D(const QJsonObject& obj)
 {
     Map2DMsg m;
-    m.frame_id = obj["frame_id"].toString();
+    // 不读 frame_id：协议里 0x06 的载荷**没有这个字段**，帧是硬约定的 base_init_map
     m.width = obj["width"].toInt();
     m.height = obj["height"].toInt();
     m.resolution = obj["resolution"].toDouble();
