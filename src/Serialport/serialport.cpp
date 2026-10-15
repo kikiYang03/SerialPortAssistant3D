@@ -661,14 +661,28 @@ void SerialPort::onWriteParamsRequested(const QVector<ParamWrite> &params)
                          .arg(timeoutMs / 1000.0, 0, 'f', 1));
 }
 
-// 模块下发的每条 AA 10：0x99 模块类型照常缓存；保存等待期把它按参数号存进比对器。
+// 模块下发的每条 AA 10：0x99 模块类型与 0x13「模式」照常缓存；保存等待期把它按参数号存进比对器。
 void SerialPort::onModuleParameterFrame(quint8 paramId, qint16 value)
 {
     if (paramId == 0x99) latestModuleType = value;
+    if (paramId == 0x13) setModuleMode(value);   // 图形层判建图 / 定位（工单 03）
 
     if (saveParamsPending) {
         saveParamsReadback.insert(paramId, value);
     }
+}
+
+// 参数 0x13「模式」的落地处（工单 03）：缓存 + 只在变化时下发图形层。
+// 判据取这个参数本身，**不**从 0x02 的数值去猜 —— 恒等不等于建图，将来 T ≠ 0 就会猜错。
+// -1 = 本会话还没读到过任何一次 0x13（模块只在被读取参数时才下发 AA 10）；它必须与
+// 「建图（0）」分开：默认按 0 处理，图形层会把「不知道」当成「模块正在建图」。
+// 这里只送值，怎么用（要不要画开机点标记）由图形层的工单 09 决定。
+void SerialPort::setModuleMode(int mode)
+{
+    if (mode == latestModuleMode) return;
+
+    latestModuleMode = mode;
+    emit moduleModeChanged(latestModuleMode);
 }
 
 // 终结指令到 = 回读已发完。这里才下结论，且必须是「按参数号」逐条比：
@@ -1232,7 +1246,7 @@ void SerialPort::onRestartAckReceived()
         // 判定成功 = 模块即将变成一个「什么都没见过」的新模块，界面上那些运行态镜像
         // 描述的是重启前那个已经不复存在的模块，此刻一并清掉（工单 02）。
         // 失败路径（onRestartTimeout）一条都不清 —— 超时意味着模块很可能根本没重启。
-        clearModuleRuntimeCaches();     // 本页：位姿 / 速度 / 飞控状态 / 三个锁存 / 模块类型
+        clearModuleRuntimeCaches();     // 本页：位姿 / 速度 / 飞控状态 / 三个锁存 / 模块类型 / 模式
         emit restartSucceeded();        // 3D 页面：TF 标签、状态标签与锁存（含 3D 视图本身）
         ui->recvEdit->append(timestamp +
             QStringLiteral("已清理界面上的模块运行态数据：点云 / 地图 / 位姿 / 状态标签"));
@@ -1271,6 +1285,11 @@ void SerialPort::clearModuleRuntimeCaches()
     // 模块类型（参数 0x99）：-1 = 没读到过。它决定存图超时取 3D 的宽档还是 2D 的窄档，
     // 重启后模块还没自报类型之前，按「不知道」宽档兜底才是安全的
     latestModuleType = -1;
+
+    // 模式（参数 0x13）：同样归 -1 = 没读到过，并把这次「忘掉」下发给图形层。
+    // 重启前那个值描述的是已经不复存在的旧模块，而重启后模式完全可能被改过；
+    // 图形层手上那份副本要跟着回到「不知道」，否则它会拿着旧模式继续画标记（工单 09）
+    setModuleMode(-1);
 }
 
 // 窗口超时 → 失败。**不执行任何清理**：超时意味着模块很可能根本没重启，界面上那些运行态
@@ -1399,6 +1418,9 @@ void SerialPort::on_wifiConnectBt_clicked()
     if(ui->wifiConnectBt->text() == "打开连接"){
         /* ---- 新增：清掉上一轮的绘制数据 ---- */
         if(glWidget_) glWidget_->clearMap();   // 与“清理地图”按钮同一套逻辑
+        // 新会话：上一轮读到的参数 0x13「模式」同样作废 —— 模块可能已经被改成另一种模式，
+        // 本轮读到 0x13 之前一律按「不知道」处理（与重启成功那条路同一个归位动作）
+        setModuleMode(-1);
         // 清空输出窗口
         on_clearRecvBt_clicked();
         // 先停止可能的重连

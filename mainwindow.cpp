@@ -116,8 +116,8 @@ MainWindow::MainWindow(QWidget *parent)
     connect(protocolHandler, &ProtocolRos3D::robotPoseUpdated,
             ros3dPage->glWidget(), &GLWidget::onRobotPose, Qt::QueuedConnection);
 
-    connect(protocolHandler, &ProtocolRos3D::lidarPoseUpdated,
-            ros3dPage->glWidget(), &GLWidget::onLidarPose, Qt::QueuedConnection);
+    connect(protocolHandler, &ProtocolRos3D::relocalizationPoseUpdated,
+            ros3dPage->glWidget(), &GLWidget::onRelocalizationPose, Qt::QueuedConnection);
 
     connect(protocolHandler, &ProtocolRos3D::cloudUpdated,
             ros3dPage->glWidget(), &GLWidget::onCloud, Qt::QueuedConnection);
@@ -137,9 +137,19 @@ MainWindow::MainWindow(QWidget *parent)
     connect(protocolHandler, &ProtocolRos3D::posCmdUpdated,
             ros3dPage, &Ros3DPage::onPosCmdUpdated, Qt::QueuedConnection);
 
+    // === 参数 0x13「模式」(建图 / 定位，未读到过为 -1)：串口层在收到 AA 10 时就地缓存
+    // （与 0x99 同一条路径），变化时下发给图形层，由工单 09 判要不要画开机点标记 ===
+    connect(serialPort, &SerialPort::moduleModeChanged,
+            ros3dPage->glWidget(), &GLWidget::onModuleModeChanged);
+
     // === 状态帧 (0x0B)：重定位 / 规划上标签，飞控只写日志，三者都只在跳变时动 ===
     connect(protocolHandler, &ProtocolRos3D::navStatusUpdated,
             ros3dPage, &Ros3DPage::onNavStatusUpdated, Qt::QueuedConnection);
+
+    // === 帧名校验 (工单 05)：不符的帧在解析层已被丢弃，这里只把红状态位点亮 + 写一行日志。
+    // 刻意不弹窗、不阻塞：联调时两端不同版，操作员该继续能操作，看见红字就知道对不上 ===
+    connect(protocolHandler, &ProtocolRos3D::frameNameRejected,
+            ros3dPage, &Ros3DPage::onFrameNameRejected, Qt::QueuedConnection);
 
     // ----------------------------------------------------------
     // 绑定槽函数——显示页面

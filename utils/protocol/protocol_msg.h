@@ -13,9 +13,15 @@ struct TFMsg {
     QQuaternion q;
 };
 
+// 3D 点云 (0x03)。
+//
+// **载荷坐标已经在图的原点系（`base_init_map`）里**（v2.8 口径）：`points` 里的数就是图上
+// 的坐标，谁都不许再对它做变换——图形层既不做嫁接、也不折安装位姿 T（工单 06）。
+// v2.6 那套是「点在 laser_link 系、靠位姿嫁接进图」，已废；两版的差别只在 `frame_id`
+// 的值上，所以那条分辨新旧的责任落在帧名校验（工单 05）——这里的 `frame_id` 是**可校验**的。
 struct CloudMsg {
-    QString frame_id;
-    QVector<QVector3D> points;   // 或先只存统计量
+    QString frame_id;            // "base_init_map"
+    QVector<QVector3D> points;   // 图系坐标，直接用
 };
 
 struct MapCloudMsg {
@@ -56,16 +62,29 @@ struct RobotPoseMsg {
     double qx, qy, qz, qw;
 };
 
-struct LidarPoseMsg {
-    QString frame_id;        // "base_init"
-    QString child_frame_id;  // "laser_link"
+// 重定位结果 (0x02)：这一趟的**开机点**在图里哪儿。
+//
+// v2.8 起它的语义是 `base_init_map → base_init`（静态）；v2.6 那条 `base_init → laser_link`
+// 的「雷达位姿」已废——字段形状与 v2.6 一模一样（x,y,z + 四元数 + 两个帧名），所以照旧解析
+// 不会报错，只能靠帧名分辨。
+//
+// **不参与任何坐标变换**：它不再是谁的摆放依据。留着只做两件事——在界面上显示开机点的位置，
+// 以及当 `base_init_map → base_init` 这条边「到了没」的判据（工单 08）。
+struct RelocalizationPoseMsg {
+    QString frame_id;        // "base_init_map"
+    QString child_frame_id;  // "base_init"
     double x, y, z;
     double qx, qy, qz, qw;
 };
 
 // 2D激光雷达扫描数据 (0x05)
+//
+// **没有 frame_id 成员**：0x05 的载荷里根本没有帧名字段，模块也不发这个帧名。
+// 它的系（base_link）是**硬约定**——唯一落点在 utils/protocol/tftree.cpp 的
+// kFrameNameExpectations 那张表里（那一行记着 `fromPayload = false`，不参与比对）。
+// 以前这里有个 `frame_id` 成员，它永远是空的（`obj["frame_id"]` 取不到），
+// 留着只会让人以为这帧名读了、也校验了。删掉它，这个误会才不可能再发生（工单 05）。
 struct Scan2DMsg {
-    QString frame_id;
     double angle_min;
     double angle_max;
     double angle_increment;
@@ -74,8 +93,10 @@ struct Scan2DMsg {
 };
 
 // 2D占用栅格地图 (0x06)
+//
+// 与 Scan2DMsg 同理**没有 frame_id 成员**：0x06 的载荷里没有帧名字段，
+// 它的系（base_init_map）是硬约定，唯一落点在 tftree.cpp 的对照表里（工单 05）。
 struct Map2DMsg {
-    QString frame_id;
     int width;
     int height;
     double resolution;
@@ -111,7 +132,7 @@ Q_DECLARE_METATYPE(PathMsg)
 Q_DECLARE_METATYPE(PosCmdMsg)
 Q_DECLARE_METATYPE(NavStatusMsg)
 Q_DECLARE_METATYPE(RobotPoseMsg)
-Q_DECLARE_METATYPE(LidarPoseMsg)
+Q_DECLARE_METATYPE(RelocalizationPoseMsg)
 Q_DECLARE_METATYPE(Scan2DMsg)
 Q_DECLARE_METATYPE(Map2DMsg)
 Q_DECLARE_METATYPE(MapChunkMsg)
@@ -188,20 +209,20 @@ inline QDebug operator<<(QDebug dbg, const RobotPoseMsg &m)
     return dbg;
 }
 
-inline QDebug operator<<(QDebug dbg, const LidarPoseMsg &m)
+inline QDebug operator<<(QDebug dbg, const RelocalizationPoseMsg &m)
 {
     QDebugStateSaver saver(dbg);
-    dbg.nospace() << "LidarPoseMsg{frame=" << m.frame_id
+    dbg.nospace() << "RelocalizationPoseMsg{frame=" << m.frame_id
                   << ", child=" << m.child_frame_id
                   << ", pos=(" << m.x << "," << m.y << "," << m.z << ")}";
     return dbg;
 }
 
+// 不打帧名：0x05 的载荷里就没有这个字段（见 Scan2DMsg 的说明）。
 inline QDebug operator<<(QDebug dbg, const Scan2DMsg &m)
 {
     QDebugStateSaver saver(dbg);
-    dbg.nospace() << "Scan2DMsg{frame=" << m.frame_id
-                  << ", ranges=" << m.range_count << " points}";
+    dbg.nospace() << "Scan2DMsg{ranges=" << m.range_count << " points}";
     return dbg;
 }
 

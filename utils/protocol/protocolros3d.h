@@ -20,7 +20,8 @@ public slots:
 
 signals:
     void robotPoseUpdated(const RobotPoseMsg& msg);  // 机器人位姿 (base_init → base_link)
-    void lidarPoseUpdated(const LidarPoseMsg& msg);  // 雷达位姿 (base_init → laser_link，3D/2D 相同)
+    // 重定位结果 (base_init_map → base_init)：静态边，**不参与任何坐标变换**，只用于显示开机点。
+    void relocalizationPoseUpdated(const RelocalizationPoseMsg& msg);
     void cloudUpdated(const CloudMsg& msg);
     void mapCloudUpdated(const MapCloudMsg& m);
 
@@ -44,11 +45,19 @@ signals:
     // MapArchive（utils/protocol/maparchive.h）。下载流程（工单 10）接这个信号攒块。
     void mapChunkUpdated(const MapChunkMsg& msg);
 
+    // 帧名不符 ⇒ 该帧**已被丢弃**（不解析、不渲染，见 parseJsonFrame 顶部那段说明）。
+    // 本信号只做一件事：让界面留痕（把状态位变红），**不弹窗、不阻塞**。
+    // 参数是**载荷里读到的**那两个名字，原样带出来给界面显示用——界面因此不必
+    // （也不许）知道期望值是什么：期望值只在 tftree.cpp 那张对照表里有一份，
+    // 界面上写出「应该是某某」就等于把它抄成了第二份。
+    // frameNo 是协议帧号（`AA NN …` 的 NN），不是串口那套 0x01/0x04/0x05 的编号。
+    void frameNameRejected(quint8 frameNo, const QString& frameId, const QString& childFrameId);
+
 private:
     void parseJsonFrame(uint8_t cmd, const QJsonObject& obj);
 
     void parseRobotPose(const QJsonObject& obj);  // 解析机器人位姿 (0x01)
-    void parseLidarPose(const QJsonObject& obj);  // 解析雷达位姿 (0x02)
+    void parseRelocalizationPose(const QJsonObject& obj);  // 解析重定位结果 (0x02)
     void parseCloud(const QJsonObject& obj);      // 解析3D点云 (0x03)
     void parseMap(const QJsonObject& obj);
     void parseGoalPath(const QJsonObject& obj);   // 解析最优轨迹 (0x09)

@@ -3,6 +3,7 @@
 #include <QMouseEvent>
 #include <QDebug>
 #include <QDateTime>
+#include <QTimer>
 #include <cmath>
 
 #ifndef M_PI
@@ -44,9 +45,22 @@ static inline void rotToYPR_ZYX(const Eigen::Matrix3d& R,
     roll = std::atan2(R(2,1), R(2,2));
 }
 
+// 「定位状态」显示位（工单 08）的判定节拍。**判定本身不是这个数**——「已定位 / 未定位」
+// 取的是模块里那个 kFreshWindow（恰好 500 ms 仍算新鲜），这个节拍只决定「多久去看一眼」：
+// 翻牌的延迟最多一个节拍，取窗口的 1/5（100 ms），不自己另立一个超时值。
+// 反过来，节拍**不能**靠「帧到达」来驱动：0x02 停发之后恰恰不再有事件，
+// 而 0x01 那条同频的 10 Hz 照旧在发，拿它当节拍会得到一个永远停在「已定位」的标签。
+constexpr int kLocalizationTickMs = 100;
+
 GLWidget::GLWidget(QWidget *parent)
     : QOpenGLWidget(parent)
 {
+    // 只问不记：到点就去问模块「被 0x02 喂的那条边还新不新鲜」，文案变了才发信号。
+    localizationTimer_ = new QTimer(this);
+    localizationTimer_->setInterval(kLocalizationTickMs);
+    connect(localizationTimer_, &QTimer::timeout,
+            this, &GLWidget::refreshLocalizationStatus);
+    localizationTimer_->start();
 }
 GLWidget::~GLWidget() {}
 
@@ -148,11 +162,8 @@ void GLWidget::initializeGL()
     // 初始化TF相关标志
     glReady_ = true;
 
-    hasRobotPose_ = false;
-    hasLidarPose_ = false;
-    T_map_base_link_.setIdentity();
-    T_map_laser_.setIdentity();
-
+    // 位姿不放这儿初始化：tf_ 默认就是「两条边都没到过」，
+    // 而「没到过」与「到了但等于恒等」在模块里是两个可分辨的状态，别拿恒等兜底。
 
     vboOptimalPath_.create();
     vaoOptimalPath_.create();
@@ -337,7 +348,8 @@ void GLWidget::createArrowGeometry()
     vaoArrow_.release();
 }
 
-void GLWidget::drawSolidArrow(const Eigen::Matrix4d &T, float len, float radius)
+void GLWidget::drawSolidArrow(const Eigen::Matrix4d &T, float len, float radius,
+                              const QVector3D &color)
 {
     progSimple_.bind();
     Eigen::Matrix4d Rfix = Eigen::Matrix4d::Identity();
@@ -346,8 +358,9 @@ void GLWidget::drawSolidArrow(const Eigen::Matrix4d &T, float len, float radius)
     Rfix(2,0)=-sin(a); Rfix(2,2)=cos(a);
     Eigen::Matrix4d mvp = proj_*view_*T*Rfix;
     progSimple_.setUniformValue("mvp", toQMatrix(mvp));
-    // progSimple_.setUniformValue("col", QVector3D(1.0f,0.5f,0.0f));
-    progSimple_.setUniformValue("col", QVector3D(1.0f,0.0f,0.0f));
+    // 颜色由调用方给（默认红）：同一个几何体也用来画开机点标记（蓝，工单 09）——
+    // 两个箭头同时在图上时，光看形状分不出哪个是机器人。
+    progSimple_.setUniformValue("col", color);
 
     vaoArrow_.bind();
     int cylinderVerts = (16+1)*2;
@@ -397,106 +410,106 @@ void GLWidget::paintGL()
     drawGrid(Eigen::Matrix4d::Identity(), 40, 1.0f);  // 直接在 map 坐标系下渲染栅格
 
     // ---------- 3. 渲染点云（先地图，后实时，这样实时点云在上层）----------
-    if (hasLidarPose_){
-        // 先渲染地图点云（Z=0，在下层）
-        if (showMapCloud_ && mapPts_ > 0) {
-            if (enableZFilter_) {
-                // 过滤地图点云
-                progColorCloud_.bind();
-                progColorCloud_.setUniformValue("mvp", toQMatrix(proj_ * view_));
-                progColorCloud_.setUniformValue("uPointSize", mapPtSize_);
-                progColorCloud_.setUniformValue("uAlpha", 1.0f);
-                progColorCloud_.setUniformValue("uSoftEdge", 0.35f);
+    //
+    // ⚠️ 这里**没有**「收到过位姿才画」这道门，那是工单 06 特意摘掉的：`0x03` 的载荷本来就
+    // 在图的原点系里，一上来（还没收到任何位姿时）就该画得出来——操作员打开界面就能核对地图。
+    // 点的坐标在 onCloud 里**原样**存下（不做任何变换），这里也不再碰位姿。
+    // 别把门加回来：加上它，未定位时点云会**整条不画**，界面上看起来就像卡住了。
+    // （2D 扫描那一路仍然要位姿，它的门在下面留着，见工单 07。）
+    //
+    // 三条路径（实时点云 / 累积点云 / Z 范围过滤）都吃同一份 CPU 缓存
+    // （cloudCpu_ 与 mapInterleavedCpu_），坐标口径只由 onCloud 一处决定，
+    // 所以三者不可能各画各的——加变换要加在 onCloud，别加在这里。
+    //
+    // 先渲染地图点云（Z=0，在下层）
+    if (showMapCloud_ && mapPts_ > 0) {
+        if (enableZFilter_) {
+            // 过滤地图点云
+            progColorCloud_.bind();
+            progColorCloud_.setUniformValue("mvp", toQMatrix(proj_ * view_));
+            progColorCloud_.setUniformValue("uPointSize", mapPtSize_);
+            progColorCloud_.setUniformValue("uAlpha", 1.0f);
+            progColorCloud_.setUniformValue("uSoftEdge", 0.35f);
 
-                // 过滤点云数据
-                std::vector<Eigen::Vector3f> filteredMap;
-                filteredMap.reserve(mapInterleavedCpu_.size());
+            // 过滤点云数据
+            std::vector<Eigen::Vector3f> filteredMap;
+            filteredMap.reserve(mapInterleavedCpu_.size());
 
-                // 注意：mapInterleavedCpu_ 是交错的 [位置, 颜色, 位置, 颜色, ...]
-                for (size_t i = 0; i < mapInterleavedCpu_.size(); i += 2) {
-                    const auto& position = mapInterleavedCpu_[i];
-                    const auto& color = mapInterleavedCpu_[i + 1];
+            // 注意：mapInterleavedCpu_ 是交错的 [位置, 颜色, 位置, 颜色, ...]
+            for (size_t i = 0; i < mapInterleavedCpu_.size(); i += 2) {
+                const auto& position = mapInterleavedCpu_[i];
+                const auto& color = mapInterleavedCpu_[i + 1];
 
-                    if (position.z() >= zMinFilter_ && position.z() <= zMaxFilter_) {
-                        filteredMap.push_back(position);
-                        filteredMap.push_back(color);
-                    }
+                if (position.z() >= zMinFilter_ && position.z() <= zMaxFilter_) {
+                    filteredMap.push_back(position);
+                    filteredMap.push_back(color);
                 }
+            }
 
-                if (!filteredMap.empty()) {
-                    vaoMap_.bind();
-                    vboMap_.bind();
-                    vboMap_.allocate(filteredMap.data(),
-                                     static_cast<int>(filteredMap.size() * sizeof(Eigen::Vector3f)));
-                    glDrawArrays(GL_POINTS, 0, static_cast<int>(filteredMap.size() / 2));
-                    vboMap_.release();
-                    vaoMap_.release();
-                }
-                progColorCloud_.release();
-            } else {
-                // 原始渲染逻辑
-                progColorCloud_.bind();
-                progColorCloud_.setUniformValue("mvp", toQMatrix(proj_ * view_));
-                progColorCloud_.setUniformValue("uPointSize", mapPtSize_);
-                progColorCloud_.setUniformValue("uAlpha", 1.0f);
-                progColorCloud_.setUniformValue("uSoftEdge", 0.35f);
+            if (!filteredMap.empty()) {
                 vaoMap_.bind();
-                glDrawArrays(GL_POINTS, 0, mapPts_);
+                vboMap_.bind();
+                vboMap_.allocate(filteredMap.data(),
+                                 static_cast<int>(filteredMap.size() * sizeof(Eigen::Vector3f)));
+                glDrawArrays(GL_POINTS, 0, static_cast<int>(filteredMap.size() / 2));
+                vboMap_.release();
                 vaoMap_.release();
-                progColorCloud_.release();
             }
+            progColorCloud_.release();
+        } else {
+            // 原始渲染逻辑
+            progColorCloud_.bind();
+            progColorCloud_.setUniformValue("mvp", toQMatrix(proj_ * view_));
+            progColorCloud_.setUniformValue("uPointSize", mapPtSize_);
+            progColorCloud_.setUniformValue("uAlpha", 1.0f);
+            progColorCloud_.setUniformValue("uSoftEdge", 0.35f);
+            vaoMap_.bind();
+            glDrawArrays(GL_POINTS, 0, mapPts_);
+            vaoMap_.release();
+            progColorCloud_.release();
         }
-
-        // 再渲染实时点云（Z=2.0，在上层）
-        if (showRealtimeCloud_ && cloudPts_ > 0) {
-            if (enableZFilter_) {
-                // 使用过滤后的点云
-                progSimple_.bind();
-                const Eigen::Matrix4d mvp = proj_ * view_;
-                progSimple_.setUniformValue("mvp", toQMatrix(mvp));
-                progSimple_.setUniformValue("col", QVector3D(0.35f, 0.85f, 0.95f));
-
-                // 过滤点云
-                std::vector<Eigen::Vector3f> filteredCloud;
-                filteredCloud.reserve(cloudCpu_.size());
-                for (const auto& pt : cloudCpu_) {
-                    if (pt.z() >= zMinFilter_ && pt.z() <= zMaxFilter_) {
-                        filteredCloud.push_back(pt);
-                    }
-                }
-
-                if (!filteredCloud.empty()) {
-                    vaoCloud_.bind();
-                    vboCloud_.bind();
-                    vboCloud_.allocate(filteredCloud.data(),
-                                       static_cast<int>(filteredCloud.size() * sizeof(Eigen::Vector3f)));
-                    glPointSize(cloudPtSize_);
-                    glDrawArrays(GL_POINTS, 0, static_cast<int>(filteredCloud.size()));
-                    vboCloud_.release();
-                    vaoCloud_.release();
-                }
-                progSimple_.release();
-            } else {
-                // 原始渲染逻辑
-                progSimple_.bind();
-                const Eigen::Matrix4d mvp = proj_ * view_;
-                progSimple_.setUniformValue("mvp", toQMatrix(mvp));
-                progSimple_.setUniformValue("col", QVector3D(0.35f, 0.85f, 0.95f));
-                vaoCloud_.bind();
-                glPointSize(cloudPtSize_);
-                glDrawArrays(GL_POINTS, 0, cloudPts_);
-                vaoCloud_.release();
-                progSimple_.release();
-            }
-        }
-
     }
-    else
-    {
-        // 可以在这里添加一些提示信息或调试输出
-        static int frameCnt = 0;
-        if (++frameCnt % 60 == 0) {  // 每秒显示一次（假设60fps）
-            qDebug() << "等待 base_init -> laser_link 变换，暂不绘制点云...";
+
+    // 再渲染实时点云（Z=2.0，在上层）
+    if (showRealtimeCloud_ && cloudPts_ > 0) {
+        if (enableZFilter_) {
+            // 使用过滤后的点云
+            progSimple_.bind();
+            const Eigen::Matrix4d mvp = proj_ * view_;
+            progSimple_.setUniformValue("mvp", toQMatrix(mvp));
+            progSimple_.setUniformValue("col", QVector3D(0.35f, 0.85f, 0.95f));
+
+            // 过滤点云
+            std::vector<Eigen::Vector3f> filteredCloud;
+            filteredCloud.reserve(cloudCpu_.size());
+            for (const auto& pt : cloudCpu_) {
+                if (pt.z() >= zMinFilter_ && pt.z() <= zMaxFilter_) {
+                    filteredCloud.push_back(pt);
+                }
+            }
+
+            if (!filteredCloud.empty()) {
+                vaoCloud_.bind();
+                vboCloud_.bind();
+                vboCloud_.allocate(filteredCloud.data(),
+                                   static_cast<int>(filteredCloud.size() * sizeof(Eigen::Vector3f)));
+                glPointSize(cloudPtSize_);
+                glDrawArrays(GL_POINTS, 0, static_cast<int>(filteredCloud.size()));
+                vboCloud_.release();
+                vaoCloud_.release();
+            }
+            progSimple_.release();
+        } else {
+            // 原始渲染逻辑
+            progSimple_.bind();
+            const Eigen::Matrix4d mvp = proj_ * view_;
+            progSimple_.setUniformValue("mvp", toQMatrix(mvp));
+            progSimple_.setUniformValue("col", QVector3D(0.35f, 0.85f, 0.95f));
+            vaoCloud_.bind();
+            glPointSize(cloudPtSize_);
+            glDrawArrays(GL_POINTS, 0, cloudPts_);
+            vaoCloud_.release();
+            progSimple_.release();
         }
     }
 
@@ -541,7 +554,8 @@ void GLWidget::paintGL()
 
     // 渲染2D激光雷达数据 (红色) - 后渲染实时点云(Z=0.1，上层)
     // 关联到实时点云开关，保持一致的显隐控制
-    if (showRealtimeCloud_ && showScan2D_ && scan2DPts_ > 0 && hasLidarPose_) {
+    if (showRealtimeCloud_ && showScan2D_ && scan2DPts_ > 0
+        && tf_.edgeTransform(TfTree::Edge::BaseLink).has_value()) {
         progSimple_.bind();
         progSimple_.setUniformValue("mvp", toQMatrix(proj_ * view_));
         progSimple_.setUniformValue("col", QVector3D(1.0f, 0.3f, 0.3f)); // 浅红色
@@ -576,11 +590,27 @@ void GLWidget::paintGL()
     }
 
     // 箭头渲染 - 不受Z轴过滤影响，始终显示
-    if (trail_.hasValidTransform && hasRobotPose_)
+    // 矩阵从模块现取（不判新鲜度：机器人「最后一帧停在哪儿」照旧要画得出来）。
+    // 清地图时 tf_.clear() 会把这条边一起清掉，箭头随之消失。
+    if (const auto T_base_link = tf_.edgeTransform(TfTree::Edge::BaseLink))
     {
         progSimple_.bind();
-        drawSolidArrow(T_map_base_link_, 1.0f, 0.15f);
+        drawSolidArrow(*T_base_link, 1.0f, 0.15f);
         progSimple_.release();
+    }
+
+    // 开机点标记（工单 09）：**仅定位模式**、且 `0x02` 到过时才画。
+    //
+    // 与机器人箭头是**同一个几何体，只换颜色**：两个箭头会同时在图上，形状分不出谁是谁，
+    // 颜色是这一票唯一的区分手段。取蓝色是因为一圈颜色都用掉了——机器人箭头红、实时点云青、
+    // 地图点云按高度配色、2D 扫描浅红、轨迹绿、规划路径红、指点箭头绿/黄。
+    //
+    // 位置与朝向都取模块那条静态边的**现值**，**不判新鲜度**：开机点是一趟里不变的事实，
+    // 不会因为 `0x02` 不再重发就不成立（判那条边新不新鲜是工单 08 那个显示位的事）。
+    // 建图模式下压根不画（见 originState()：那时它恒等于图原点，压在图原点坐标轴上只是噪声）。
+    if (originState() == OriginState::Ready) {
+        if (const auto T_origin = tf_.edgeTransform(TfTree::Edge::BaseInit))
+            drawSolidArrow(*T_origin, 1.0f, 0.15f, QVector3D(0.25f, 0.55f, 1.0f));
     }
 
     // 绘制指点模式的箭头（未完成：绿色，已完成：黄色）
@@ -630,29 +660,24 @@ void GLWidget::setZFilterEnabled(bool enabled)
 
 // =========== 数据处理
 
-/* -------------- 新协议：机器人位姿处理 -------------- */
+/* -------------- 新协议：机器人位姿处理 (0x01 → base_init_map → base_link) -------------- */
 void GLWidget::onRobotPose(const RobotPoseMsg &m)
 {
-    // 构建变换矩阵 base_init → base_link
-    Eigen::Matrix4d T = Eigen::Matrix4d::Identity();
-    T.block<3,3>(0,0) = Eigen::Quaterniond(m.qw, m.qx, m.qy, m.qz).matrix();
-    T.block<3,1>(0,3) = Eigen::Vector3d(m.x, m.y, m.z);
+    // 位姿→矩阵这一折只在模块里做一次。Eigen 的四元数构造是 **w 在前**，线上是 qx,qy,qz,qw。
+    const Vec3 t(m.x, m.y, m.z);
+    const Quat q(m.qw, m.qx, m.qy, m.qz);
+    tf_.setPose(TfTree::Edge::BaseLink, t, q, TfTree::Clock::now());
 
-    T_map_base_link_ = T;
-    hasRobotPose_ = true;
-
-    // 更新轨迹
-    Eigen::Vector3f pt = T.block<3,1>(0,3).cast<float>();
-    trail_.points.push_back(pt);
+    // 更新轨迹（数值同改动前：直接用载荷里的平移）
+    trail_.points.push_back(t.cast<float>());
     while (trail_.points.size() > kMaxTrail) trail_.points.pop_front();
 
-    trail_.latestTransform = T;
-    trail_.hasValidTransform = true;
+    // 发出位姿信号。取角用的矩阵就是模块摆好的那一份，不在调用点另建一个。
+    const auto T_base_link = tf_.edgeTransform(TfTree::Edge::BaseLink);
+    if (!T_base_link) return;
 
-    // 发出位姿信号
-    const Eigen::Matrix3d &R = T.block<3,3>(0,0);
     double ypr_yaw, ypr_pitch, ypr_roll;
-    rotToYPR_ZYX(R, ypr_yaw, ypr_pitch, ypr_roll);
+    rotToYPR_ZYX(T_base_link->block<3,3>(0,0), ypr_yaw, ypr_pitch, ypr_roll);
 
     int deg_yaw   = static_cast<int>(std::lround(ypr_yaw   * 180.0 / M_PI));
     int deg_pitch = static_cast<int>(std::lround(ypr_pitch * 180.0 / M_PI));
@@ -661,27 +686,161 @@ void GLWidget::onRobotPose(const RobotPoseMsg &m)
     emit tfInfoChanged(m.x, m.y, m.z, deg_yaw, deg_pitch, deg_roll);
 }
 
-/* -------------- 新协议：雷达位姿处理 -------------- */
-void GLWidget::onLidarPose(const LidarPoseMsg &m)
+/* -------------- 新协议：重定位结果处理 (0x02 → base_init_map → base_init) -------------- */
+void GLWidget::onRelocalizationPose(const RelocalizationPoseMsg &m)
 {
-    // 构建变换矩阵 base_init → laser_link
-    Eigen::Matrix4d T = Eigen::Matrix4d::Identity();
-    T.block<3,3>(0,0) = Eigen::Quaterniond(m.qw, m.qx, m.qy, m.qz).matrix();
-    T.block<3,1>(0,3) = Eigen::Vector3d(m.x, m.y, m.z);
+    // 收下这条边就够了，**到此为止**：v2.8 的 `0x02` 是「这一趟的开机点在图里哪儿」，
+    // 它不参与任何坐标变换——以前拿它当雷达位姿折点云，等于把所有激光数据整体
+    // 平移一个开机点偏移（安装位姿 T 全 0 时看不出来，正是要消灭的那个静默错）。
+    // 显示开机点（工单 09）与「这条边到没到」的判据（工单 08）都从模块里取。
+    const Vec3 t(m.x, m.y, m.z);
+    const Quat q(m.qw, m.qx, m.qy, m.qz);
+    tf_.setPose(TfTree::Edge::BaseInit, t, q, TfTree::Clock::now());
 
-    T_map_laser_ = T;
-    hasLidarPose_ = true;
+    // 「定位状态」立刻翻成「已定位」（工单 08）：不等下一个节拍，收帧这一下就是最新事实。
+    // 反方向（超时）没有事件可等，只能靠定时器到点去看，见 refreshLocalizationStatus()。
+    refreshLocalizationStatus();
+
+    // 开机点也立刻跟上（工单 09）：新的一帧 `0x02` = 新的一次重定位，开机点可能挪了地方。
+    // 标记的位置、界面上那三个数，都是从这里推出去的（数值原样取自刚喂进去的载荷）。
+    publishOriginMarkerState();
+}
+
+// 「定位状态」显示位（工单 08）的**唯一**入口：帧到达、清图、定时器到点三处都走它。
+//
+// 判据**唯一来源**是最后一条 `0x02` 的到达时刻——问的就是模块里被 `0x02` 喂的那条边
+// （`Edge::BaseInit`）。**不拿 `0x0B` 状态帧里的 `relocalization` 位顶替**：那是模块的
+// **内部状态自述**（进行中 / 成功 / 失败 / 未响应），而界面缺的是「`base_init_map → base_init`
+// 这条边发出来了没有」——二者可以不一致（例如丢包），不能互相顶替。`0x0B` 那一路照旧
+// 喂「重定位 / 规划」两个标签（在 Ros3DPage 里），与这一位各占各的显示位。
+//
+// 三种文案都是**当前状态**（不是事件留痕），所以恢复正常时自己会变回来：
+//   已定位                  —— 最近一条 `0x02` 还在 kFreshWindow 内（**恰好 500 ms 仍算新鲜**）
+//   未定位（0x02 超时）      —— 收到过 `0x02`，但这一条之后已经超过 kFreshWindow 没有新的
+//   未定位（还没收到过 0x02）—— 本会话一条都没到过（含模块重启之后）
+//
+// 「超时」与「还没收到过」分开是本仓既有的规矩（同 Ros3DPage 里「未收到规划状态」与模块那句
+// 「未响应」必须显示得不一样）：**链路/模块没发**与**发过但断了**不是一个事实，
+// 一上来就说「超时」等于断言一条从没到过的帧超时了。这里也不弹窗、不写日志——
+// 位姿在 500 ms 边界上来回抖时它会跟着反复变，那是状态、不是事件（留痕归帧名校验那个红状态位）。
+void GLWidget::refreshLocalizationStatus()
+{
+    QString text;
+    if (tf_.isFresh(TfTree::Edge::BaseInit, TfTree::Clock::now())) {
+        text = tr("已定位");
+    } else if (tf_.edgeTransform(TfTree::Edge::BaseInit).has_value()) {
+        // 「这条边到过」问模块即可（有值 = 喂过），不另存一个「0x02 收到过没有」的标志：
+        // 多存一个标志就多一处能跟模块对不上的地方。
+        text = tr("未定位（0x02 超时）");
+    } else {
+        text = tr("未定位（还没收到过 0x02）");
+    }
+
+    // 节拍 100 ms，文案不变时发信号毫无意义 —— 与工单 05 的红状态位、工单 07 的扫描说明
+    // 同一条规矩：只在变化时动一次。
+    if (text == localizationStatus_) return;
+    localizationStatus_ = text;
+    emit localizationStatusChanged(text);
+}
+
+/* -------------- 开机点标记（工单 09） -------------- */
+
+// 画不画开机点、界面上那三个数显示什么、不画时说明哪一句 —— **判据只有这一处**。
+// （paintGL 画不画、publishOriginMarkerState 发什么，都从它推出来。分开各写一遍，
+//  就会出现「图上画着、界面却说没画」这种自相矛盾的状态。）
+//
+// 判据取参数 `0x13`「模式」，**不从 `0x02` 的数值去猜**：恒等不等于建图，将来 `T ≠ 0` 就会猜错。
+// 这里**只认原始上报值**：`0x13` 是模块的**现场写入值**，协议另有一说（`0x14 = 1` 且模块类型
+// ∈ {1, 3} 时会被**强制**成定位模式，生效值 ≠ 现场值），要不要按生效值判由本票之外的改动定；
+// 本票按票面「模式由 `0x13` 判定」办，只送/只用这一份原始值。
+GLWidget::OriginState GLWidget::originState() const
+{
+    // 只认「明说 1」。`-1`（没读到过）与任何不认识的取值一律按「不知道」算 ——
+    // 不知道就不画：按建图处理会多出一个说不清来源的标记，按定位处理则会画一个可能错位的
+    // （未读到过是常见态：`0x13` 不是周期帧，用户没点过「读取参数」的整段会话里它都是 -1）。
+    if (moduleMode_ == 0) return OriginState::Mapping;
+    if (moduleMode_ != 1) return OriginState::UnknownMode;
+
+    // 定位模式：还得 `0x02` 到过。这条边是静态的、只发一次，到过就一直有；
+    // **不判新鲜度** —— 开机点是这一趟里不变的事实，`0x02` 不再重发不代表它不成立。
+    return tf_.edgeTransform(TfTree::Edge::BaseInit).has_value()
+               ? OriginState::Ready
+               : OriginState::NoReloc;
+}
+
+// 把当前状态推给界面：**一条信号带齐**「画不画 / 为什么」与「数值是多少」。
+// 四个调用点：`0x02` 到达、`0x13` 变化、清图（这条边被抹掉）、以及界面构造完之后主动推的第一次。
+void GLWidget::publishOriginMarkerState()
+{
+    // 数值也从模块那条静态边取。它就是 `0x02` 载荷本身：平移是载荷的 x/y/z（原样存进去的），
+    // 旋转是载荷的四元数 —— 所以显示出来的数与载荷逐位一致，图形层不另存一份副本。
+    const auto T_origin = tf_.edgeTransform(TfTree::Edge::BaseInit);
+
+    QString note;
+    double x = 0.0, y = 0.0, yawDeg = 0.0;
+
+    switch (originState()) {
+    case OriginState::UnknownMode:
+        note = tr("开机点未显示：还没读到过模式参数（0x13）");
+        break;
+    case OriginState::Mapping:
+        // 这句话是**必须**有的：建图模式下这个标记一整场都不画，不说出来
+        // 就分不清「本来就不画」和「界面卡住了」（本次三处「可能不画」的第三处）。
+        note = tr("开机点未显示：建图模式下开机点就是图原点");
+        break;
+    case OriginState::NoReloc:
+        note = tr("开机点未显示：定位模式下还没收到过重定位结果（0x02）");
+        break;
+    case OriginState::Ready:
+        // Ready 就是「这条边有值」判出来的（见 originState()），这里必然取得到。
+        x = (*T_origin)(0, 3);
+        y = (*T_origin)(1, 3);
+        {
+            double yawRad = 0.0, pitch = 0.0, roll = 0.0;
+            rotToYPR_ZYX(T_origin->block<3, 3>(0, 0), yawRad, pitch, roll);
+            // 取整到度：与「机器人坐标」那一组同一个口径（那边也是整数度）。
+            yawDeg = static_cast<double>(std::lround(yawRad * 180.0 / M_PI));
+        }
+        break;
+    }
+
+    // 只在真变了才发（`0x02` 是 10 Hz 重发的）：文案或三个数任一不同才算变。
+    // 第一次一定发（originMarkerPublished_）—— 初值是「还没读到过模式」，而它不会再变，
+    // 不推这一次，界面上那句说明就永远出不来（信号只在变化时发）。
+    if (originMarkerPublished_ && note == originMarkerNote_
+        && x == originMarkerX_ && y == originMarkerY_ && yawDeg == originMarkerYawDeg_)
+        return;
+
+    originMarkerPublished_ = true;
+    originMarkerNote_      = note;
+    originMarkerX_         = x;
+    originMarkerY_         = y;
+    originMarkerYawDeg_    = yawDeg;
+
+    emit originMarkerChanged(note, x, y, yawDeg);
 }
 
 void GLWidget::onCloud(const CloudMsg &m)
 {
     if (m.points.empty()) return;
 
-    // 必须等待雷达位姿才能处理点云
-    if (!hasLidarPose_) {
-        return;
-    }
-
+    // ⚠️ 这一段是本次（工单 06）新引入的**主动不做事**，两件事都要保住，别被后续改动抹掉：
+    //
+    //   1. **一行变换都不做**：v2.8 的 `0x03` 载荷已经在图的原点系（`base_init_map`）里，
+    //      载荷坐标**就是**图上坐标。v2.6 那套「点云在 laser_link 系、靠位姿嫁接过来」
+    //      到此为止（工单 04 先把嫁接依据换成 `0x01` 的 base_link 边，本票把嫁接本身摘掉）。
+    //   2. **没有「必须先收到位姿」这道门**：点云本来就不需要位姿。只摘嫁接、忘了摘门，
+    //      会造成未定位时点云**整条不画**——界面上看起来就是卡住了，又一处静默错误，
+    //      正是工单 06 特意点出的一处。
+    //
+    // 于是这里既不调 placeInMap()、也不折安装位姿 T：
+    //   * placeInMap() 自带「边没喂过 / 超时就不摆放」，对 `0x03` **不适用**——
+    //     调它等于把上面那道门又装回去；
+    //   * 折 T 等于把整片点云平移一个开机点偏移（实机上 T 全 0 时看不出来，正是要消灭的静默错）。
+    //
+    // 摘了门之后的版本安全感由**帧名校验**提供（工单 05）：模块若是 v2.6，它发的 `0x03`
+    // 父系不是 `base_init_map`，在解析层就被丢了，根本到不了这里。
+    // 谁要给 `0x03` 加回变换，先把上面这两条读一遍。
     QMutexLocker lk(&dataMtx_);
 
     // 首次进入3D模式时，清空已有的2D点云数据
@@ -705,15 +864,12 @@ void GLWidget::onCloud(const CloudMsg &m)
         map2DDirty_.store(false, std::memory_order_release);
     }
 
-    // 统计本帧在 map 系下的高度范围
+    // 统计本帧的高度范围。图系 = 载荷系，所以直接读载荷的 z，不经过任何变换。
     float localMinZ_map = std::numeric_limits<float>::max();
     float localMaxZ_map = std::numeric_limits<float>::lowest();
 
     for (const auto &pt : m.points) {
-        // 点云在 laser 坐标系下，变换到 map 系
-        Eigen::Vector4d p_laser(pt.x(), pt.y(), pt.z(), 1.0);
-        Eigen::Vector4d p_map = T_map_laser_ * p_laser;
-        float z_map = static_cast<float>(p_map.z());
+        const float z_map = pt.z();
         localMinZ_map = std::min(localMinZ_map, z_map);
         localMaxZ_map = std::max(localMaxZ_map, z_map);
     }
@@ -723,16 +879,14 @@ void GLWidget::onCloud(const CloudMsg &m)
     mapMinZ_ = std::min(mapMinZ_, localMinZ_map);
     mapMaxZ_ = std::max(mapMaxZ_, localMaxZ_map);
 
-    // 转换实时帧到 map 系
+    // 实时帧：载荷坐标**原样**存下（图系），不做任何变换——上面那段说的「主动不做事」在这里落成代码
     cloudCpu_.clear();
     cloudCpu_.reserve(m.points.size());
 
     for (const auto &pt : m.points) {
-        Eigen::Vector4d p_laser(pt.x(), pt.y(), pt.z(), 1.0);
-        Eigen::Vector4d p_map = T_map_laser_ * p_laser;
-        Eigen::Vector3f p_result = p_map.head<3>().cast<float>();
+        Eigen::Vector3f p_result(pt.x(), pt.y(), pt.z());
 
-        // 2D模式下实时点云Z轴统一设为0.5（在地图点云之上）
+        // 2D模式下实时点云Z轴统一设为2.0（在地图点云之上；渲染那边也是这个值）
         if (is2DMode_) {
             p_result.z() = 2.0f;
         }
@@ -743,16 +897,16 @@ void GLWidget::onCloud(const CloudMsg &m)
     cloudDirty_.store(true, std::memory_order_release);
 
     // 累加到地图点云（带体素去重）
+    //
+    // 去重用的栅格现在**就是图系里的栅格**：载荷坐标即图上坐标，一个点落在哪一格只由它自己的
+    // 坐标决定。以前去重键取的是「子帧」下的坐标（那时点云还要被摆一次，栅格跟着位姿飘），
+    // 现在两者合一：机器人动了，同一处障碍物照旧落进同一格，累积地图才在图上站得住。
     for (const auto &pt : m.points) {
-        // 在 laser 系下做去重
         auto [vx, vy, vz] = posToVoxel(Eigen::Vector3f(pt.x(), pt.y(), pt.z()));
         uint64_t h = voxelHash(vx, vy, vz);
 
         if (mapVoxelSet_.insert(h).second) {
-            // 变换到 map 系
-            Eigen::Vector4d p_laser(pt.x(), pt.y(), pt.z(), 1.0);
-            Eigen::Vector4d p_map = T_map_laser_ * p_laser;
-            Eigen::Vector3f p_result = p_map.head<3>().cast<float>();
+            Eigen::Vector3f p_result(pt.x(), pt.y(), pt.z());
 
             // 2D模式下地图点云Z轴统一设为0
             if (is2DMode_) {
@@ -762,7 +916,7 @@ void GLWidget::onCloud(const CloudMsg &m)
             mapInterleavedCpu_.push_back(p_result);
 
             // 颜色：基于 map.z（2D模式下使用固定Z值计算颜色）
-            float z_for_color = is2DMode_ ? 0.0f : static_cast<float>(p_map.z());
+            float z_for_color = is2DMode_ ? 0.0f : pt.z();
             QVector3D c = heightToColor(z_for_color, mapMinZ_, mapMaxZ_);
             mapInterleavedCpu_.emplace_back(c.x(), c.y(), c.z());
         }
@@ -1009,11 +1163,24 @@ QVector3D GLWidget::normalToColor(const Eigen::Vector3f& n)
 // ========操作栏===============
 void GLWidget::clearMap()
 {
-    // 清理TF数据
-    hasRobotPose_ = false;
-    hasLidarPose_ = false;
-    T_map_base_link_.setIdentity();
-    T_map_laser_.setIdentity();
+    // 清理位姿：两条边一起清（位姿与到达时刻都清），机器人箭头随之不再绘制
+    tf_.clear();
+
+    // 「扫描为什么不画」的那句说明也跟着收掉（工单 07）：它是**由状态推出来的**，
+    // 状态刚被整个复位，留着旧句子就是在说一件已经不存在的事。
+    // 位姿若仍然陈旧，下一帧扫描到了会重新推出来（setScan2DNote 只在变化时发信号）。
+    setScan2DNote(QString());
+
+    // 「定位状态」同一条道理（工单 08）：`0x02` 那条边刚被 clear() 抹掉，显示位立刻回到
+    // 「还没收到过」——不等下一个节拍，否则那 100 ms 里它还在说「已定位」，而那位姿已经无处可查。
+    // （这条边下一次收帧就会重新点亮它，模块的 `0x02` 是 10 Hz 重发的。）
+    refreshLocalizationStatus();
+
+    // 开机点同理（工单 09）：标记画不画、界面上那三个数，都是由这条边推出来的，
+    // 边刚被抹掉就得跟着走 —— 留着就是拿上一趟开机点当这一趟的。
+    // 定位模式下它会立刻变成「还没收到过重定位结果（0x02）」，那三个数随之从界面上消失。
+    publishOriginMarkerState();
+
     // 清理地图点云
     {
         QMutexLocker lk(&dataMtx_);
@@ -1042,9 +1209,7 @@ void GLWidget::clearMap()
     // 清理2D数据
     {
         QMutexLocker lk(&dataMtx_);
-        scan2DCpu_.clear();
-        scan2DPts_ = 0;
-        scan2DDirty_.store(false, std::memory_order_release);
+        clearScan2DCacheLocked();   // 同一个入口，见它上面的说明（工单 07）
 
         map2DCpu_.clear();
         map2DPts_ = 0;
@@ -1094,12 +1259,25 @@ void GLWidget::clearMap()
     }, Qt::QueuedConnection);
 }
 
+// 参数 0x13「模式」：串口层收到 AA 10 时就地缓存，变化时下发到这里（工单 03）。
+// 取值 0 = 建图、1 = 定位、-1 = 本会话还没读到过（模块只在被读取参数时才下发该参数，
+// 模块重启或重新连接后要重新读到才算数）。取值一变，开机点标记的画法与那句说明跟着改
+// （工单 09）：重绘一次，并把新状态推给界面 —— 建图 ⇄ 定位 切换时两边必须一起变，
+// 只重绘不推、或只推不重绘，都会留下「图上画着、界面说没画」这种不一致。
+void GLWidget::onModuleModeChanged(int mode)
+{
+    if (mode == moduleMode_) return;
+
+    moduleMode_ = mode;
+    publishOriginMarkerState();
+    update();
+}
+
 // 在GLWidget类中添加以下方法：
 void GLWidget::clearTrail()
 {
+    // 只清轨迹点：位姿归模块管，这里的按钮不该顺手把机器人箭头也抹掉
     trail_.points.clear();
-    trail_.hasValidTransform = false;
-    trail_.latestTransform.setIdentity();  // 清理TF轨迹变换矩阵
     update();
 }
 
@@ -1205,6 +1383,30 @@ void GLWidget::updateNavTargetFromUI(double x, double y, double z, double yaw_de
 }
 
 /* -------------- 2D激光雷达数据处理 -------------- */
+
+// 2D 扫描缓存的唯一清理入口（工单 07）：不摆放一帧时要用它把**上一帧**也抹掉。
+// **必须在持有 dataMtx_ 时调用**（两个调用点都在锁内）。只清 CPU 缓存与点数：
+// 渲染那道门看的是 scan2DPts_，它归零就不会再画；VBO 里剩的旧顶点画不出来，
+// 等下一帧有数据时会被整块重新 allocate。
+void GLWidget::clearScan2DCacheLocked()
+{
+    scan2DCpu_.clear();
+    scan2DPts_ = 0;
+    scan2DDirty_.store(false, std::memory_order_release);
+}
+
+// 「2D 扫描为什么不画」的说明（工单 07）：**只在文案变化时**发一次信号。
+// 扫描是按 10 Hz 重发的，同一个原因每帧都发一遍毫无意义（与工单 05 的红状态位同一条规矩）。
+// 空串 = 正常，界面收到后把标签收起来。**不写日志**：位姿在 500 ms 边界上来回抖时
+// 这句话会跟着反复出现，逐次记日志会把接收窗口淹掉——它描述的是**当前状态**，不是事件。
+void GLWidget::setScan2DNote(const QString &note)
+{
+    if (note == scan2DNote_) return;
+
+    scan2DNote_ = note;
+    emit scan2DNoteChanged(note);
+}
+
 void GLWidget::onScan2D(const Scan2DMsg &msg)
 {
     // 首次进入2D模式时，清空已有的3D点云地图数据
@@ -1221,10 +1423,36 @@ void GLWidget::onScan2D(const Scan2DMsg &msg)
         cloudDirty_.store(false, std::memory_order_release);
     }
 
-    // 必须等待雷达位姿才能处理点云
-    if (!hasLidarPose_) {
+    // 摆放依据：最近一帧 `0x01` 的 base_init_map → base_link（工单 04 起）。
+    // `0x05` 载荷里既没有帧名也没有位姿，而且**已经**在 base_link 系（模块侧的 /scan
+    // 折过安装位姿 T 了），所以这里**不折 T**——再折一次就是用 T 罚两遍。
+    // 摆放依据只能借这条边，取**最近一帧**，**不插值**：`0x01` 与 `0x05` 的载荷里都没有时间戳
+    // （两份协议文档里都没有），插值没有依据；接受「扫描跟着上一帧位姿」的错位。
+    // （帧名同理：`0x05` 载荷里**没有**帧名字段，模块也不发，只能**硬约定**本帧在
+    //  `base_link` 系——工单 02 的对照表里它记作「无字段、不可校」。）
+    const TfTree::Stamp now = TfTree::Clock::now();
+    if (!tf_.isFresh(TfTree::Edge::BaseLink, now)) {
+        // 工单 07 新引入的「主动不做事」，两件事必须一起做：
+        //   ① 这一帧扫描**不摆放**（placeInMap() 自己也会拒绝，这里提前挡掉，免得白算一场）；
+        //   ② **并且清空扫描缓存** —— 只挡住新帧是不够的：上一帧摆好的点还在 scan2DCpu_ 里，
+        //      下面的 2D 渲染照画不误，看起来就是扫描**冻在旧位置**上。那比不画更糟：
+        //      界面上分不出「扫描没动」和「机器人没动」，又是一个静默错。
+        {
+            QMutexLocker lk(&dataMtx_);
+            clearScan2DCacheLocked();
+        }
+        // 界面上留一句话：不画**是有原因的**，否则会被当成卡顿。
+        // 门槛值从模块里取（kFreshWindow），不在界面上另写一个 500 ms。
+        setScan2DNote(tf_.edgeTransform(TfTree::Edge::BaseLink).has_value()
+                          ? tr("2D 扫描未绘制：机器人位姿（0x01）已超过 %1 ms 未更新")
+                                .arg(TfTree::kFreshWindow.count())
+                          : tr("2D 扫描未绘制：还没收到过机器人位姿（0x01）"));
+        if (glReady_) update();   // 数据已清，重画一次让屏幕上的旧扫描消失
         return;
     }
+
+    // 位姿是新的：把上面那句「不画」的说明收掉（恢复正常时不留在屏幕上）。
+    setScan2DNote(QString());
 
     QMutexLocker lk(&dataMtx_);
     scan2DCpu_.clear();
@@ -1236,15 +1464,16 @@ void GLWidget::onScan2D(const Scan2DMsg &msg)
 
         double angle = msg.angle_min + i * msg.angle_increment;
 
-        // 在 laser_link 坐标系下的点
+        // 在 base_link 系（机器人中心）下的点
         float x = r * static_cast<float>(cos(angle));
         float y = r * static_cast<float>(sin(angle));
         float z = 0;  // 2D激光雷达，z=0
 
-        // 变换到 map 坐标系
-        Eigen::Vector4d p_laser(x, y, z, 1.0);
-        Eigen::Vector4d p_map = T_map_laser_ * p_laser;
-        Eigen::Vector3f p_result = p_map.head<3>().cast<float>();
+        // 摆进图的原点系
+        const auto p_map = tf_.placeInMap(TfTree::Edge::BaseLink,
+                                          Vec3(x, y, z), now);
+        if (!p_map) continue;
+        Eigen::Vector3f p_result = p_map->cast<float>();
 
         // 2D实时点云Z轴统一设为0.1（在地图点云之上）
         p_result.z() = 0.1f;

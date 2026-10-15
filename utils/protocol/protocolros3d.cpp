@@ -1,4 +1,5 @@
 ﻿#include "protocolros3d.h"
+#include "tftree.h"          // frameNamesAccepted()：帧名期望表**唯一**的所在（工单 02）
 #include <QJsonDocument>
 #include <QJsonValue>
 #include <QDebug>
@@ -10,7 +11,7 @@
 
 // 新协议命令ID定义
 static const uint8_t CMD_ROBOT_POSE  = 0x01;  // 机器人位姿 (base_init → base_link)
-static const uint8_t CMD_LIDAR_POSE  = 0x02;  // 雷达位姿 (base_init → laser_link)
+static const uint8_t CMD_RELOCALIZATION_POSE = 0x02;  // 重定位结果 (base_init_map → base_init)
 static const uint8_t CMD_CLOUD       = 0x03;  // 3D点云数据
 static const uint8_t CMD_SCAN_2D     = 0x05;  // 2D激光雷达数据
 static const uint8_t CMD_MAP_2D      = 0x06;  // 2D地图数据
@@ -66,9 +67,34 @@ quint8 ProtocolRos3D::crc8(const QByteArray& data)
 /* 根据 cmd 分发 */
 void ProtocolRos3D::parseJsonFrame(uint8_t cmd, const QJsonObject& obj)
 {
+    // ---- 帧名校验（工单 05）：帧名从「读了不用」变成「读了就校验」----
+    //
+    // 校验放在这里、只放在这里：本层是「拿到 JSON、知道帧号」的那一层，也是唯一一处
+    // 能一网打尽所有帧的地方（下面每个 parseXxx 各查一遍就会漏、就会散）。
+    //
+    // ⚠️ 这是本次新引入、最容易被后续改动抹掉的**主动拒绝**，别当成多余的防御删掉：
+    // 0x01 的父系从 `world` 改成 `base_init_map` 时**载荷字段一个都没变**，
+    // 不读帧名的话这种改名就是一条完全静默的通道（改对了看不出来、改错了也看不出来），
+    // 而 0x02 的载荷与 v2.6 逐字段相同、只能靠帧名分辨新旧。删掉这次校验，
+    // 下一步就是「照折旧位姿」——正是本次要消灭的那个静默错误。
+    //
+    // 期望值**只有一份**，在 utils/protocol/tftree.cpp 的 kFrameNameExpectations 那张表里。
+    // 这里只把载荷里读到的两个名字**原样**交过去判，「期望是什么」本层一概不知道，
+    // 也不许另抄一份——那正是那张表要收掉的东西。
+    //
+    // 判拒绝 ⇒ 丢帧：本函数到此为止，该帧不解析、不渲染，只发一个信号让界面留痕。
+    // 0x05 / 0x06（载荷里没有帧名字段）与表外帧号恒判接受——那是「不可校验」，
+    // 不是「校验通过」，详见 tftree.h 里那段说明。
+    const QString frameId      = obj["frame_id"].toString();
+    const QString childFrameId = obj["child_frame_id"].toString();
+    if (!frameNamesAccepted(cmd, frameId.toStdString(), childFrameId.toStdString())) {
+        emit frameNameRejected(cmd, frameId, childFrameId);
+        return;
+    }
+
     switch (cmd) {
     case CMD_ROBOT_POSE:  parseRobotPose(obj);  break;
-    case CMD_LIDAR_POSE:  parseLidarPose(obj);  break;
+    case CMD_RELOCALIZATION_POSE: parseRelocalizationPose(obj);  break;
     case CMD_CLOUD:       parseCloud(obj);      break;
     case CMD_SCAN_2D:     parseScan2D(obj);     break;
     case CMD_MAP_2D:      parseMap2D(obj);      break;
@@ -113,10 +139,13 @@ void ProtocolRos3D::parseRobotPose(const QJsonObject& obj)
     emit robotPoseUpdated(m);
 }
 
-/* 雷达位姿解析 (base_init → laser_link) */
-void ProtocolRos3D::parseLidarPose(const QJsonObject& obj)
+/* 重定位结果解析 (base_init_map → base_init) */
+// 字段与 v2.6 的「雷达位姿」一模一样（x,y,z + 四元数 + 两个帧名），照旧解析不会报错——
+// 分辨新旧只能靠帧名。本层只翻字段：这条边不参与任何坐标变换（工单 04），
+// 只喂给图形层做「开机点在图里哪儿」的显示与「这条边到了没」的判据。
+void ProtocolRos3D::parseRelocalizationPose(const QJsonObject& obj)
 {
-    LidarPoseMsg m;
+    RelocalizationPoseMsg m;
     m.frame_id       = obj["frame_id"].toString();
     m.child_frame_id = obj["child_frame_id"].toString();
     m.x              = obj["x"].toDouble();
@@ -127,11 +156,11 @@ void ProtocolRos3D::parseLidarPose(const QJsonObject& obj)
     m.qz             = obj["qz"].toDouble();
     m.qw             = obj["qw"].toDouble();
 
-    QString msg = QStringLiteral("接收到雷达位姿: x=%1, y=%2, z=%3")
+    QString msg = QStringLiteral("接收到重定位结果: x=%1, y=%2, z=%3")
                       .arg(m.x, 0, 'f', 2).arg(m.y, 0, 'f', 2).arg(m.z, 0, 'f', 2);
     AdminMode::appendMessage(msg);
 
-    emit lidarPoseUpdated(m);
+    emit relocalizationPoseUpdated(m);
 }
 
 
@@ -274,7 +303,8 @@ void ProtocolRos3D::parseGoalPath(const QJsonObject& obj)
 void ProtocolRos3D::parseScan2D(const QJsonObject& obj)
 {
     Scan2DMsg m;
-    m.frame_id = obj["frame_id"].toString();
+    // 不读 obj["frame_id"]：0x05 的载荷里**没有**帧名字段，读了只会得到一个空串。
+    // 它的系 base_link 是硬约定、**不可校验**（见 tftree.cpp 的对照表与工单 05）。
     m.angle_min = obj["angle_min"].toDouble();
     m.angle_max = obj["angle_max"].toDouble();
     m.angle_increment = obj["angle_increment"].toDouble();
@@ -300,7 +330,7 @@ void ProtocolRos3D::parseScan2D(const QJsonObject& obj)
 void ProtocolRos3D::parseMap2D(const QJsonObject& obj)
 {
     Map2DMsg m;
-    m.frame_id = obj["frame_id"].toString();
+    // 同 0x05：载荷里没有帧名字段，base_init_map 是硬约定、不可校验（工单 05）。
     m.width = obj["width"].toInt();
     m.height = obj["height"].toInt();
     m.resolution = obj["resolution"].toDouble();

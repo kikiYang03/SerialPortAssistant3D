@@ -101,7 +101,7 @@ private slots:
     void onDownloadTotalTimeout();   // 整包总超时：兜底，不让整包无限期挂着
     void onDownloadCancelled();      // 进度框上的「取消」：丢弃已收数据，不落盘也不报错
     void onRestartTimeout();         // 回发等待窗口超时：判失败，界面上的数据一个都不动
-    // 模块下发的每一条 AA 10：既缓存 0x99 模块类型，也在保存等待期喂给比对器
+    // 模块下发的每一条 AA 10：既缓存 0x99 模块类型与 0x13 模式，也在保存等待期喂给比对器
     void onModuleParameterFrame(quint8 paramId, qint16 value);
     // 串口通信相关函数
     void on_portSearchBt_clicked();
@@ -133,6 +133,11 @@ private:
     QTimer *saveMapTimer;            // 单次超时定时器（不复用 testTimer：后者带着 3 秒的通信测试超时）
     bool saveMapProbePending;        // 存图超时后补发的通信测试尚未出结果
     int latestModuleType = -1;       // 参数 0x99，未读到过为 -1（读不到就按 3D 的宽超时兜底）
+    int latestModuleMode = -1;       // 参数 0x13「模式」，未读到过为 -1（见 setModuleMode）
+
+    // 参数 0x13「模式」的落地处：缓存 + 只在取值变化时下发给图形层（工单 03）。
+    // 与 0x99 同一条路径 —— 同一个 AA 10 槽缓存、同一处清理，不另起一套。
+    void setModuleMode(int mode);
 
     // 保存地图等待框：可复用组件（工单 06 直接复用、工单 10 在其上扩展），
     // 实例反复用，父子关系管生命周期。回包或超时时先关框，再由调用方弹结果。
@@ -201,7 +206,7 @@ private:
     void updateRestartButton();
 
     // 重启判定成功后清掉本页缓存的运行态镜像（工单 02）：位姿两路（0x01 / 0x03）、
-    // 速度（0x04）、飞控状态帧（0x05）、三个跳变锁存、模块类型（0x99）。
+    // 速度（0x04）、飞控状态帧（0x05）、三个跳变锁存、模块类型（0x99）、模式（0x13）。
     // 不清的话每秒一次的打印定时器会继续把重启前的旧状态当当下值吐到接收窗口。
     void clearModuleRuntimeCaches();
 
@@ -301,6 +306,11 @@ signals:
 
     // 保存参数等待期间：为真时参数页不拿模块回读值刷界面（回读只喂本页的比对器）
     void paramEchoSuppressedChanged(bool suppressed);
+
+    // 参数 0x13「模式」的取值（工单 03）：0 = 建图、1 = 定位、-1 = 本会话还没读到过。
+    // 图形层据此判要不要画开机点标记（工单 09）。**只在取值变化时发**，且「没读到过」
+    // 会单独发一次 -1 —— 默认按 0（建图）处理会让图形层把「不知道」当成「在建图」。
+    void moduleModeChanged(int mode);
 
     // 保存参数闭环的结论摘要（全部一致 / 有出入 N 项 / 超时未集齐），给参数页的状态行
     void saveParamsFinished(const QString &summary);
