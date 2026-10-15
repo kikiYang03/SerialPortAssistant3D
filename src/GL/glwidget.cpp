@@ -496,7 +496,7 @@ void GLWidget::paintGL()
         // 可以在这里添加一些提示信息或调试输出
         static int frameCnt = 0;
         if (++frameCnt % 60 == 0) {  // 每秒显示一次（假设60fps）
-            qDebug() << "等待map->camera_init TF变换，暂不绘制点云...";
+            qDebug() << "等待 base_init -> laser_link 变换，暂不绘制点云...";
         }
     }
 
@@ -612,15 +612,6 @@ void GLWidget::paintGL()
         vaoArrow_.release();
         progSimple_.release();
     }
-    // 渲染完成后打印TF状态
-    // static int frame_cnt = 0;
-    // if (++frame_cnt % 100 == 0) {
-    //     qDebug() << "TF接收状态:" << hasReceivedMapToCameraInitTf_;
-    //     if (hasReceivedMapToCameraInitTf_) {
-    //         qDebug() << "camera_init在map中的位置:"
-    //                  << T_map_ci_(0,3) << T_map_ci_(1,3) << T_map_ci_(2,3);
-    //     }
-    // }
 }
 
 // 添加公共方法用于设置Z轴范围：
@@ -642,7 +633,7 @@ void GLWidget::setZFilterEnabled(bool enabled)
 /* -------------- 新协议：机器人位姿处理 -------------- */
 void GLWidget::onRobotPose(const RobotPoseMsg &m)
 {
-    // 构建变换矩阵 map → base_link
+    // 构建变换矩阵 base_init → base_link
     Eigen::Matrix4d T = Eigen::Matrix4d::Identity();
     T.block<3,3>(0,0) = Eigen::Quaterniond(m.qw, m.qx, m.qy, m.qz).matrix();
     T.block<3,1>(0,3) = Eigen::Vector3d(m.x, m.y, m.z);
@@ -673,7 +664,7 @@ void GLWidget::onRobotPose(const RobotPoseMsg &m)
 /* -------------- 新协议：雷达位姿处理 -------------- */
 void GLWidget::onLidarPose(const LidarPoseMsg &m)
 {
-    // 构建变换矩阵 map → laser
+    // 构建变换矩阵 base_init → laser_link
     Eigen::Matrix4d T = Eigen::Matrix4d::Identity();
     T.block<3,3>(0,0) = Eigen::Quaterniond(m.qw, m.qx, m.qy, m.qz).matrix();
     T.block<3,1>(0,3) = Eigen::Vector3d(m.x, m.y, m.z);

@@ -6,24 +6,36 @@
 #include <adminmode.h>
 
 const QVector<Parameter> Params::s_parameters = {
-    {"0x00", "雷达型号", "0~11", "0=mid360, 1=mid360s, 10=N10, 11=N10_P，默认0", 0},
-    {"-", "雷达放置位置", "-", "雷达安装位置相对于机器人中心的位置，即tf树中：base_link->laser_link，坐标系遵循FLU（x为前，Y为左，Z为上）", 0},
-    {"0x01", "X坐标", "-100~100", "雷达位置X坐标值，单位厘米", 0},
-    {"0x02", "Y坐标", "-100~100", "雷达位置Y坐标值，单位厘米", 0},
-    {"0x03", "Z坐标", "-100~100", "雷达位置Z坐标值，单位厘米", 0},
-    {"0x04", "Roll角度", "-180~180", "雷达滚转角，单位度", 0},
-    {"0x05", "Pitch角度", "-180~180", "雷达俯仰角，单位度", 0},
-    {"0x06", "Yaw角度", "-180~180", "雷达偏航角，单位度", 0},
-    {"0x11", "使能与PX4飞控通信", "0-1", "1=使能，模块可与PX4飞控通信，作为位置传感器/控制飞控执行路径规划", 1},
-    {"0x12", "使能与主控串口通信", "0-1", "1=使能，模块可与主控串口通信，输出坐标/输出路径规划控制点/输入目标点", 1},
-    {"-", "路径规划参数", "-", "首次使用应该断开电机供电，查看路径规划结果无误", 0},
-    {"0x21", "最大移动速度", "0~1000", "路径规划输出轨迹的最大移动速度，单位cm/s，默认100", 100},
-    {"0x22", "最大加速度", "0~1000", "路径规划输出轨迹的最大移动速度，单位cm/s，默认100", 100},
-    {"0x23", "最大高度", "0~1000", "路径规划输出轨迹的最大高度，设置虚拟天花板防止轨迹超出该高度，单位cm，默认200", 200},
-    {"0x24", "起飞高度", "0~1000", "一键起飞设定的高度，2d版会在这个高度的平面内路径规划，单位cm，默认100", 100},
-    {"0x25", "机器人半径", "0~1000", "根据中心点到最远端的距离加多至少5cm，设置为机器人半径作为路径规划，单位cm，默认10", 10},
-    {"0x26", "安全距离", "0~1000", "设置机器人中心点到障碍的安全距离，建议=机器人半径+10，优先选择大于该安全半径的路径，单位cm，默认10", 10},
-    {"0x27", "过滤半径", "0~1000", "若雷达会扫描到机器人自身结构则需加大该参数，建议=机器人半径，单位cm，默认30", 30},
+    // 表序与 upper/config/通讯协议.md（唯一权威的新协议）的参数ID定义表一致，
+    // 也是 AA 00 03 0A 应答与保存后回显的发送顺序。docs/通讯协议.md 那份是过时的对照件，勿照它改。
+    // 本仓按 ID 字符串匹配行，顺序只影响可读性；但折叠分组的行号是按下标推导的，插行请勿打乱分组。
+    // 0x00 取值集合只留新协议参数表列出的 4 项（删掉旧占位 12=m10 / 13=m10p）：
+    // 用户不会选中一个协议表里不存在的值，也就不会踩「表外值静默丢弃、链路无任何回执」。
+    {"0x00", "雷达型号", "-", "0=mid360, 1=mid360s, 10=N10, 11=N10_P，默认0", 0},
+    {"-", "雷达安装位置", "-", "雷达相对于机器人中心的位置 = 安装位姿 T：正向 base_init -> laser_init_map，其逆 laser_link -> base_link（旧文档写的 base_link->laser_link 方向相反），遵循FLU（X前，Y左，Z上）", 0},
+    {"0x01", "X坐标", "-100~100", "雷达位置X坐标值，单位厘米，默认0", 0},
+    {"0x02", "Y坐标", "-100~100", "雷达位置Y坐标值，单位厘米，默认0", 0},
+    {"0x03", "Z坐标", "-100~100", "雷达位置Z坐标值，单位厘米，默认0", 0},
+    {"0x04", "Roll角度", "-180~180", "雷达滚转角，单位度，默认0", 0},
+    {"0x05", "Pitch角度", "-180~180", "雷达俯仰角，单位度，默认0", 0},
+    {"0x06", "Yaw角度", "-180~180", "雷达偏航角，单位度，默认0", 0},
+    {"0x11", "使能与PX4飞控通信", "0-1", "1=使能，模块可与PX4通信，作为位置传感器/执行路径规划，默认1", 1},
+    {"0x12", "使能与主控串口通信", "0-1", "1=使能，模块可与主控串口通信，输出坐标/输出控制点/输入目标点，默认1", 1},
+    {"0x13", "模式", "0-1", "v2.5 起由「避障算法使能标志」换义为「模式」（同一个 ID 换义，不是新 ID）：0=建图（默认）、1=定位。默认值也由 1 变为 0。按旧义解析不会报错、只会静默反义（旧义 1=开避障，新义 1=定位）。绕障已恒开，旧义在这条链上没有落点。重启生效", 0},
+    {"0x14", "导航使能", "0-1", "v2.5 新增：1=使能（默认）、0=不使能。导航装配 ⟺ 本值 1 且模块类型为 1 或 3，其余组合一律不装规划器；与模块类型正交。重启生效", 1},
+    {"-", "路径规划与小车模型参数", "-", "0x21~0x29 连续无缺号（v2.6 删号不复用、不留空位，由后面依次上移填满）。首次使用应断开电机供电，查看规划结果无误", 0},
+    {"0x21", "最大移动速度", "0~1000", "规划轨迹的最大速度，单位cm/s，默认100。由新规划器的动力学可行性检查消费：设小即实测限速（轨迹按时间重参数化拉长）；v2.6 起同一格还驱动跟踪上限 controller.max_speed（双映射）。设成 0 会让每条轨迹都判不可行", 100},
+    {"0x22", "最大加速度", "0~1000", "规划轨迹的最大加速度，单位cm/s²，默认100。消费方同 0x21（v2.6 起还驱动 controller.max_linear_acceleration），同样设成 0 即全不可行", 100},
+    {"0x23", "起飞高度", "0~1000", "一键起飞设定的高度，单位cm，默认100。2D 下它在用：pose_send 把位姿 z 抬到该高度，upper 合成 2D 地图时也把障碍层放在这个高度——同一个值，两处必须相等。消费方是 offboard / pose_send，不是规划器", 100},
+    // 0x24 名称取「膨胀半径」，**不**采信新协议表的名称列：该表名称列写「机器人半径」、
+    // 说明列写「障碍膨胀半径」，自相矛盾；模块侧 param_store.cpp 的字段名是 inflation_radius。
+    // 照名称列改成「机器人半径」等于把一个自己都说不清的字段名抄进代码。
+    {"0x24", "膨胀半径", "0~1000", "障碍膨胀半径，单位cm，默认10（= 0.10 m）；0 = 不膨胀。已真接线到规划器 planning.inflation_radius。开箱即带 10 cm 绕障余量，要回到不膨胀必须显式发 0；现场按车体外廓调大", 10},
+    {"0x25", "规划模式", "0~2", "导航链路跑哪种规划：0=2D平面路径规划（例如地面移动小车，模块侧 2d+ground，默认）、1=3D自由空间路径规划（例如无人机，3d+uav）、2=3D沿地面空间路径规划（例如可爬楼梯机械狗，3D规划但要求轨迹贴合地面，3d+ground）。无单位、不做换算（模式标识，不是物理量）。重启生效；越界值（含空值）启动即报错、不回落默认。两条导航链路都读它：3D 三档都收；2D 导航版仅支持 0（发 1/2 或越界值启动即报错）；2D 定位不装规划器，此参数不参与", 0},
+    {"0x26", "小车运动学模型", "0~1", "0=omni（全向，默认）、1=differential（差速）。仅在规划模式 0 生效。喂规划器 controller.motion_model。只暴露规划器认得的前两个值（本仓两条链都是地面车，uav/ackermann 不暴露）；越界值启动即报错退出、不回落 omni", 0},
+    {"0x27", "目标点容差（小车模型）", "0~1000", "到目标点多近算「到点」，单位cm，默认15（= 0.15 m，上游默认）。喂 controller.goal_tolerance", 15},
+    {"0x28", "最大偏航角速率（小车模型）", "0~1000", "单位度/s，默认43（≈ 上游 0.75 rad/s）。喂 controller.max_yaw_rate。归角度组：与 roll/pitch/yaw 同口径，×1、不做 cm↔m 换算", 43},
+    {"0x29", "最小转弯半径（小车模型）", "0~1000", "单位cm，默认100（= 1.0 m，上游默认）。喂 controller.min_turning_radius。omni 模型下不生效（登记，不报错）", 100},
     {"0x99", "模块类型", "0~3", "0=3D定位模块，1=3D导航模块，2=2D定位模块，3=2D导航模块", 0},
     };
 
@@ -39,6 +51,10 @@ Params::Params(QWidget *parent)
 
     // 初始化参数
     setupParameters();
+
+    // 「写入参数」的门禁跟随链路层：初始不可点，连上 TCP / UDP 后由
+    // SerialPort::controlLinkStateChanged 打开（与可视化页「保存地图」同一口径）
+    ui->writeButton->setEnabled(false);
 }
 
 Params::~Params()
@@ -122,12 +138,33 @@ void Params::setupParameters()
     // 设置行数
     ui->tableWidget->setRowCount(parameters.size());
 
+    // 折叠按钮挂在分组表头行上，表头行的参数ID固定为 "-"。
+    // 行号一律按 ID 推导（参数行在表里的下标即行号），以后再插参数不会静默错位。
+    auto rowOfId = [&parameters](const QString &id) {
+        for (int i = 0; i < parameters.size(); ++i) {
+            if (parameters.at(i).id.compare(id, Qt::CaseInsensitive) == 0)
+                return i;
+        }
+        return -1;
+    };
+    int placementHeaderRow = -1;   // "雷达安装位置" 表头
+    int plannerHeaderRow   = -1;   // "路径规划参数" 表头
+    for (int i = 0; i < parameters.size(); ++i) {
+        if (parameters.at(i).id != "-") continue;
+        if (placementHeaderRow < 0) placementHeaderRow = i;
+        else if (plannerHeaderRow < 0) plannerHeaderRow = i;
+    }
+    const int placementFirstRow = rowOfId("0x01");
+    const int placementLastRow  = rowOfId("0x06");   // 0x01-0x06
+    const int plannerFirstRow   = rowOfId("0x21");
+    const int plannerLastRow    = rowOfId("0x29");   // 0x21-0x29
+
     // 填充表格
     for (int row = 0; row < parameters.size(); ++row) {
         const Parameter &param = parameters[row];
 
-        // 在 row == 1 ("雷达放置位置") 和 row == 10 ("路径规划参数") 添加折叠按钮
-        if (row == 1 || row == 10) {
+        // 在两个分组表头行上添加折叠按钮
+        if (row == placementHeaderRow || row == plannerHeaderRow) {
             // 创建容器widget确保按钮居中
             QWidget *container = new QWidget();
             QHBoxLayout *layout = new QHBoxLayout(container);
@@ -140,12 +177,12 @@ void Params::setupParameters()
 
             // 使用动态属性记录该按钮的状态和需要控制的行号范围
             foldButton->setProperty("folded", false);
-            if (row == 1) {
-                foldButton->setProperty("startRow", 2);
-                foldButton->setProperty("endRow", 7);   // 0x01-0x06
-            } else if (row == 10) {
-                foldButton->setProperty("startRow", 11);
-                foldButton->setProperty("endRow", 17);  // 0x21-0x27
+            if (row == placementHeaderRow) {
+                foldButton->setProperty("startRow", placementFirstRow);
+                foldButton->setProperty("endRow", placementLastRow);
+            } else {
+                foldButton->setProperty("startRow", plannerFirstRow);
+                foldButton->setProperty("endRow", plannerLastRow);
             }
 
             connect(foldButton, &QPushButton::clicked, this, &Params::onFoldButtonClicked);
@@ -204,33 +241,62 @@ QWidget* Params::createValueWidget(const QString &id, const QString &range, int 
     QHBoxLayout *layout = new QHBoxLayout(widget);
     layout->setContentsMargins(5, 2, 5, 2);
 
+    // 下拉框一律用 userData 存协议值，并按 findData(defaultValue) 选中 ——
+    // 值集合与下标不同（如 0x00 的 10/11、0x99 的 2/3）时，把默认值当索引会显示与实际不符。
     if (id == "0x00") {
         QComboBox *comboBox = new QComboBox();
         comboBox->addItem("mid360", 0);
         comboBox->addItem("mid360s", 1);
         comboBox->addItem("N10", 10);
         comboBox->addItem("N10_P", 11);
-        comboBox->setCurrentIndex(defaultValue == 0 ? 0 : (defaultValue == 10 ? 1 : 2));
-        layout->addWidget(comboBox);
-    } else if(id == "0x10"){
-        QComboBox *comboBox = new QComboBox();
-        comboBox->addItem("建图模式", 0);
-        comboBox->addItem("定位模式", 1);
-        comboBox->setCurrentIndex(defaultValue);
+        // 12=m10 / 13=m10p 已从新协议的取值集合里删除，不再列出（见 s_parameters 的 0x00 注释）。
+        comboBox->setCurrentIndex(qMax(0, comboBox->findData(defaultValue)));
         layout->addWidget(comboBox);
     }
     else if(id == "0x11"){
         QComboBox *comboBox = new QComboBox();
         comboBox->addItem("不能", 0);
         comboBox->addItem("使能", 1);
-        comboBox->setCurrentIndex(defaultValue);
+        comboBox->setCurrentIndex(qMax(0, comboBox->findData(defaultValue)));
         layout->addWidget(comboBox);
     }
     else if(id == "0x12"){
         QComboBox *comboBox = new QComboBox();
         comboBox->addItem("不能", 0);
         comboBox->addItem("使能", 1);
-        comboBox->setCurrentIndex(defaultValue);
+        comboBox->setCurrentIndex(qMax(0, comboBox->findData(defaultValue)));
+        layout->addWidget(comboBox);
+    }
+    else if(id == "0x13"){
+        // 0x13「模式」：v2.5 起 0=建图、1=定位（旧义为避障算法使能标志）
+        QComboBox *comboBox = new QComboBox();
+        comboBox->addItem("建图模式", 0);
+        comboBox->addItem("定位模式", 1);
+        comboBox->setCurrentIndex(qMax(0, comboBox->findData(defaultValue)));
+        layout->addWidget(comboBox);
+    }
+    else if(id == "0x14"){
+        QComboBox *comboBox = new QComboBox();
+        comboBox->addItem("不使能", 0);
+        comboBox->addItem("使能", 1);
+        comboBox->setCurrentIndex(qMax(0, comboBox->findData(defaultValue)));
+        layout->addWidget(comboBox);
+    }
+    else if(id == "0x25"){
+        // 规划模式：无单位、不做换算，必须是下拉框（落进末尾的 else 会变成数码框）
+        QComboBox *comboBox = new QComboBox();
+        comboBox->addItem("平面地面（2d+ground）", 0);
+        comboBox->addItem("3D UAV 自由空间（3d+uav）", 1);
+        comboBox->addItem("3D Ground 有支撑（3d+ground）", 2);
+        comboBox->setCurrentIndex(qMax(0, comboBox->findData(defaultValue)));
+        layout->addWidget(comboBox);
+    }
+    else if(id == "0x26"){
+        // 运动学模型：枚举，必须下拉框
+        QComboBox *comboBox = new QComboBox();
+        comboBox->addItem("omni（全向）", 0);
+        comboBox->addItem("differential（差速）", 1);
+        comboBox->setCurrentIndex(qMax(0, comboBox->findData(defaultValue)));
         layout->addWidget(comboBox);
     }
     else if(id == "0x99"){
@@ -239,7 +305,7 @@ QWidget* Params::createValueWidget(const QString &id, const QString &range, int 
         comboBox->addItem("3D导航模块", 1);
         comboBox->addItem("2D定位模块", 2);
         comboBox->addItem("2D导航模块", 3);
-        comboBox->setCurrentIndex(defaultValue);
+        comboBox->setCurrentIndex(qMax(0, comboBox->findData(defaultValue)));
         layout->addWidget(comboBox);
     }
     else if(id == "-")
@@ -260,38 +326,13 @@ QWidget* Params::createValueWidget(const QString &id, const QString &range, int 
 }
 
 
-// 构建帧写入参数
-void Params::sendParameterWriteRequest(const QString &paramId, int value)
-{
-    TcpClient* tcpClient = TcpClient::getInstance();
-
-    if (!tcpClient->isConnected()) {
-        QMessageBox::warning(this, "错误", "TCP未连接");
-        return;
-    }
-
-    bool ok;
-    quint8 paramByte = paramId.toUShort(&ok, 0);
-    if (!ok) {
-        QMessageBox::warning(this, "错误", "参数ID转换失败");
-        return;
-    }
-
-    QByteArray frame =  ProtocolRouter::buildWriteParamFrame(paramByte, value);
-    if (frame.isEmpty()) {
-        QMessageBox::warning(this, "错误", "构建写入帧失败");
-        return;
-    }
-
-    // 使用TCP客户端发送数据
-    tcpClient->sendData(frame);
-
-    // qDebug() << "发送参数写入请求:" << paramId << "值:" << value << "数据:" << frame.toHex(' ');
-}
-
 // 更新参数
 void Params::updateParameter(quint8 paramIdRaw, qint16 value)
 {
+    // 保存参数等待期：模块回读值只喂链路层的比对器，界面保持「用户下发时看到的样子」。
+    // 否则回读值会先把界面刷成模块里的值，等结果弹出来时已经没有对照物了。
+    if (m_echoSuppressed) return;
+
     // 统一转成 "0xXX" 格式字符串，方便匹配表格第 1 列
     const QString idStr = QString("0x%1").arg(paramIdRaw, 2, 16, QLatin1Char('0')).toUpper();
 
@@ -350,52 +391,70 @@ void Params::on_readButton_clicked()
 }
 
 // 写入参数按钮
+// 只做一件事：把界面上要写入的参数收集成表，交给链路层（SerialPort）发送。
+// 这里不持有连接、不查连接、不自己拼帧——发送与等待必须同处一地，
+// 否则会出现「发了但没人等」或「等了但没发」（工单 06 就靠这一票）。
 void Params::on_writeButton_clicked()
 {
-    TcpClient* tcpClient = TcpClient::getInstance();
-
-    if (!tcpClient->isConnected()) {
-        QMessageBox::warning(this, "错误", "请先建立TCP连接");
-        return;
-    }
-
-    int writeCount = 0;
+    QVector<ParamWrite> params;
     for (int row = 0; row < valueWidgets.size(); ++row) {
         QTableWidgetItem *idItem = ui->tableWidget->item(row, 1);
         if (!idItem || idItem->text() == "-") continue; // 跳过无参数ID的行
 
-        QString paramId = idItem->text();
+        bool ok = false;
+        const quint8 paramId = static_cast<quint8>(idItem->text().toUShort(&ok, 0));
+        if (!ok) continue;  // 表头行（"-"）已跳过，其余行的 ID 都是 "0xXX"
 
-        QWidget *widget = valueWidgets[row];
+        QWidget *widget = valueWidgets.at(row);
         QLayout *layout = widget->layout();
-        if (layout && layout->count() > 0) {
-            QWidget *valueControl = layout->itemAt(0)->widget();
-            // 按照样式按钮类型获取值
-            if (QComboBox *comboBox = qobject_cast<QComboBox*>(valueControl)) {
-                int value = comboBox->currentData().toInt();
-                sendParameterWriteRequest(paramId, value); // 发送写入请求
-                writeCount++;
-            } else if (QSpinBox *spinBox = qobject_cast<QSpinBox*>(valueControl)) {
-                int value = spinBox->value();
-                sendParameterWriteRequest(paramId, value); // 发送写入请求
-                writeCount++;
-            }
+        if (!layout || layout->count() == 0) continue;
+
+        QWidget *valueControl = layout->itemAt(0)->widget();
+        // 名称跟着一起收：链路层报不一致明细时要按参数号点名，不该反过来查参数页的表
+        QTableWidgetItem *nameItem = ui->tableWidget->item(row, 2);
+        const QString name = nameItem ? nameItem->text() : QString();
+        // 按照控件类型取值：下拉框取 userData（协议值），数码框取显示的数值
+        if (QComboBox *comboBox = qobject_cast<QComboBox*>(valueControl)) {
+            params.append(ParamWrite{paramId, static_cast<qint16>(comboBox->currentData().toInt()), name});
+        } else if (QSpinBox *spinBox = qobject_cast<QSpinBox*>(valueControl)) {
+            params.append(ParamWrite{paramId, static_cast<qint16>(spinBox->value()), name});
         }
     }
 
-    if (writeCount > 0) {
-        // 发送完成指令帧 AA 00 04 0A
-        QByteArray completionFrame = ProtocolRouter::buildFrame(0x00, QVariantMap{{"sub_cmd", 0x04}});
-        tcpClient->sendData(completionFrame);
-
-        QString timestamp = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss >> 用户操作: ");
-        emit appendMessage(timestamp + "写入参数");
-        QMessageBox::information(this, "写入参数", "模块已更新参数并关机，请重新上电");
-        ui->optLabel->setText("参数写入完成");
-        ui->optLabel->setStyleSheet("color: blue;");
-    } else {
+    if (params.isEmpty()) {
         QMessageBox::warning(this, "警告", "没有找到需要写入的参数");
+        return;
     }
+
+    QString timestamp = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss >> 用户操作: ");
+    emit appendMessage(timestamp + "写入参数");
+
+    // 下面这行只说明「已下发、正在等」——成功与否由链路层的回读比对给出（工单 06），
+    // 这里不能先说「写入完成」：那正是要替掉的那句假话。
+    ui->optLabel->setText("正在保存参数，等待模块回读…");
+    ui->optLabel->setStyleSheet("color: blue;");
+
+    // 同线程直连交给链路层：它负责发帧、等待、比对、弹结果（不阻塞，等的是事件循环）
+    emit writeParamsRequested(params);
+}
+
+// 控制指令链路状态（TCP / UDP）：未连接（含只有串口）时「写入参数」不可点
+void Params::setLinkConnected(bool connected)
+{
+    ui->writeButton->setEnabled(connected);
+}
+
+// 保存参数等待期：模块回读值不刷界面（见 params.h 的说明）
+void Params::setEchoSuppressed(bool suppressed)
+{
+    m_echoSuppressed = suppressed;
+}
+
+// 保存闭环的结论落在状态行上（弹窗之后再补一句，页面上也留个痕）
+void Params::setSaveSummary(const QString &summary)
+{
+    ui->optLabel->setText(summary);
+    ui->optLabel->setStyleSheet("color: blue;");
 }
 // 折叠按钮槽函数
 void Params::onFoldButtonClicked()
@@ -445,7 +504,9 @@ void Params::restoreDefaultValues()
 
         QWidget *valueControl = layout->itemAt(0)->widget();
         if (QComboBox *comboBox = qobject_cast<QComboBox*>(valueControl)) {
-            comboBox->setCurrentIndex(s_parameters.at(row).defaultValue); // 使用参数表中定义的默认值
+            // 按 userData 找下标：默认值是协议值，不是下拉框索引
+            int index = comboBox->findData(s_parameters.at(row).defaultValue);
+            if (index >= 0) comboBox->setCurrentIndex(index);
         } else if (QSpinBox *spinBox = qobject_cast<QSpinBox*>(valueControl)) {
             spinBox->setValue(s_parameters.at(row).defaultValue); // 直接读表
         }

@@ -133,6 +133,14 @@ MainWindow::MainWindow(QWidget *parent)
     connect(protocolHandler, &ProtocolRos3D::map2DUpdated,
             ros3dPage->glWidget(), &GLWidget::onMap2D, Qt::QueuedConnection);
 
+    // === 位置控制指令 (0x08)：不丢帧、可观测（不在 3D 视图里画） ===
+    connect(protocolHandler, &ProtocolRos3D::posCmdUpdated,
+            ros3dPage, &Ros3DPage::onPosCmdUpdated, Qt::QueuedConnection);
+
+    // === 状态帧 (0x0B)：重定位 / 规划上标签，飞控只写日志，三者都只在跳变时动 ===
+    connect(protocolHandler, &ProtocolRos3D::navStatusUpdated,
+            ros3dPage, &Ros3DPage::onNavStatusUpdated, Qt::QueuedConnection);
+
     // ----------------------------------------------------------
     // 绑定槽函数——显示页面
     // ----------------------------------------------------------
@@ -157,8 +165,57 @@ MainWindow::MainWindow(QWidget *parent)
     connect(ros3dPage->glWidget(), &GLWidget::appendMessage,
             serialPort, &SerialPort::appendMessage);
 
+    // 连接可视化页的消息信号（规划状态跳变日志）到 SerialPort 的显示槽
+    connect(ros3dPage, &Ros3DPage::appendMessage,
+            serialPort, &SerialPort::appendMessage);
+
     connect(ros3dPage, &Ros3DPage::sendNavGoalRequested,
             serialPort, &SerialPort::onSendNavGoalRequested);
+
+    // 「保存地图」按钮：请求交给 SerialPort 发 AA 00 02 0A
+    connect(ros3dPage, &Ros3DPage::saveMapRequested,
+            serialPort, &SerialPort::onSaveMapRequested);
+
+    // 「下载地图」按钮：同样只发请求，帧、超时、进度框、校验与落盘都在 SerialPort 里
+    connect(ros3dPage, &Ros3DPage::downloadMapRequested,
+            serialPort, &SerialPort::onDownloadMapRequested);
+
+    // 地图下传分块 (0x0C)：解析在工作线程（ProtocolRos3D），攒块与校验在主线程的
+    // SerialPort 里。跨线程，用队列连接——下载流程要碰界面（进度框、文件对话框）。
+    connect(protocolHandler, &ProtocolRos3D::mapChunkUpdated,
+            serialPort, &SerialPort::onMapChunkReceived, Qt::QueuedConnection);
+
+    // 未连接时「保存地图」不可点（控制指令链路 = TCP / UDP，串口不算）
+    connect(serialPort, &SerialPort::controlLinkStateChanged,
+            ros3dPage, &Ros3DPage::setLinkConnected);
+
+    // 「写入参数」：参数页只收集值，帧由 SerialPort 统一发送（发送方与等待方同处一地）
+    connect(params, &Params::writeParamsRequested,
+            serialPort, &SerialPort::onWriteParamsRequested);
+
+    // 未连接时「写入参数」也不可点，门禁与「保存地图」同一个信号源
+    connect(serialPort, &SerialPort::controlLinkStateChanged,
+            params, &Params::setLinkConnected);
+
+    // 串口页的「重启模块」同走这道门禁（第三个接收方，信号源不变）
+    connect(serialPort, &SerialPort::controlLinkStateChanged,
+            serialPort, &SerialPort::setLinkConnected);
+
+    // 重启模块判定成功：3D 页面把「模块运行态的镜像」清掉 —— 3D 视图（点云 / 地图 / 位姿 /
+    // 拖尾 / 指点目标点几何）连同 TF 数值标签、规划与重定位状态标签、两者的跳变锁存。
+    // 串口页自己的缓存由 SerialPort 就地清（同一个成功分支里），不走信号。
+    // 失败路径不发这个信号：超时意味着模块很可能根本没重启，清掉就是毁掉还在用的数据。
+    connect(serialPort, &SerialPort::restartSucceeded,
+            ros3dPage, &Ros3DPage::clearModuleState);
+
+    // 保存参数等待期：模块回读值只喂链路层的比对器，不刷参数页的界面
+    // （否则用户会在结果弹出前就以为保存成功了，而那正是要抓的场景）
+    connect(serialPort, &SerialPort::paramEchoSuppressedChanged,
+            params, &Params::setEchoSuppressed);
+
+    // 保存闭环的结论摘要落在参数页的状态行上（结果本身由链路层弹窗给出）
+    connect(serialPort, &SerialPort::saveParamsFinished,
+            params, &Params::setSaveSummary);
 
 
 

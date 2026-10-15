@@ -9,13 +9,16 @@
 
 
 // 新协议命令ID定义
-static const uint8_t CMD_ROBOT_POSE  = 0x01;  // 机器人位姿 (map → base_link)
-static const uint8_t CMD_LIDAR_POSE  = 0x02;  // 雷达安装位姿 (map → laser)
+static const uint8_t CMD_ROBOT_POSE  = 0x01;  // 机器人位姿 (base_init → base_link)
+static const uint8_t CMD_LIDAR_POSE  = 0x02;  // 雷达位姿 (base_init → laser_link)
 static const uint8_t CMD_CLOUD       = 0x03;  // 3D点云数据
 static const uint8_t CMD_SCAN_2D     = 0x05;  // 2D激光雷达数据
 static const uint8_t CMD_MAP_2D      = 0x06;  // 2D地图数据
 static const uint8_t CMD_NAV_GOAL    = 0x07;  // 目标点指令
+static const uint8_t CMD_POS_CMD     = 0x08;  // 位置控制指令
 static const uint8_t CMD_GOAL_PATH   = 0x09;  // 最优轨迹线
+static const uint8_t CMD_NAV_STATUS  = 0x0B;  // 规划状态
+static const uint8_t CMD_MAP_ARCHIVE = 0x0C;  // 地图下传分块
 
 ProtocolRos3D::ProtocolRos3D(QObject* parent)
     : QObject(parent)
@@ -69,7 +72,10 @@ void ProtocolRos3D::parseJsonFrame(uint8_t cmd, const QJsonObject& obj)
     case CMD_CLOUD:       parseCloud(obj);      break;
     case CMD_SCAN_2D:     parseScan2D(obj);     break;
     case CMD_MAP_2D:      parseMap2D(obj);      break;
+    case CMD_POS_CMD:     parsePosCmd(obj);     break;
     case CMD_GOAL_PATH:   parseGoalPath(obj);   break;
+    case CMD_NAV_STATUS:  parseNavStatus(obj);  break;
+    case CMD_MAP_ARCHIVE: parseMapChunk(obj);   break;
     default: qWarning() << "unknown cmd" << cmd;
     }
 }
@@ -77,8 +83,9 @@ void ProtocolRos3D::parseJsonFrame(uint8_t cmd, const QJsonObject& obj)
 /* 全局节流时间戳，单位 ms */
 static qint64 g_lastTfLogMS   = 0;
 static qint64 g_lastCloudLogMS = 0;
+static qint64 g_lastPosCmdLogMS = 0;
 
-/* 机器人位姿解析 (map → base_link) */
+/* 机器人位姿解析 (base_init → base_link) */
 void ProtocolRos3D::parseRobotPose(const QJsonObject& obj)
 {
     qint64 nowMS = QDateTime::currentMSecsSinceEpoch();
@@ -106,7 +113,7 @@ void ProtocolRos3D::parseRobotPose(const QJsonObject& obj)
     emit robotPoseUpdated(m);
 }
 
-/* 雷达位姿解析 (map → laser) */
+/* 雷达位姿解析 (base_init → laser_link) */
 void ProtocolRos3D::parseLidarPose(const QJsonObject& obj)
 {
     LidarPoseMsg m;
@@ -218,6 +225,30 @@ void ProtocolRos3D::parseMap(const QJsonObject& obj)
     emit mapCloudUpdated(m);
 }
 
+/* 位置控制指令解析 (0x08) */
+// 100 Hz 逐帧期望位置：值每帧都在动，日志按每秒最多一条节流，否则会淹掉接收窗口
+void ProtocolRos3D::parsePosCmd(const QJsonObject& obj)
+{
+    PosCmdMsg m;
+    m.topic = obj["topic"].toString();
+    m.x     = obj["x"].toDouble();
+    m.y     = obj["y"].toDouble();
+    m.z     = obj["z"].toDouble();
+    m.yaw   = obj["yaw"].toDouble();
+
+    qint64 nowMS = QDateTime::currentMSecsSinceEpoch();
+    if (nowMS - g_lastPosCmdLogMS >= 1000) {
+        g_lastPosCmdLogMS = nowMS;
+        AdminMode::appendMessage(QStringLiteral("接收到位置控制指令: x=%1, y=%2, z=%3, yaw=%4")
+                                     .arg(m.x, 0, 'f', 2)
+                                     .arg(m.y, 0, 'f', 2)
+                                     .arg(m.z, 0, 'f', 2)
+                                     .arg(m.yaw, 0, 'f', 2));
+    }
+
+    emit posCmdUpdated(m);
+}
+
 /* 目标轨迹解析 */
 void ProtocolRos3D::parseGoalPath(const QJsonObject& obj)
 {
@@ -301,6 +332,43 @@ void ProtocolRos3D::parseMap2D(const QJsonObject& obj)
 }
 
 
+/* 状态帧解析 (0x0B)：飞控 + 重定位 + 路径规划 */
+void ProtocolRos3D::parseNavStatus(const QJsonObject& obj)
+{
+    NavStatusMsg m;
+    m.topic = obj["topic"].toString();
+    m.fcState = obj["fc_state"].toInt();
+    m.relocalization = obj["relocalization"].toInt();
+    m.planning = obj["planning"].toInt();
+    // 线上另有恒等于 `planning` 的 `state` 键，是给只认单值键的旧上位机看的；
+    // 这里刻意不解析它——`NavStatusMsg::state()` 直接返回 `planning`。
+
+    // 三件都是「当前值」不是「事件」：模块 10 Hz 重发同一个值，
+    // 这里不写日志（日志只在值跳变时由展示端写一次）。
+    ++m_statusCnt;
+    emit navStatusUpdated(m);
+}
+
+/* 地图下传分块解析 (0x0C) */
+// 一包一块，逐块到达；本层只翻字段，不攒块、不校验（见 maparchive.h）。
+// 刻意不写日志：一次下载几十块、每块几十 KB，逐块记会把接收窗口刷掉；
+// 进度由下载流程的进度框呈现（工单 10）。
+void ProtocolRos3D::parseMapChunk(const QJsonObject& obj)
+{
+    MapChunkMsg m;
+    m.topic = obj["topic"].toString();          // 恒为 "map_archive"
+    m.name  = obj["name"].toString();           // map_3d.zip / map_2d.zip
+    m.seq   = obj["seq"].toInt();               // 从 1 起
+    m.total = obj["total"].toInt();
+    m.bytes = obj["bytes"].toInt();             // 整包字节数
+    m.crc32 = obj["crc32"].toString();          // 整包 CRC-32，形如 "0x1234abcd"
+    // 本块字节：把线上 base64 解开。载荷是 base64 这点也保证了帧里不会出现 0x0A，
+    // 所以「扫到第一个 0x0A 定帧长」的分帧走法在分块帧上依然成立。
+    m.data = QByteArray::fromBase64(obj["data"].toString().toLatin1());
+
+    emit mapChunkUpdated(m);
+}
+
 /* -------------- 工具实现 -------------- */
 
 QVector<QVector3D> ProtocolRos3D::extractXYZFromPointCloud2Raw(
@@ -354,18 +422,21 @@ void ProtocolRos3D::calcHz()
     quint32 cloudFrames = m_cloudCnt - m_cloudLast;
     quint32 mapFrames   = m_mapCnt   - m_mapLast;
     quint32 pathFrames  = m_pathCnt  - m_pathLast;
+    quint32 statusFrames = m_statusCnt - m_statusLast;
 
     // 计算频率
     double poseHz  = poseFrames  / WIN;
     double cloudHz = cloudFrames / WIN;
     double mapHz   = mapFrames   / WIN;
     double pathHz  = pathFrames  / WIN;
+    double statusHz = statusFrames / WIN;
 
     // 更新上周期计数
     m_poseLast   = m_poseCnt;
     m_cloudLast  = m_cloudCnt;
     m_mapLast    = m_mapCnt;
     m_pathLast   = m_pathCnt;
+    m_statusLast = m_statusCnt;
 
     QString ts = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss");
     emit appendMessage(QStringLiteral("%1 >> ====== 数据接收频率统计 ======").arg(ts));
@@ -373,6 +444,7 @@ void ProtocolRos3D::calcHz()
     emit appendMessage(QStringLiteral("%1 >> 点云话题：%2Hz").arg(ts).arg(cloudHz, 0, 'f', 2));
     emit appendMessage(QStringLiteral("%1 >> 地图话题：%2Hz").arg(ts).arg(mapHz, 0, 'f', 2));
     emit appendMessage(QStringLiteral("%1 >> 轨迹话题：%2Hz").arg(ts).arg(pathHz, 0, 'f', 2));
+    emit appendMessage(QStringLiteral("%1 >> 状态帧：%2Hz").arg(ts).arg(statusHz, 0, 'f', 2));
     emit appendMessage(QStringLiteral("%1 >> ==============================").arg(ts));
 }
 

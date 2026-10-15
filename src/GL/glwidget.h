@@ -62,8 +62,8 @@ signals:
     void navTargetUpdated(double x, double y, double z, double yaw_deg);
 
 public slots:
-    void onRobotPose(const RobotPoseMsg &);  // 机器人位姿 (map → base_link)
-    void onLidarPose(const LidarPoseMsg &);  // 雷达位姿 (map → laser)
+    void onRobotPose(const RobotPoseMsg &);  // 机器人位姿 (base_init → base_link)
+    void onLidarPose(const LidarPoseMsg &);  // 雷达位姿 (base_init → laser_link)
     void onCloud(const CloudMsg &);
     void onScan2D(const Scan2DMsg &);        // 2D激光雷达数据 (0x05)
     void onMap2D(const Map2DMsg &);          // 2D地图数据 (0x06)
@@ -99,8 +99,8 @@ protected:
 private:
 
     // =========== 新协议TF相关 ===========
-    Eigen::Matrix4d T_map_base_link_;    // map → base_link (机器人位姿)
-    Eigen::Matrix4d T_map_laser_;        // map → laser (雷达位姿)
+    Eigen::Matrix4d T_map_base_link_;    // base_init → base_link (机器人位姿；俩成员名沿用旧 map 命名)
+    Eigen::Matrix4d T_map_laser_;        // base_init → laser_link (雷达位姿)
     bool hasRobotPose_ = false;          // 是否收到机器人位姿
     bool hasLidarPose_ = false;          // 是否收到雷达位姿
 

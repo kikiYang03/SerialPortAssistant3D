@@ -8,6 +8,8 @@ QMutex TcpClient::m_mutex;
 TcpClient::TcpClient(QObject* parent)
     : QObject(parent)
     , m_isConnected(false)
+    , m_autoReconnect(true)          // 默认与原行为一致：允许自动重连
+    , m_suppressedNotified(false)
     , m_reconnectAttempts(0)
     , m_reconnecting(false)
 {
@@ -121,6 +123,11 @@ void TcpClient::onDisconnected()
     setConnectionStatus(false);
     qDebug() << "TCP连接断开";
 
+    // 断线处理入口的第一步：在武装重连定时器之前先看自动重连开关（工单 03）。
+    // 开关是关的 ⇒ 这一次断开是预期内的（重启模块），不武装、也不发 reconnectTimeout()，
+    // 后者正是「重连失败」弹窗的触发源。这里不推断断线时机，只认开关。
+    if (reconnectSuppressed()) return;
+
     /* 防止重复启动 */
     if (m_reconnecting) return;
 
@@ -146,6 +153,12 @@ void TcpClient::onErrorOccurred(QAbstractSocket::SocketError)
     QString err = m_tcpSocket->errorString();
     qWarning() << "TCP连接错误:" << err;
     emit connectionError(err);
+
+    // 同 onDisconnected：自动重连被禁用时，这次错误不产生任何重连动作（工单 03）。
+    // 两条入口都设这一关：远端断电在 Qt 里既可能报 errorOccurred（RemoteHostClosedError）
+    // 也可能报 disconnected，先后顺序属 Qt 内部实现，不该依赖 —— 只关一条，另一条照样会把
+    // 重连定时器武装起来、把「重连失败」弹窗带出来。
+    if (reconnectSuppressed()) return;
 
     if (m_reconnectAttempts >= 1)
     {
@@ -219,6 +232,33 @@ void TcpClient::stopAutoReconnect()
     m_reconnecting      = false;
     m_reconnectAttempts = 0;
     m_reconnectTimer->stop();
+}
+
+// 断线处理入口共用的第一关（工单 03）。自动重连被禁用 ⇒ 本次断开不产生任何重连动作，
+// 也不发 reconnectTimeout()（那个信号正是「重连失败」弹窗的触发源），只把「已压制」通报上层一次。
+// 通报只发一次：同一次断开可能经 errorOccurred 与 disconnected 两条路进来。
+bool TcpClient::reconnectSuppressed()
+{
+    if (m_autoReconnect) return false;
+
+    qDebug() << "自动重连已禁用，本次断开不安排重连";
+
+    if (!m_suppressedNotified) {
+        m_suppressedNotified = true;
+        emit autoReconnectSuppressed();
+    }
+    return true;
+}
+
+// 「自动重连是否启用」的唯一写入口（工单 03）。置假之后，直到再置真为止，每一次断线都只通报、
+// 不重连。复位「已通报」标记：这是一段新压制的开始，下一次断线要重新通报上层。
+void TcpClient::setAutoReconnectEnabled(bool enabled)
+{
+    if (m_autoReconnect == enabled) return;
+
+    m_autoReconnect      = enabled;
+    m_suppressedNotified = false;
+    qDebug() << "自动重连已" << (enabled ? "启用" : "禁用");
 }
 
 void TcpClient::onReadyRead()

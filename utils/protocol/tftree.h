@@ -31,7 +31,7 @@ public:
 
 private:
     mutable std::mutex m_;
-    std::optional<Mat4> T_map_base_link_;  // map → base_link (机器人位姿)
-    std::optional<Mat4> T_map_laser_;       // map → laser (雷达位姿)
+    std::optional<Mat4> T_map_base_link_;  // base_init → base_link (机器人位姿；成员/函数名沿用旧 map 命名)
+    std::optional<Mat4> T_map_laser_;       // base_init → laser_link (雷达位姿)
 };
 #endif // TFTREE_H

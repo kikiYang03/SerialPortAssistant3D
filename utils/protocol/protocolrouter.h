@@ -30,6 +30,12 @@ public:
     QByteArray buildSaveMapFrame();
     static QByteArray buildReadParamFrame(quint8 paramId = 0xFF); // 0xFF=读取所有
     static QByteArray buildWriteParamFrame(quint8 paramId, qint16 value);
+    // 下传地图指令 AA 00 05 0A：请求模块把盘上那份地图打包分块发来。
+    // 应答是 N 帧 0x0C（见 MapArchive）；模块失败时一帧都不发，上位机按超时判失败。
+    QByteArray buildDownloadMapFrame();
+    // 重启模块指令 AA 00 06 0A：模块**先原样回发本帧、再执行关机**，所以「收到回发」是
+    // 上位机判成功的唯一依据（回显到达与连接断开是先后两件事，本功能不去推断断线时机）。
+    QByteArray buildRestartFrame();
     QByteArray buildRosFrame(quint8 topicId, const QJsonObject &data);
 
     // 工具方法
@@ -46,7 +52,19 @@ public:
 signals:
     // 不同类型数据的信号
     void testFrameReceived(const QByteArray &frame, bool isResponse);
-    void saveMapCommandReceived();
+    // 入站的 AA 00 02 0A = 模块存图成功且产物核对通过（只回成功，失败一个字节都不回）
+    void saveMapAckReceived();
+
+    // 入站的 AA 00 04 0A = 保存终结指令回显。模块把参数落盘、从盘上重读一次之后，
+    // 先发完全表的 21 条 AA 10，再原样回发本帧——所以「收到它」= 回读已发完，可以下结论了。
+    // 与存图不同：这里失败也是沉默的，只能按超时判（见工单 06）。
+    void saveParamsAckReceived();
+
+    // 入站的 AA 00 06 0A = 重启指令回显。模块先回发、再断电重启，所以「收到它」= 模块已受理
+    // 重启。⚠️ 这里的 0x06 是**控制组子命令**；帧号位置上的那个 0x06（AA 06 …）是「2D 地图
+    // 数据」，两者位置不同、含义不同，读代码时极易看错。
+    void restartAckReceived();
+
     void readParamCommandReceived();
 
     void parameterFrameReceived(quint8 paramId, qint16 value);
@@ -66,6 +84,15 @@ signals:
 
     // 0x02目标点回传信号（下位机返回完整帧）
     void navGoalEchoReceived(const QByteArray &frame);
+
+    // 0x04 实时速度帧信号（100Hz）：vx/vy/vz 单位 cm/s，yawDot 单位度/s
+    void uartSpeedReceived(qint16 vx, qint16 vy, qint16 vz, qint16 yawDot);
+
+    // 0x05 状态帧信号（1Hz）：三件状态各占一个字节，顺排在 Byte 2 / Byte 3 / Byte 4。
+    // fcState 是飞控枚举（0x00~0x04，超出按未知处理），relocalization / planning 取值
+    // 同 TCP 的 AA 0B（0 进行中 / 1 成功 / 2 失败 / 3 未响应），两边同义同值。
+    // Byte 5~13 是恒零预留区，不参与解析。
+    void uartFlightStatusReceived(quint8 fcState, quint8 relocalization, quint8 planning);
 
     // 打印原来数据
     void printFrame(const QByteArray &frame);

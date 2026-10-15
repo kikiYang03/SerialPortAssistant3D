@@ -32,6 +32,13 @@ public:
 
     void stopAutoReconnect();   // 完全停止重连
 
+    // 自动重连开关（工单 03 / 04）：置假之后，断线不再武装重连定时器、也不发 reconnectTimeout()，
+    // 只发一次 autoReconnectSuppressed() 让上层把这次断开解释清楚。默认启用 —— 只有「重启模块」
+    // 这条路径会临时关掉它，一直关到用户自己点「打开连接」（工单 03），或手动关连接那一刻（工单 04）。
+    // 与 stopAutoReconnect() 不是一回事：那个停的是「正在进行的一次重连」，不改变是否允许重连。
+    void setAutoReconnectEnabled(bool enabled);
+    bool isAutoReconnectEnabled() const { return m_autoReconnect; }
+
 signals:
     // 连接状态信号
     void connected();
@@ -45,6 +52,11 @@ signals:
     void connectionStatusChanged(bool connected);
     // 重连超时，通知 UI 层
     void reconnectTimeout();
+
+    // 这次断开被压制（自动重连已被禁用）：它不是无来由的掉线，而是一次有解释的、预期内的断开。
+    // 每次禁用期间只发一次 —— Qt 可能经 errorOccurred 与 disconnected 两条路先后把同一次断开
+    // 报进来，上层据此写日志 / 复位按钮，写两行就是重复。
+    void autoReconnectSuppressed();
 
 public slots:
     void onReconnect();
@@ -60,6 +72,10 @@ private:
     explicit TcpClient(QObject *parent = nullptr);
     ~TcpClient();
 
+    // 断线处理入口（onDisconnected / onErrorOccurred）在武装重连定时器之前先过这一关：
+    // 返回真 = 自动重连已禁用，本次断开不重连也不发 reconnectTimeout()，调用方立即 return。
+    bool reconnectSuppressed();
+
     static TcpClient* m_instance;
     static QMutex m_mutex;
 
@@ -70,7 +86,8 @@ private:
     QString m_serverIp;
     quint16 m_serverPort;
     bool m_isConnected;
-    bool m_autoReconnect;
+    bool m_autoReconnect;               // 见 setAutoReconnectEnabled()
+    bool m_suppressedNotified;          // 本次压制是否已上报（见 reconnectSuppressed()）
 
     // // 记录本次“断开”后累计重连耗时
     // int m_reconnectElapsedMs;

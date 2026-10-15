@@ -63,12 +63,26 @@ void ProtocolRouter::initDefaultHandlers()
         handleRos3dData(0x05, frame);
     });
 
+    // ⚠️ 这个 0x06 是**帧号**（AA 06 …）= 2D 地图数据。同一个数字还出现在控制组子命令位置
+    // （AA 00 06 0A = 重启模块，见 handleControlFrame 的 0x06 分支），位置不同、含义不同。
     registerHandler(0x06, [this](const QByteArray &frame) {  // 2D地图数据
         handleRos3dData(0x06, frame);
     });
 
+    registerHandler(0x08, [this](const QByteArray &frame) {  // 位置控制指令
+        handleRos3dData(0x08, frame);
+    });
+
     registerHandler(0x09, [this](const QByteArray &frame) {  // 最优轨迹线
         handleRos3dData(0x09, frame);
+    });
+
+    registerHandler(0x0B, [this](const QByteArray &frame) {  // 状态帧（飞控 + 重定位 + 规划）
+        handleRos3dData(0x0B, frame);
+    });
+
+    registerHandler(0x0C, [this](const QByteArray &frame) {  // 地图下传分块
+        handleRos3dData(0x0C, frame);
     });
 }
 
@@ -151,7 +165,7 @@ void ProtocolRouter::processProtocolFrames(QByteArray &buffer)
             // 参数配置：固定6字节 AA 10 [ID] [值H] [值L] 0A
             expectedLen = 6;
         } else {
-            // ROS数据(0x01~0x09)：变长JSON帧，需要找帧尾
+            // ROS数据(0x01~0x09, 0x0B, 0x0C)：变长JSON帧，需要找帧尾
             // 帧格式：AA CMD [JSON数据] 0A
             for (int i = 2; i < m_parseBuf.size(); ++i) {
                 if (quint8(m_parseBuf[i]) == 0x0A) {
@@ -248,12 +262,15 @@ void ProtocolRouter::dispatchFrameBySignal(const QByteArray &frame, quint8 comma
         handleParameterFrame(frame);
         break;
 
-    case 0x01: // 机器人位姿 (map → base_link)
-    case 0x02: // 雷达安装位姿 (map → laser)
+    case 0x01: // 机器人位姿 (base_init → base_link)
+    case 0x02: // 雷达位姿 (base_init → laser_link)
     case 0x03: // 3D点云数据
     case 0x05: // 2D激光雷达数据
     case 0x06: // 2D地图数据
+    case 0x08: // 位置控制指令
     case 0x09: // 最优轨迹线
+    case 0x0B: // 状态帧（飞控 + 重定位 + 规划）
+    case 0x0C: // 地图下传分块
         handleRos3dData(command, frame);
         break;
 
@@ -275,14 +292,20 @@ void ProtocolRouter::handleControlFrame(const QByteArray &frame)
     case 0x01: // 通信测试指令
         emit testFrameReceived(frame, true);
         break;
-    case 0x02: // 保存地图指令
-        emit saveMapCommandReceived();
+    case 0x02: // 保存地图：模块在产物核对通过之后原样回发，所以入站即「存图成功」
+        emit saveMapAckReceived();
         break;
     case 0x03: // 读取参数指令
         emit readParamCommandReceived();
         break;
-    case 0x04: // 保存参数指令
-        qDebug() << "收到保存参数指令响应";
+    case 0x04: // 保存参数指令：模块落盘重读后原样回发，即「回读已发完」的终结信号
+        emit saveParamsAckReceived();
+        break;
+    case 0x06: // 重启模块 AA 00 06 0A：模块先原样回发本帧，再执行关机。
+        // ⚠️ 这个 0x06 是**控制组子命令**（帧的第 3 个字节）。上面 initDefaultHandlers 里注册的
+        // 那个 0x06 是**帧号**（帧的第 2 个字节，AA 06 …，2D 地图数据）——同一个数字，位置不同、
+        // 含义不同，读代码时极易看错，两处都写了这条注释。
+        emit restartAckReceived();
         break;
     default:
         qWarning() << "未知控制子命令：" << subCmd;
@@ -408,6 +431,24 @@ void ProtocolRouter::processUart15BFrame(const QByteArray &fr)
     } else if (msgId == 0x02) {
         // 0x02目标点回传，发送完整原始帧
         emit navGoalEchoReceived(fr);
+    } else if (msgId == 0x04) {
+        // 0x04 实时速度帧（100Hz）：与 0x01~0x03 共用线格式，但六格装的是速度不是位姿。
+        // vx/vy/vz 单位 cm/s（int16 大端），yaw_dot 单位度/s；Byte 8~11 无数据源、恒 0，
+        // 不参与解析（读了也永远是 0，只会把六个偏移的语义搅混）。
+        qint16 vx     = i16(2);
+        qint16 vy     = i16(4);
+        qint16 vz     = i16(6);
+        qint16 yawDot = i16(12);
+        emit uartSpeedReceived(vx, vy, vz, yawDot);
+    } else if (msgId == 0x05) {
+        // 0x05 状态帧（1Hz）：三件状态各占一个字节，顺排在前三个字节 ——
+        // Byte 2 飞控枚举、Byte 3 重定位、Byte 4 路径规划，取值与 TCP 的 AA 0B 同义同值。
+        // ⚠️ Byte 5~13 是恒零的预留区，不参与解析：按别的格位读（如把 Byte 8~9 当规划值）
+        // 会静默读到 0（读成「规划中」），协议层不报任何错，帧里也没有版本字节可自检。
+        quint8 fcState        = quint8(fr[2]);
+        quint8 relocalization = quint8(fr[3]);
+        quint8 planning       = quint8(fr[4]);
+        emit uartFlightStatusReceived(fcState, relocalization, planning);
     } else {
         qWarning() << "收到预期外的串口 MsgID:" << msgId;
     }
@@ -426,6 +467,24 @@ QByteArray ProtocolRouter::buildSaveMapFrame()
 {
     QVariantMap params;
     params["sub_cmd"] = 0x02;
+
+    return buildFrame(0x00, params);
+}
+
+QByteArray ProtocolRouter::buildDownloadMapFrame()
+{
+    QVariantMap params;
+    params["sub_cmd"] = 0x05;
+
+    return buildFrame(0x00, params);
+}
+
+// 形状照抄上面的 buildSaveMapFrame / buildDownloadMapFrame：薄包装，只负责挑子命令。
+// 帧内没有长度字段、没有校验字节、没有版本字节（与既有控制帧一致），线上就是 AA 00 06 0A。
+QByteArray ProtocolRouter::buildRestartFrame()
+{
+    QVariantMap params;
+    params["sub_cmd"] = 0x06;
 
     return buildFrame(0x00, params);
 }

@@ -104,6 +104,16 @@
              </widget>
             </item>
             <item>
+             <widget class="QPushButton" name="restartBt">
+              <property name="enabled">
+               <bool>false</bool>
+              </property>
+              <property name="text">
+               <string>重启模块</string>
+              </property>
+             </widget>
+            </item>
+            <item>
              <widget class="QLabel" name="label_23">
               <property name="text">
                <string/>

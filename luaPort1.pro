@@ -1,4 +1,4 @@
-QT       += core gui serialport network opengl widgets
+QT += core gui serialport network opengl widgets
 
 greaterThan(QT_MAJOR_VERSION, 4): QT += widgets
 
@@ -32,6 +32,8 @@ SOURCES += \
     src/Params/params.cpp \
     src/Serialport/serialport.cpp \
     ui/dualrangeslider.cpp \
+    ui/waitdialog.cpp \
+    utils/protocol/maparchive.cpp \
     utils/protocol/protocolros3d.cpp \
     utils/protocol/protocolrouter.cpp \
     utils/protocol/tftree.cpp \
@@ -48,6 +50,8 @@ HEADERS += \
     src/Serialport/serialport.h \
     stdafx.h \
     ui/dualrangeslider.h \
+    ui/waitdialog.h \
+    utils/protocol/maparchive.h \
     utils/protocol/protocol_msg.h \
     utils/protocol/protocolros3d.h \
     utils/protocol/protocolrouter.h \
