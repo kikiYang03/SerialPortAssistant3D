@@ -80,16 +80,21 @@ public slots:
     void onWriteParamsRequested(const QVector<ParamWrite> &params);
     void onSaveParamsAckReceived();   // 收到终结指令 AA 00 04 0A：回读已发完，可以比对了
 
+    // 获取参数：参数页只报出「表里有多少条」，本层发 AA 00 03 0A、逐条收 AA 10、
+    // 收满条数才下结论。0x03 的应答**没有终结帧**，所以判据只能是条数（见 .cpp）
+    void onReadParamsRequested(int expectedCount);
+
     // 下载地图：发 AA 00 05 0A，逐块收 0x0C，收齐后校验整包、再让用户选路径、落盘（工单 10）
     void onDownloadMapRequested();
     void onMapChunkReceived(const MapChunkMsg &msg);   // 模块下传的每一块（0x0C）
 
-    // 重启模块（工单 01）：发 AA 00 06 0A，等模块原样回发，超时判失败。
-    // 模块先回发、再断电重启 —— 回显是判成功的唯一依据，本功能不推断断线时机。
-    // 判定成功才清理界面上的模块运行态镜像（工单 02）；超时失败路径什么都不清。
+    // 重启算法（工单 01）：发 AA 00 06 0A，等模块原样回发。模块先回发、再断电重启 ——
+    // 回显是判成功的唯一依据，本功能不推断断线时机。
+    // 判定成功才清理界面上的模块运行态镜像（工单 02）并弹那句回执；
+    // 超时路径既不清理也不弹框，只在日志里写一行「重启算法失败」。
     void onRestartAckReceived();
 
-    // 控制链路（TCP 已连接或 UDP 已绑定）门禁：切换本页「重启模块」的可用性。
+    // 控制链路（TCP 已连接或 UDP 已绑定）门禁：切换本页「重启算法」的可用性。
     // 与 3D 页 / 参数页的同名方法接的是同一个信号，本页只是追加了一路接收方。
     void setLinkConnected(bool connected);
 
@@ -97,10 +102,11 @@ private slots:
     void onTestTimeout();
     void onSaveMapTimeout();
     void onSaveParamsTimeout();
+    void onReadParamsTimeout();      // 读取参数超时：没在窗口内收齐参数表条数
     void onDownloadChunkTimeout();   // 块间静默超时：两块之间的空档（含首块之前）
     void onDownloadTotalTimeout();   // 整包总超时：兜底，不让整包无限期挂着
-    void onDownloadCancelled();      // 进度框上的「取消」：丢弃已收数据，不落盘也不报错
-    void onRestartTimeout();         // 回发等待窗口超时：判失败，界面上的数据一个都不动
+    void onDownloadCancelled();      // 进度框上的「取消」：丢弃已收数据，不落盘、不报错、不写日志
+    void onRestartTimeout();         // 回发等待窗口超时：按钮恢复可用 + 一行「重启算法失败」，数据一个都不动
     // 模块下发的每一条 AA 10：既缓存 0x99 模块类型与 0x13 模式，也在保存等待期喂给比对器
     void onModuleParameterFrame(quint8 paramId, qint16 value);
     // 串口通信相关函数
@@ -109,7 +115,7 @@ private slots:
     void on_clearRecvBt_clicked();
     void on_sendBt_clicked();
     void on_btnClearSend_clicked();
-    void on_restartBt_clicked();     // 「重启模块」（Designer 表单里的按钮，靠命名自动连接）
+    void on_restartBt_clicked();     // 「重启算法」（Designer 表单里的按钮，靠命名自动连接；按下即发，不二次确认）
 
     // WiFi连接
     void on_wifiConnectBt_clicked();
@@ -146,7 +152,6 @@ private:
     void closeSaveMapWait();
 
     int saveMapTimeoutMs() const;    // 3D 30 秒 / 2D 10 秒，走 config.ini
-    QString saveMapModuleDesc() const;
 
     // 保存参数等待闭环（工单 06）////////////////////////////////////////////
     // 与存图那套同形，但多了「回读比对」这一步：模块先把全表 21 条 AA 10 发回来，
@@ -167,6 +172,27 @@ private:
                           const QString &title, const QString &text,
                           const QString &detail, QMessageBox::Icon icon);
     int saveParamsTimeoutMs() const;        // 走 config.ini，默认 10 秒
+
+    // 读取参数等待闭环 /////////////////////////////////////////////////////
+    // 与保存参数同形（等待框 + 单次超时 + 收尾），差在完成判据：那边等的是终结指令
+    // AA 00 04 0A，这边**等不到任何终结帧**——模块回完 21 条 AA 10 就没了，
+    // 所以只能按「收满参数表的条数」判齐（与下载地图按块数判齐同一条路子）。
+    QTimer *readParamsTimer = nullptr;      // 单个单次超时定时器（语义与保存参数不同，不复用）
+    WaitDialog *readParamsWait_ = nullptr;  // 04 的组件 + setProgress，实例反复用
+    bool readParamsPending = false;         // 正在读取；为假时到的 AA 10 一律不进这次计数
+
+    // 期望条数由参数页在点击那一刻报来（本层不持有参数表，不该替它数）
+    int readParamsExpected = 0;
+    // 等待期收到的参数值，按参数号存：**重复帧不算进度**，收满「不同参数号」的条数才算齐
+    QMap<quint8, qint16> readParamsReceived;
+
+    void showReadParamsWait();
+    void closeReadParamsWait();
+    void settleReadParamsSuccess();         // 收齐了：关框 → 记日志 → 弹「接收成功」
+    void settleReadParams(const QString &logLine, const QString &summary,
+                          const QString &title, const QString &text,
+                          const QString &detail, QMessageBox::Icon icon);
+    int readParamsTimeoutMs() const;        // 走 config.ini，默认 10 秒
 
     // 地图下载等待闭环（工单 10）////////////////////////////////////////////
     // 与存图 / 存参数同形，但形态不同：带进度、可取消，且**两级超时**。
@@ -189,25 +215,20 @@ private:
     int downloadTotalTimeoutMs() const;     // 走 config.ini，默认 120 秒
     QString downloadDefaultDir() const;     // 走 config.ini，默认取可执行文件旁边的目录
 
-    // 重启模块等待闭环（工单 01）////////////////////////////////////////////
-    // 与存图 / 存参数同形（单独一个单次定时器 + 一个等待标志），但**没有失败清理**：
-    // 超时意味着模块很可能根本没重启，界面上那些运行态镜像依然是有效的，
-    // 顺手清掉就是毁掉还在用的东西。
+    // 重启算法等待闭环（工单 01）////////////////////////////////////////////
+    // 与存图 / 存参数同形（单独一个单次定时器 + 一个等待标志），但**没有失败清理、也没有失败提示**：
+    // 超时意味着模块很可能根本没重启，界面上那些运行态镜像依然是有效的，顺手清掉就是毁掉还在用
+    // 的东西；而提示那一侧，本功能全程只弹一次框（收到回发时的回执），超时静默。
     QTimer *restartTimer = nullptr;         // 3 秒单次超时（RESTART_ACK_TIMEOUT_MS，见 .cpp）
     bool restartPending = false;            // 正在等回发：等待窗口内按钮置灰，挡掉第二条重启指令
     bool controlLinkConnected_ = false;     // 「TCP 已连接或 UDP 已绑定」的最近一次取值
 
-    // 已发出过重启指令、且还没手动重连（工单 03）—— 断线那行日志的措辞据此选：
-    // 「与重启一致」还是「本次不自动重连」。压制机制本身不在这里，在 TcpClient 那把开关里；
-    // 这个成员只管界面怎么说（工单 04 的手动关闭会共用那把开关，但那次不该说是重启）。
-    bool restartDisconnectExpected_ = false;
-
-    // 「重启模块」的可用性只由这一处决定（含等待窗口与串口模式两项）
+    // 「重启算法」的可用性只由这一处决定（含等待窗口与串口模式两项）
     void updateRestartButton();
 
     // 重启判定成功后清掉本页缓存的运行态镜像（工单 02）：位姿两路（0x01 / 0x03）、
-    // 速度（0x04）、飞控状态帧（0x05）、三个跳变锁存、模块类型（0x99）、模式（0x13）。
-    // 不清的话每秒一次的打印定时器会继续把重启前的旧状态当当下值吐到接收窗口。
+    // 模块类型（0x99）、模式（0x13）。
+    // 不清的话每秒一次的打印定时器会继续把重启前的旧位姿当当下值吐到接收窗口。
     void clearModuleRuntimeCaches();
 
     // 协议数据解析
@@ -251,30 +272,7 @@ private:
     PoseData latestPose03;    // 0x03 位置控制指令
     QByteArray latestFrame02; // 0x02 目标点回传原始数据
 
-    // 缓存最新的实时速度（0x04，100Hz：六格是 vx/vy/vz/yaw_dot，不是位姿）
-    struct SpeedData {
-        qint16 vx = 0, vy = 0, vz = 0, yawDot = 0;
-        bool valid = false;
-    };
-    SpeedData latestSpeed;
-
-    // 缓存最新的状态帧（0x05，三件各占一字节：Byte 2 飞控 / Byte 3 重定位 / Byte 4 规划）
-    struct FcStatus {
-        quint8 state = 0;           // 飞控枚举（0x00~0x04）
-        quint8 relocalization = 0;  // 重定位，0/1/2/3
-        quint8 planning = 0;        // 路径规划，取值同重定位
-        bool valid = false;
-    };
-    FcStatus latestFcStatus;
-
-    // 上一行已写进日志的三件取值；-1 表示这一路还没收到过任何一包。
-    // 本帧 1 Hz 周期发，逐帧写会把接收窗口刷屏，所以三件任一跳变时才写一行。
-    // -1 与「模块上报 3（未响应）」必须显示得不一样：前者是链路问题，后者是模块问题。
-    int lastFcState_ = -1;
-    int lastRelocState_ = -1;
-    int lastPlanState_ = -1;
-
-    // 接收计数器（用于频率统计）
+    // 接收计数器（用于频率统计）。0x04 / 0x05 不再有每秒打印，计数只喂下面那次统计
     int count01 = 0;  // 0x01计数
     int count02 = 0;  // 0x02计数
     int count03 = 0;  // 0x03计数
@@ -299,7 +297,7 @@ signals:
     void tcpConnectionChanged(bool connected);
 
     // 控制指令链路（TCP / UDP）状态：给可视化页的「保存地图」、参数页的「写入参数」、
-    // 本页的「重启模块」开门 —— 三个接收方，同一条门禁。
+    // 本页的「重启算法」开门 —— 三个接收方，同一条门禁。
     // 串口不算 —— 15 字节帧里没有控制指令这一类消息（0x00 系列），
     // 与测试按钮在串口模式下被禁用是同一条规矩。
     void controlLinkStateChanged(bool connected);
@@ -314,6 +312,9 @@ signals:
 
     // 保存参数闭环的结论摘要（全部一致 / 有出入 N 项 / 超时未集齐），给参数页的状态行
     void saveParamsFinished(const QString &summary);
+
+    // 读取参数闭环的结论摘要（收齐 N 条 / 超时只收到 N 条），给参数页的状态行
+    void readParamsFinished(const QString &summary);
 
     // 重启指令判定成功（窗口内收到模块回发）：3D 页面据此清掉 TF 数值标签、规划 / 重定位
     // 状态标签与跳变锁存（工单 02）。**只在成功时发** —— 超时失败路径不发，那时模块

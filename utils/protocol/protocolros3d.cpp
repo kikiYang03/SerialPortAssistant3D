@@ -468,13 +468,13 @@ void ProtocolRos3D::calcHz()
     m_pathLast   = m_pathCnt;
     m_statusLast = m_statusCnt;
 
-    QString ts = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss");
-    emit appendMessage(QStringLiteral("%1 >> ====== 数据接收频率统计 ======").arg(ts));
-    emit appendMessage(QStringLiteral("%1 >> 位姿话题：%2Hz").arg(ts).arg(poseHz, 0, 'f', 2));
-    emit appendMessage(QStringLiteral("%1 >> 点云话题：%2Hz").arg(ts).arg(cloudHz, 0, 'f', 2));
-    emit appendMessage(QStringLiteral("%1 >> 地图话题：%2Hz").arg(ts).arg(mapHz, 0, 'f', 2));
-    emit appendMessage(QStringLiteral("%1 >> 轨迹话题：%2Hz").arg(ts).arg(pathHz, 0, 'f', 2));
-    emit appendMessage(QStringLiteral("%1 >> 状态帧：%2Hz").arg(ts).arg(statusHz, 0, 'f', 2));
+    QString ts = QDateTime::currentDateTime().toString("HH:mm:ss");
+    emit appendMessage(QStringLiteral("%1 >> ====== TCP话题接收频率统计 ======").arg(ts));
+    emit appendMessage(QStringLiteral("%1 >> 位姿：%2Hz").arg(ts).arg(poseHz, 0, 'f', 2));
+    emit appendMessage(QStringLiteral("%1 >> 点云：%2Hz").arg(ts).arg(cloudHz, 0, 'f', 2));
+    emit appendMessage(QStringLiteral("%1 >> 地图：%2Hz").arg(ts).arg(mapHz, 0, 'f', 2));
+    emit appendMessage(QStringLiteral("%1 >> 规划轨迹：%2Hz").arg(ts).arg(pathHz, 0, 'f', 2));
+    emit appendMessage(QStringLiteral("%1 >> 状态：%2Hz").arg(ts).arg(statusHz, 0, 'f', 2));
     emit appendMessage(QStringLiteral("%1 >> ==============================").arg(ts));
 }
 

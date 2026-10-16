@@ -109,7 +109,7 @@
                <bool>false</bool>
               </property>
               <property name="text">
-               <string>重启模块</string>
+               <string>重启算法</string>
               </property>
              </widget>
             </item>

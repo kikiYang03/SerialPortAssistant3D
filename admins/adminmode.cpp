@@ -64,5 +64,5 @@ void AdminMode::appendMessage(const QString &msg)
 {
     if (!instance().isAdmin()) return;
     emit instance().logAdminMessage(
-        QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss >> [管理员] ") + msg);
+        QDateTime::currentDateTime().toString("HH:mm:ss >> [管理员] ") + msg);
 }

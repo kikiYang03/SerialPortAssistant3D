@@ -1,18 +1,27 @@
 ﻿#include "params.h"
 #include "ui_params.h"
-#include "protocolrouter.h"
 #include <QHBoxLayout>
+#include <QFontMetrics>   // 「参数值」列宽按下拉选项的文本宽度算（见 setupParameters）
+#include <QDateTime>   // 状态行 / 日志里的时间戳（原先靠 tcpclient.h 顺带带进来）
+#include <QTimer>      // 折叠后延后一趟重摆 cell widget（见 refreshTableLayout）
 #include <QDebug>
 #include <adminmode.h>
+
+// 参数值那一列的列号（输入控件都挂在这一列上，折叠时要连它们一起藏）
+namespace {
+constexpr int kValueColumn = 3;
+}
 
 const QVector<Parameter> Params::s_parameters = {
     // 表序与 upper/config/通讯协议.md（唯一权威的新协议）的参数ID定义表一致，
     // 也是 AA 00 03 0A 应答与保存后回显的发送顺序。docs/通讯协议.md 那份是过时的对照件，勿照它改。
     // 本仓按 ID 字符串匹配行，顺序只影响可读性；但折叠分组的行号是按下标推导的，插行请勿打乱分组。
+    // 「描述」逐字抄自上表的「说明」列，只去掉 Qt 表格不渲染的 Markdown 强调标记（** 与反引号）；
+    // 不再夹带本仓自己的补充。要改说明请先改协议表——两边没有机制自动同步。
     // 0x00 取值集合只留新协议参数表列出的 4 项（删掉旧占位 12=m10 / 13=m10p）：
     // 用户不会选中一个协议表里不存在的值，也就不会踩「表外值静默丢弃、链路无任何回执」。
     {"0x00", "雷达型号", "-", "0=mid360, 1=mid360s, 10=N10, 11=N10_P，默认0", 0},
-    {"-", "雷达安装位置", "-", "雷达相对于机器人中心的位置 = 安装位姿 T：正向 base_init -> laser_init_map，其逆 laser_link -> base_link（旧文档写的 base_link->laser_link 方向相反），遵循FLU（X前，Y左，Z上）", 0},
+    {"-", "雷达安装位置", "-", "雷达相对于机器人中心的位置 = 安装位姿 T：base_link -> laser_link", 0},
     {"0x01", "X坐标", "-100~100", "雷达位置X坐标值，单位厘米，默认0", 0},
     {"0x02", "Y坐标", "-100~100", "雷达位置Y坐标值，单位厘米，默认0", 0},
     {"0x03", "Z坐标", "-100~100", "雷达位置Z坐标值，单位厘米，默认0", 0},
@@ -21,28 +30,34 @@ const QVector<Parameter> Params::s_parameters = {
     {"0x06", "Yaw角度", "-180~180", "雷达偏航角，单位度，默认0", 0},
     {"0x11", "使能与PX4飞控通信", "0-1", "1=使能，模块可与PX4通信，作为位置传感器/执行路径规划，默认1", 1},
     {"0x12", "使能与主控串口通信", "0-1", "1=使能，模块可与主控串口通信，输出坐标/输出控制点/输入目标点，默认1", 1},
-    {"0x13", "模式", "0-1", "v2.5 起由「避障算法使能标志」换义为「模式」（同一个 ID 换义，不是新 ID）：0=建图（默认）、1=定位。默认值也由 1 变为 0。按旧义解析不会报错、只会静默反义（旧义 1=开避障，新义 1=定位）。绕障已恒开，旧义在这条链上没有落点。重启生效", 0},
-    {"0x14", "导航使能", "0-1", "v2.5 新增：1=使能（默认）、0=不使能。导航装配 ⟺ 本值 1 且模块类型为 1 或 3，其余组合一律不装规划器；与模块类型正交。重启生效", 1},
-    {"-", "路径规划与小车模型参数", "-", "0x21~0x29 连续无缺号（v2.6 删号不复用、不留空位，由后面依次上移填满）。首次使用应断开电机供电，查看规划结果无误", 0},
-    {"0x21", "最大移动速度", "0~1000", "规划轨迹的最大速度，单位cm/s，默认100。由新规划器的动力学可行性检查消费：设小即实测限速（轨迹按时间重参数化拉长）；v2.6 起同一格还驱动跟踪上限 controller.max_speed（双映射）。设成 0 会让每条轨迹都判不可行", 100},
-    {"0x22", "最大加速度", "0~1000", "规划轨迹的最大加速度，单位cm/s²，默认100。消费方同 0x21（v2.6 起还驱动 controller.max_linear_acceleration），同样设成 0 即全不可行", 100},
-    {"0x23", "起飞高度", "0~1000", "一键起飞设定的高度，单位cm，默认100。2D 下它在用：pose_send 把位姿 z 抬到该高度，upper 合成 2D 地图时也把障碍层放在这个高度——同一个值，两处必须相等。消费方是 offboard / pose_send，不是规划器", 100},
-    // 0x24 名称取「膨胀半径」，**不**采信新协议表的名称列：该表名称列写「机器人半径」、
-    // 说明列写「障碍膨胀半径」，自相矛盾；模块侧 param_store.cpp 的字段名是 inflation_radius。
+    {"0x13", "模式", "0-1", "0=建图、1=定位，默认0。定位模式需要建图模式下保存的地图", 0},
+    // 本值默认 0，与协议表（v2.8/14 起）一致。导航装配 ⟺ 本值 1 且模块类型为 1 或 3，
+    // 其余组合一律不装规划器；与模块类型正交。重启生效。
+    {"0x14", "导航使能", "0-1", "1=使能，启用导航功能，默认0", 0},
+    // v2.8/13 新增。插在 0x14 与 0x21 块之间：0x15 本来就空着，插在这里表序仍然升序。
+    // 与 v2.6 删掉的老 0x27 filter_radius 不是一回事：那是删号，本号是新号新义、且真接线。
+    // 单位归 x/y/z 那一族（协议面 / 缓存 / yaml 全程裸厘米整数，不乘除 100），
+    // 不跟 0x21~0x29 那条「长度类 = 米」的惯例——这是有意的，不是抄漏。
+    {"0x15", "过滤半径", "0~1000", "设置过滤点云的半径大小，例如过滤机器人自身结构，单位cm，默认10。圆心 = 机器人中心", 10},
+    {"-", "路径规划与小车模型参数", "-", "首次使用应断开电机供电，查看规划结果无误", 0},
+    {"0x21", "最大移动速度", "0~1000", "规划轨迹的最大速度，单位cm/s，默认100。", 100},
+    {"0x22", "最大加速度", "0~1000", "规划轨迹的最大加速度，单位cm/s²，默认100。", 100},
+    {"0x23", "起飞高度", "0~1000", "一键起飞设定的高度，单位cm，默认 100。", 100},
+    // 0x24 名称取「膨胀半径」，**不**采信协议表的名称列：该表名称列写「机器人半径」、
+    // 说明列写「障碍膨胀半径」；模块侧 param_store.cpp 的字段名是 inflation_radius。
     // 照名称列改成「机器人半径」等于把一个自己都说不清的字段名抄进代码。
-    {"0x24", "膨胀半径", "0~1000", "障碍膨胀半径，单位cm，默认10（= 0.10 m）；0 = 不膨胀。已真接线到规划器 planning.inflation_radius。开箱即带 10 cm 绕障余量，要回到不膨胀必须显式发 0；现场按车体外廓调大", 10},
-    {"0x25", "规划模式", "0~2", "导航链路跑哪种规划：0=2D平面路径规划（例如地面移动小车，模块侧 2d+ground，默认）、1=3D自由空间路径规划（例如无人机，3d+uav）、2=3D沿地面空间路径规划（例如可爬楼梯机械狗，3D规划但要求轨迹贴合地面，3d+ground）。无单位、不做换算（模式标识，不是物理量）。重启生效；越界值（含空值）启动即报错、不回落默认。两条导航链路都读它：3D 三档都收；2D 导航版仅支持 0（发 1/2 或越界值启动即报错）；2D 定位不装规划器，此参数不参与", 0},
-    {"0x26", "小车运动学模型", "0~1", "0=omni（全向，默认）、1=differential（差速）。仅在规划模式 0 生效。喂规划器 controller.motion_model。只暴露规划器认得的前两个值（本仓两条链都是地面车，uav/ackermann 不暴露）；越界值启动即报错退出、不回落 omni", 0},
-    {"0x27", "目标点容差（小车模型）", "0~1000", "到目标点多近算「到点」，单位cm，默认15（= 0.15 m，上游默认）。喂 controller.goal_tolerance", 15},
-    {"0x28", "最大偏航角速率（小车模型）", "0~1000", "单位度/s，默认43（≈ 上游 0.75 rad/s）。喂 controller.max_yaw_rate。归角度组：与 roll/pitch/yaw 同口径，×1、不做 cm↔m 换算", 43},
-    {"0x29", "最小转弯半径（小车模型）", "0~1000", "单位cm，默认100（= 1.0 m，上游默认）。喂 controller.min_turning_radius。omni 模型下不生效（登记，不报错）", 100},
+    {"0x24", "膨胀半径", "0~1000", "障碍膨胀半径，单位cm，默认 10 = 0.10 m。建议设置为 = 机器人半径+10", 10},
+    {"0x25", "规划模式", "0~2", "导航链路跑哪种规划：0=2D平面路径规划（例如地面移动小车）、1=3D自由空间路径规划（例如无人机）、2=3D沿地面空间路径规划（例如可爬楼梯机械狗，3D规划但要求轨迹贴合地面）。2D导航版模块仅支持模式0。默认0", 0},
+    {"0x26", "小车运动学模型", "0~1", "0=全向，1=差速，默认0。仅在规划模式0生效", 0},
+    {"0x27", "目标点容差（小车模型）", "0~1000", "到目标点多近算「到点」，单位cm，默认 15（= 0.15 m）。", 15},
+    {"0x28", "最大偏航角速率（小车模型）", "0~1000", "单位度/s，默认 43（≈ 上游 0.75 rad/s）", 43},
+    {"0x29", "最小转弯半径（小车模型）", "0~1000", "单位cm，默认 100（= 1.0 m）。全向模型下不生效", 100},
     {"0x99", "模块类型", "0~3", "0=3D定位模块，1=3D导航模块，2=2D定位模块，3=2D导航模块", 0},
     };
 
 Params::Params(QWidget *parent)
     : QWidget(parent)
     , ui(new Ui::Params)
-    , m_isGroupFolded(false)
 {
     ui->setupUi(this);
 
@@ -79,7 +94,7 @@ void Params::setupTable()
     ui->tableWidget->setColumnWidth(0, 25);    // 减小第一列宽度
     ui->tableWidget->setColumnWidth(1, 70);    // 参数ID列
     ui->tableWidget->setColumnWidth(2, 100);   // 参数名称列
-    ui->tableWidget->setColumnWidth(3, 120);   // 参数值列
+    ui->tableWidget->setColumnWidth(3, 120);   // 参数值列（只是下限：setupParameters 会按最长下拉选项再撑宽）
     ui->tableWidget->setColumnWidth(4, 100);   // 值范围列
     // 说明列自动拉伸
 
@@ -174,16 +189,20 @@ void Params::setupParameters()
             QPushButton *foldButton = new QPushButton();
             foldButton->setText("−");
             foldButton->setFixedSize(20, 20);
+            foldButton->setToolTip("折叠 / 展开这一组参数");
 
-            // 使用动态属性记录该按钮的状态和需要控制的行号范围
-            foldButton->setProperty("folded", false);
+            // 分组状态留在成员里，不留在按钮上：按钮是 cell widget，
+            // 表格重新布局时它可以被重建，「挂在它身上的状态」就跟着没了。
+            FoldGroup group;
+            group.button = foldButton;
             if (row == placementHeaderRow) {
-                foldButton->setProperty("startRow", placementFirstRow);
-                foldButton->setProperty("endRow", placementLastRow);
+                group.firstRow = placementFirstRow;
+                group.lastRow  = placementLastRow;
             } else {
-                foldButton->setProperty("startRow", plannerFirstRow);
-                foldButton->setProperty("endRow", plannerLastRow);
+                group.firstRow = plannerFirstRow;
+                group.lastRow  = plannerLastRow;
             }
+            m_foldGroups.append(group);
 
             connect(foldButton, &QPushButton::clicked, this, &Params::onFoldButtonClicked);
 
@@ -216,10 +235,32 @@ void Params::setupParameters()
         // 为参数值创建输入控件
         QWidget *valueWidget = createValueWidget(param.id, param.range, param.defaultValue);
         valueWidgets.append(valueWidget);
-        ui->tableWidget->setCellWidget(row, 3, valueWidget);
+        ui->tableWidget->setCellWidget(row, kValueColumn, valueWidget);
 
         // 0x99 模块类型已改为对所有用户可见
     }
+
+    // 「参数值」列宽按这一列里最长的一个下拉选项撑开：0x25 的三个模式名照协议表原文写，
+    // 最长的是「3D沿地面空间路径规划」，setupTable 里写死的 120px 装不下，下拉框就把
+    // 中间那几个字省略掉了。这里按控件自己的字体度量算，而不是再写死一个像素数——
+    // 表格样式里的 font-size 一改、系统 DPI 一变，写死的值又会开始截断。
+    // 数码框那几行本来就比这窄，所以拿现有列宽兜底即可。
+    // 量的是表格自己的字体：font-size 是打在 QTableWidget 上的，下拉框继承的就是这一份。
+    int valueColumnWidth = ui->tableWidget->columnWidth(kValueColumn);
+    const QFontMetrics fm(ui->tableWidget->font());
+    for (QWidget *valueWidget : valueWidgets) {
+        const QComboBox *comboBox = valueWidget->findChild<QComboBox *>();
+        if (!comboBox) continue;
+        int textWidth = 0;
+        for (int i = 0; i < comboBox->count(); ++i)
+            textWidth = qMax(textWidth, fm.horizontalAdvance(comboBox->itemText(i)));
+        // 文本之外还要留：下拉箭头 + 控件边框内边距（约 30）、createValueWidget 那层布局
+        // 左右各 5px（= 10），再留 10 的余量，吃掉不同字体回退带来的几像素出入。
+        valueColumnWidth = qMax(valueColumnWidth, textWidth + 50);
+    }
+    // 必须在 resizeRowsToContents 之前定宽：列一变宽，「说明」列就变窄、换行的行数跟着变，
+    // 行高得按新的列宽重算一遍，否则最后一行的说明会被行高切掉。
+    ui->tableWidget->setColumnWidth(kValueColumn, valueColumnWidth);
 
     // 设置行高自适应内容
     ui->tableWidget->resizeRowsToContents();
@@ -230,8 +271,9 @@ void Params::setupParameters()
         ui->tableWidget->setRowHeight(row, qMax(ui->tableWidget->rowHeight(row), 25)); // 最小行高25px
     }
 
-    // （保留原有的代码，尽管使用属性后 m_isGroupFolded 可能不再用于多组折叠，但保留防止头文件报错）
-    m_isGroupFolded = false;
+    // 行高定完再让 view 摆一遍 cell widget：上面这些 resizeRowsToContents / setRowHeight
+    // 都改过行坐标，控件要等下一次滚动才会跟着动，先在这里归位。
+    refreshTableLayout();
 }
 
 // 填写表格初始信息
@@ -285,17 +327,23 @@ QWidget* Params::createValueWidget(const QString &id, const QString &range, int 
     else if(id == "0x25"){
         // 规划模式：无单位、不做换算，必须是下拉框（落进末尾的 else 会变成数码框）
         QComboBox *comboBox = new QComboBox();
-        comboBox->addItem("平面地面（2d+ground）", 0);
-        comboBox->addItem("3D UAV 自由空间（3d+uav）", 1);
-        comboBox->addItem("3D Ground 有支撑（3d+ground）", 2);
+        // 选项措辞照协议表 0x25 的说明列（0=2D平面…、1=3D自由空间…、2=3D沿地面…），
+        // 不再自造「平面地面 / 3D UAV 自由空间 / 3D Ground 有支撑」那套译名——
+        // 用户对着协议文档挑值，下拉框里应当是文档上的那几句话。
+        // 模块侧的 2d+ground / 3d+uav / 3d+ground 收进说明列，这里不占宽度。
+        comboBox->addItem("2D平面路径规划", 0);
+        comboBox->addItem("3D自由空间路径规划", 1);
+        comboBox->addItem("3D沿地面空间路径规划", 2);
         comboBox->setCurrentIndex(qMax(0, comboBox->findData(defaultValue)));
         layout->addWidget(comboBox);
     }
     else if(id == "0x26"){
         // 运动学模型：枚举，必须下拉框
         QComboBox *comboBox = new QComboBox();
-        comboBox->addItem("omni（全向）", 0);
-        comboBox->addItem("differential（差速）", 1);
+        // 同样照协议表 0x26 的说明列写「全向 / 差速」；omni / differential 是模块侧
+        // 配置里的键值名，留在说明列给对着 params.yaml 调的场合看。
+        comboBox->addItem("全向", 0);
+        comboBox->addItem("差速", 1);
         comboBox->setCurrentIndex(qMax(0, comboBox->findData(defaultValue)));
         layout->addWidget(comboBox);
     }
@@ -361,33 +409,28 @@ void Params::updateParameter(quint8 paramIdRaw, qint16 value)
 }
 
 
-// 槽函数
 // 获取当前参数
+// 与「写入参数」同一条规矩：这里不持有连接、不查连接、不自己拼帧。
+// 0x03 的应答是**按表序发的全表 AA 10（现 22 条）、没有终结帧**，所以「收齐了没」只能由
+// 收帧的那一侧（链路层）来判——本页只负责报出「表里有多少条」这个分母。
 void Params::on_readButton_clicked()
 {
-    TcpClient* tcpClient = TcpClient::getInstance();
-
-    if (!tcpClient->isConnected()) {
-        QMessageBox::warning(this, "错误", "请先建立TCP连接");
-        return;
+    // 分母从表里数：带参数ID的行才是参数，"-" 那两行是折叠分组表头。
+    // 不写死 21：将来参数表插行，这里的期望条数跟着走，不会停在一个过时的常数上。
+    int expectedCount = 0;
+    for (int row = 0; row < ui->tableWidget->rowCount(); ++row) {
+        QTableWidgetItem *idItem = ui->tableWidget->item(row, 1);
+        if (idItem && idItem->text() != "-") ++expectedCount;
     }
 
     ui->optLabel->setText("正在获取所有参数...");
     ui->optLabel->setStyleSheet("color: blue;");
 
-    // 构建统一读取命令: AA 00 03 0A
-    QByteArray frame = ProtocolRouter::buildReadParamFrame(0xFF);
+    QString timestamp = QDateTime::currentDateTime().toString("HH:mm:ss >> 用户操作: ");
+    emit appendMessage(timestamp + "读取当前参数");
 
-    // 发送统一读取命令
-    tcpClient->sendData(frame);
-
-    // 清空接收缓冲区
-    m_receiveBuffer.clear();
-    m_receivedParamCount = 0;
-
-    qDebug() << "发送统一参数读取请求，数据:" << frame.toHex(' ');
-    QString timestamp = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss >> 用户操作: ");
-    emit appendMessage(timestamp + "读取当前参数...");
+    // 发送与等待同处一地：链路层负责发 AA 00 03 0A、收齐后弹结果（同 writeParamsRequested）
+    emit readParamsRequested(expectedCount);
 }
 
 // 写入参数按钮
@@ -426,7 +469,7 @@ void Params::on_writeButton_clicked()
         return;
     }
 
-    QString timestamp = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss >> 用户操作: ");
+    QString timestamp = QDateTime::currentDateTime().toString("HH:mm:ss >> 用户操作: ");
     emit appendMessage(timestamp + "写入参数");
 
     // 下面这行只说明「已下发、正在等」——成功与否由链路层的回读比对给出（工单 06），
@@ -456,38 +499,78 @@ void Params::setSaveSummary(const QString &summary)
     ui->optLabel->setText(summary);
     ui->optLabel->setStyleSheet("color: blue;");
 }
+
+// 读取闭环的结论落在同一行状态文字上（收齐 / 超时）
+void Params::setReadSummary(const QString &summary)
+{
+    ui->optLabel->setText(summary);
+    ui->optLabel->setStyleSheet("color: blue;");
+}
 // 折叠按钮槽函数
 void Params::onFoldButtonClicked()
 {
     QPushButton *button = qobject_cast<QPushButton*>(sender());
     if (!button) return;
 
-    // 从按钮属性中获取控制范围和当前状态
-    bool isFolded = button->property("folded").toBool();
-    int startRow = button->property("startRow").toInt();
-    int endRow = button->property("endRow").toInt();
-
-    if (isFolded) {
-        // 当前为折叠状态 -> 执行展开
-        for (int row = startRow; row <= endRow; ++row) {
-            ui->tableWidget->setRowHidden(row, false);
-        }
-        button->setText("−");
-        button->setProperty("folded", false); // 更新状态
-    } else {
-        // 当前为展开状态 -> 执行折叠
-        for (int row = startRow; row <= endRow; ++row) {
-            ui->tableWidget->setRowHidden(row, true);
-        }
-        button->setText("+");
-        button->setProperty("folded", true); // 更新状态
+    for (int i = 0; i < m_foldGroups.size(); ++i) {
+        if (m_foldGroups.at(i).button != button) continue;
+        setGroupFolded(i, !m_foldGroups.at(i).folded);
+        return;
     }
 }
+
+// 折叠 / 展开一组参数。
+//
+// 三件事必须一起做，少一件都会出问题：
+//  1) setRowHidden() 藏行——但它只藏得住「行里的 item」，藏不住 setCellWidget()
+//     装进去的控件（QTBUG-22490）。只做这一步，折起来那几行的数码框 / 下拉框会原地留着，
+//     压到下面已经上移的行上，看着就是「折叠错位」。
+//  2) 所以行里的输入控件再显式藏一遍（展开时对应地放回来）。控件只是藏起来、不销毁，
+//     值还在里面：折叠状态下「写入参数」「恢复默认」照旧能读到它们。
+//  3) 最后逼 view 重摆 cell widget。藏行之后 view 不会主动重摆，要等下一次滚动 /
+//     改窗口尺寸才归位；这中间折叠按钮停在旧坐标上（行已经不是那一行了），
+//     于是就「时而出现时而消失」。updateGeometries 就是用来干这个的。
+void Params::setGroupFolded(int groupIndex, bool folded)
+{
+    if (groupIndex < 0 || groupIndex >= m_foldGroups.size()) return;
+    FoldGroup &group = m_foldGroups[groupIndex];
+
+    for (int row = group.firstRow; row <= group.lastRow; ++row) {
+        if (row < 0 || row >= ui->tableWidget->rowCount()) continue;
+
+        ui->tableWidget->setRowHidden(row, folded);
+        if (QWidget *editor = ui->tableWidget->cellWidget(row, kValueColumn))
+            editor->setVisible(!folded);
+    }
+
+    if (group.button)
+        group.button->setText(folded ? "+" : "−");
+    group.folded = folded;
+
+    refreshTableLayout();
+}
+
+// 逼 QTableView 重新摆一遍 cell widget。
+// updateGeometries() 是 protected 槽（qabstractitemview.h 的 protected Q_SLOTS），
+// 外面直接喊不到，只能过元对象系统——这也正是「cell widget 错位」那一票的标准解法。
+void Params::refreshTableLayout()
+{
+    QMetaObject::invokeMethod(ui->tableWidget, "updateGeometries", Qt::DirectConnection);
+
+    // 再排一趟，让布局落定。表头是 ResizeToContents，藏行会让它延后重算一次行高
+    // （QHeaderView 内部的 0 定时器），那一趟排在上面这次摆位之后，会把行坐标再挪一次，
+    // 挪完 cell widget 又不跟手了——「按钮时而出现时而消失」就出在这段空窗里。
+    // 这里只重复「摆位」这一个动作，不再回调本函数（否则 0 定时器自我续命、空转）。
+    QTimer::singleShot(0, this, [this]() {
+        QMetaObject::invokeMethod(ui->tableWidget, "updateGeometries", Qt::DirectConnection);
+    });
+}
+
 // 点击恢复默认参数按钮
 void Params::on_defaultButton_clicked()
 {
     restoreDefaultValues();
-    QString timestamp = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss >> 用户操作: ");
+    QString timestamp = QDateTime::currentDateTime().toString("HH:mm:ss >> 用户操作: ");
     emit appendMessage(timestamp + "恢复参数默认值");
     ui->optLabel->setText("恢复参数默认值");
     ui->optLabel->setStyleSheet("color: blue;");

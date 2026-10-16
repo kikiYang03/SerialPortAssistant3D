@@ -7,7 +7,7 @@
 #include <QSpinBox>
 #include <QComboBox>
 #include <QMessageBox>
-#include "tcpclient.h"  // 添加TCP客户端头文件
+// 不带 tcpclient.h：参数页既不发帧也不查连接，读 / 写两条链都交给链路层
 
 
 // 定义参数数据
@@ -57,6 +57,9 @@ public slots:
     // 链路层的保存闭环有了结论（一致 / 有出入 / 超时）：把摘要落在这行状态文字上
     void setSaveSummary(const QString &summary);
 
+    // 链路层的读取闭环有了结论（收齐 / 超时）：同样落在状态行上
+    void setReadSummary(const QString &summary);
+
 private slots:
     void onFoldButtonClicked();
     void on_readButton_clicked();
@@ -70,22 +73,38 @@ signals:
     // 待写入的参数表：交给链路层发（逐条 AA 10 <参数号> <值> + 一条 AA 00 04 0A 保存终结指令）
     void writeParamsRequested(const QVector<ParamWrite> &params);
 
+    // 读取参数请求：本页只出「表里有多少条」，帧由链路层发、收齐也由链路层判
+    // （0x03 的应答没有终结帧，只能按条数收齐 —— 见 SerialPort::onReadParamsRequested）
+    void readParamsRequested(int expectedCount);
+
 
 private:
     Ui::Params *ui;
-    bool m_isGroupFolded;
     QList<QWidget*> valueWidgets;
     static const QVector<Parameter> s_parameters;
 
-    QByteArray m_receiveBuffer;  // 数据接收缓冲区
+    // 一个可折叠分组：表头行上的折叠按钮 + 它管辖的参数行区间（闭区间，行号 = s_parameters 下标）。
+    // 折叠状态跟按钮一起存在这里，而不是挂在控件上（原先用 setProperty("folded")）：
+    // cell widget 是表格的从属物，表格一重新布局就可能被重建 / 重新挂载，
+    // 挂在上面的状态会跟界面脱节——图标和实际折没折对不上，就是「错位」的一半。
+    struct FoldGroup {
+        QPushButton *button = nullptr;
+        int firstRow = -1;
+        int lastRow = -1;
+        bool folded = false;
+    };
+    QVector<FoldGroup> m_foldGroups;
 
     void setupTable();
     void setupParameters();
     QWidget* createValueWidget(const QString &id, const QString &range, int defaultValue);
     void restoreDefaultValues();
 
-    int m_expectedParamCount = 8; // 根据实际参数数量设置
-    int m_receivedParamCount = 0;
+    // 折叠 / 展开第 groupIndex 组。三件事必须一起做（藏行、藏行里的输入控件、重摆 cell widget），
+    // 只 setRowHidden 是藏不干净的——原因见 params.cpp 里的说明。
+    void setGroupFolded(int groupIndex, bool folded);
+    // 逼 view 重摆所有 cell widget：藏行之后它不会自己重摆，要等下一次滚动 / 改尺寸
+    void refreshTableLayout();
 
     // 保存参数等待期：模块回读值不刷界面（默认开着，正常读取参数时照刷）
     bool m_echoSuppressed = false;

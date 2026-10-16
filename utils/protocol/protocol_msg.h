@@ -68,8 +68,8 @@ struct RobotPoseMsg {
 // 的「雷达位姿」已废——字段形状与 v2.6 一模一样（x,y,z + 四元数 + 两个帧名），所以照旧解析
 // 不会报错，只能靠帧名分辨。
 //
-// **不参与任何坐标变换**：它不再是谁的摆放依据。留着只做两件事——在界面上显示开机点的位置，
-// 以及当 `base_init_map → base_init` 这条边「到了没」的判据（工单 08）。
+// **不参与任何坐标变换**：它不再是谁的摆放依据。留着只做一件事——在界面上显示开机点的位置
+// （工单 09，落在那条静态边上）。
 struct RelocalizationPoseMsg {
     QString frame_id;        // "base_init_map"
     QString child_frame_id;  // "base_init"

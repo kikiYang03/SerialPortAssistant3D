@@ -17,8 +17,6 @@
 #include <unordered_set>   // ← 让 std::unordered_set 可见
 #include <cstdint>         // ← uint64_t
 
-class QTimer;
-
 // 轨迹缓存
 struct Trail {
     std::deque<Eigen::Vector3f> points;
@@ -55,8 +53,9 @@ public:
     int moduleMode() const { return moduleMode_; }
 
     // 把当前的开机点状态推一遍（工单 09）：界面接好信号之后**主动调一次**。
-    // 原因是初值：本会话没读到过 `0x13` 时是「不画」，而它不会再变，
-    // 而信号只在变化时发 —— 不推这一次，那句「为什么不画」就永远到不了界面。
+    // 原因是初值：状态有可能在界面接上之前就已定型（早到的 `0x13` / `0x02`），而信号只在变化时发 ——
+    // 不推这一次，该摆出来的那几个数就永远到不了界面。（`0x13` 没读到过那种「本来就不显示」
+    // 不在此列：界面初值正好就是它，推与不推长得一样。）
     void publishOriginMarkerState();
 
 
@@ -77,19 +76,13 @@ signals:
     // 不说出来就会被当成卡顿。只在文案变化时发一次（扫描按 10 Hz 重发）。
     void scan2DNoteChanged(const QString &note);
 
-    // 「定位状态」显示位（工单 08）：**已定位 / 未定位**。判据**唯一**取自最后一条 `0x02`
-    // 的到达时刻（问的就是模块里被 `0x02` 喂的那条边还新不新鲜），三种文案都是**当前状态**、
-    // 只在变化时发一次（判定节拍见 .cpp 里那个常量）。
-    // **与 `0x0B` 驱动的「重定位 / 规划」状态标签是两件事**：那两个是模块的**内部状态自述**，
-    // 这一个说的是「`base_init_map → base_init` 这条边发出来了没有」，二者可以不一致
-    // （例如丢包），各占各的显示位、互不覆盖。
-    void localizationStatusChanged(const QString &status);
-
-    // 开机点（工单 09）：**空串 = 画着**（`x` / `y` / `yawDeg` 有效），非空 = 这一趟不画，
-    // 串本身就是界面上要显出来的那句说明（还没读到过模式 / 建图模式 / 0x02 还没到）。
-    // 数值与说明走**同一条**信号：它们是同一个判断的两面，分两条发就迟早会出现
+    // 开机点（工单 09）：`shown` = 这一趟画不画（true 时 `x` / `y` / `yawDeg` 是有效数值，
+    // 此时 `note` 必为空）；false 时 `note` 是界面上要显出来的那句说明（建图模式 / 0x02 还没到），
+    // **也可能是空串** —— 那是「本会话还没读到过模式参数（0x13）」：一趟还没开张，没什么可说的，
+    // 界面上什么都不显示（数值整块一起收着）。
+    // 「画不画 / 数值 / 那句说明」走**同一条**信号：它们是同一个判断的三面，分两条发就迟早会出现
     // 「有数值但说不画」这种自相矛盾的状态。只在真变化时发（0x02 可能是周期帧）。
-    void originMarkerChanged(const QString &note, double x, double y, double yawDeg);
+    void originMarkerChanged(bool shown, const QString &note, double x, double y, double yawDeg);
 
 public slots:
     void onRobotPose(const RobotPoseMsg &);              // 机器人位姿 (base_init → base_link)
@@ -203,17 +196,6 @@ private:
     // 改这句话并按需发信号（同上，只在变化时发）。空串 = 恢复正常。
     void setScan2DNote(const QString &note);
 
-    // ---------------- 「定位状态」显示位（工单 08） ----------------
-    // 判据在模块里（`tf_.isFresh(Edge::BaseInit, now)` + 那条边到没到过），这里只负责
-    // 「按点问一次、文案变了就发信号」。**需要定时器**的原因：`0x02` 停发之后不会再有
-    // 任何事件来提醒我们它超时了（`0x01` 那条 10 Hz 照旧在发，拿帧到达当节拍只会得到一个
-    // 永远停在「已定位」的标签），只能自己按点去问模块。
-    QTimer* localizationTimer_ = nullptr;
-    QString localizationStatus_;   // 上次发出去的文案（空 = 本次会话还没发过）
-    // 重算文案并按需发信号。帧到达时、清图时、以及定时器到点都走这一个入口。
-    // 只问模块、不自己存「0x02 到没到过」的标志（标志会跟模块对不上，见上面那段说明）。
-    void refreshLocalizationStatus();
-
     // ---------------- 开机点标记（工单 09） ----------------
     // 「这一趟开机那一刻，机器人中心落在图里哪儿」。数据来源就是 `0x02` 的原始位置与四元数，
     // 它存在模块里那条静态边 `base_init_map → base_init` 上（工单 04 起就是它）；
@@ -231,8 +213,9 @@ private:
     OriginState originState() const;
 
     // 上一次发出去的状态，存着只为**变化时才发信号**：`0x02` 若按周期重发，
-    // 每帧都推一次会把界面刷个不停（与 07 的扫描说明、08 的定位状态同一条规矩）。
-    QString originMarkerNote_;                  // 空串 = 画着（下面三个数值才有效）
+    // 每帧都推一次会把界面刷个不停（与 07 的扫描说明同一条规矩）。
+    bool    originMarkerShown_ = false;         // 上一次发出去的「画不画」（空 `note` 有两种意思，靠它分）
+    QString originMarkerNote_;                  // 不画时那句说明；空串 = 没话说（见信号声明）
     double  originMarkerX_ = 0.0;
     double  originMarkerY_ = 0.0;
     double  originMarkerYawDeg_ = 0.0;

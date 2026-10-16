@@ -133,10 +133,6 @@ MainWindow::MainWindow(QWidget *parent)
     connect(protocolHandler, &ProtocolRos3D::map2DUpdated,
             ros3dPage->glWidget(), &GLWidget::onMap2D, Qt::QueuedConnection);
 
-    // === 位置控制指令 (0x08)：不丢帧、可观测（不在 3D 视图里画） ===
-    connect(protocolHandler, &ProtocolRos3D::posCmdUpdated,
-            ros3dPage, &Ros3DPage::onPosCmdUpdated, Qt::QueuedConnection);
-
     // === 参数 0x13「模式」(建图 / 定位，未读到过为 -1)：串口层在收到 AA 10 时就地缓存
     // （与 0x99 同一条路径），变化时下发给图形层，由工单 09 判要不要画开机点标记 ===
     connect(serialPort, &SerialPort::moduleModeChanged,
@@ -173,10 +169,6 @@ MainWindow::MainWindow(QWidget *parent)
     connect(protocolHandler, &ProtocolRos3D::appendMessage, serialPort, &SerialPort::appendMessage);
     // 连接 GLWidget 的消息信号到 SerialPort 的显示槽
     connect(ros3dPage->glWidget(), &GLWidget::appendMessage,
-            serialPort, &SerialPort::appendMessage);
-
-    // 连接可视化页的消息信号（规划状态跳变日志）到 SerialPort 的显示槽
-    connect(ros3dPage, &Ros3DPage::appendMessage,
             serialPort, &SerialPort::appendMessage);
 
     connect(ros3dPage, &Ros3DPage::sendNavGoalRequested,
@@ -226,6 +218,15 @@ MainWindow::MainWindow(QWidget *parent)
     // 保存闭环的结论摘要落在参数页的状态行上（结果本身由链路层弹窗给出）
     connect(serialPort, &SerialPort::saveParamsFinished,
             params, &Params::setSaveSummary);
+
+    // 「获取参数」：参数页只报出「它的表里有多少条」，帧的发送与「收齐了没」的判定都在链路层
+    // （0x03 的应答没有终结帧，只能按条数收齐——参数页自己数不了到达的帧）
+    connect(params, &Params::readParamsRequested,
+            serialPort, &SerialPort::onReadParamsRequested);
+
+    // 读取闭环的结论摘要同样落在参数页的状态行上
+    connect(serialPort, &SerialPort::readParamsFinished,
+            params, &Params::setReadSummary);
 
 
 

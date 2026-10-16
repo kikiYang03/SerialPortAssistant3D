@@ -66,7 +66,7 @@ Ros3DPage::Ros3DPage(QWidget* parent)
     // ---------- 开机点（工单 09）----------
     // 「这一趟开机那一刻，机器人中心落在图里哪儿」——与上面「机器人坐标」是**同一类读数**，
     // 所以整块紧挨着它：操作员一眼能同时读到「机器人现在在哪」和「这次从哪开机的」。
-    // （状态那一片（`targetBox`）放的是**状态**：重定位 / 定位 / 规划。这三行是**数值**，
+    // （状态那一片（`targetBox`）放的是**状态**：重定位 / 规划。这三行是**数值**，
     //   两片各归各的地方，不往一起塞。）
     //
     // 平时整块 hide()：只有定位模式且 `0x02` 到过才有得显示。不画时连数值一起收起来，
@@ -129,12 +129,6 @@ Ros3DPage::Ros3DPage(QWidget* parent)
     labNavStatus_   = new QLabel(tr("未收到规划状态"), targetBox);
     labRelocStatus_ = new QLabel(tr("未收到重定位状态"), targetBox);
 
-    // 「定位状态」显示位（工单 08）：初值就是「还没收到过 0x02」——本会话一包都没到过时，
-    // 这就是真实状态（模块在定位模式下这条边没落地前一条都不发）。
-    // 那个文案**唯一的出处是 GLWidget::refreshLocalizationStatus()**，这里只是它第一次
-    // 发信号之前的初值：GLWidget 的节拍是 100 ms，最先到的那一次必然带上同一句话。
-    labLocalized_ = new QLabel(tr("未定位（还没收到过 0x02）"), targetBox);
-
     // 帧名校验 (工单 05) 的红状态位。**不留初值文案**：它是异常留痕，
     // 正常时不占地方（下面整块 hide()），只有真出现帧名不符才显形。
     labFrameNameTitle_  = new QLabel(tr("帧名校验:"), targetBox);
@@ -151,22 +145,15 @@ Ros3DPage::Ros3DPage(QWidget* parent)
     // 会被挤断或撑宽，分开后值独占一行，缩到最窄也读得全。名字跨满四列，值缩进对齐。
     auto* labNavTitle   = new QLabel(tr("规划状态:"), targetBox);
     auto* labRelocTitle = new QLabel(tr("重定位状态:"), targetBox);
-    // 「定位状态」的字段名（工单 08）。**刻意紧跟「重定位状态」**，好让两个根本不同的判据
-    // 一眼看得出是两行读数：上面那行是模块自述（`0x0B`），这行问的是 `0x02` 还在不在。
-    labLocalizedTitle_ = new QLabel(tr("定位状态:"), targetBox);
 
     targetLay->addWidget(labNavTitle, 3, 0, 1, 4);
     targetLay->addWidget(labNavStatus_, 4, 0, 1, 4);
     targetLay->addWidget(labRelocTitle, 5, 0, 1, 4);
     targetLay->addWidget(labRelocStatus_, 6, 0, 1, 4);
-    // 「定位状态」（工单 08）紧跟在「重定位状态」下面：两个概念挨着放，才看得出
-    // 它们**是两件事**（一个是模块自述、一个是 `0x02` 到没到），而不是同一个状态的两种说法。
-    targetLay->addWidget(labLocalizedTitle_, 7, 0, 1, 4);
-    targetLay->addWidget(labLocalized_, 8, 0, 1, 4);
     // 帧名校验挤在紧下面一行：它与上面几块状态是同一片显示区（协议文档 4.7 说的
     // 「帧名不符的红状态位可以复用同一个显示区」），只在异常时出现。
-    targetLay->addWidget(labFrameNameTitle_, 9, 0, 1, 4);
-    targetLay->addWidget(labFrameNameStatus_, 10, 0, 1, 4);
+    targetLay->addWidget(labFrameNameTitle_, 7, 0, 1, 4);
+    targetLay->addWidget(labFrameNameStatus_, 8, 0, 1, 4);
 
     // 值比字段名低一级：缩进一点，和上面的名字错开
     const QString statusTitleStyle = "QLabel { color: #666666; }";
@@ -175,11 +162,6 @@ Ros3DPage::Ros3DPage(QWidget* parent)
     labRelocTitle->setStyleSheet(statusTitleStyle);
     labNavStatus_->setStyleSheet(statusValueStyle);
     labRelocStatus_->setStyleSheet(statusValueStyle);
-    // 「定位状态」用**同一套样式**：它也是一条读数，不是异常留痕——
-    // 用红/橙会把「未定位」说成「故障」（红是帧名不符那种协议对不上的留痕，橙是
-    // 工单 07 那句「为什么不画」的说明）。
-    labLocalizedTitle_->setStyleSheet(statusTitleStyle);
-    labLocalized_->setStyleSheet(statusValueStyle);
 
     labFrameNameTitle_->setStyleSheet(statusTitleStyle);
     // 红字 + 加粗：状态位变红就是这条改动的「留痕」。
@@ -193,8 +175,6 @@ Ros3DPage::Ros3DPage(QWidget* parent)
     // 侧边栏拖到最窄时值也别把整块撑宽，让它自己折行
     labNavStatus_->setWordWrap(true);
     labRelocStatus_->setWordWrap(true);
-    // 「未定位（还没收到过 0x02）」在窄侧边栏里一定会折行
-    labLocalized_->setWordWrap(true);
     // 帧名的值里带着两个名字，最窄时一定会换行
     labFrameNameStatus_->setWordWrap(true);
 
@@ -244,7 +224,8 @@ Ros3DPage::Ros3DPage(QWidget* parent)
     // 「点云显示」这一块管的就是「图上画什么」，本次新引入的几处「可能不画」
     // （未定位 / 位姿陈旧时不画 2D 扫描、建图模式下不画开机点）说明都收在这里，
     // 免得同一个话题的几句话散在侧边栏三处。初值不写死文案：GLWidget 推第一次就会填上
-    // （见构造函数末尾那次 publishOriginMarkerState()）。
+    // （见构造函数末尾那次 publishOriginMarkerState()）——**也可能一直没文案**：
+    // 「还没读到过模式参数（0x13）」就不配一句话，这里保持空着、收着。
     labOriginNote_ = new QLabel(cloudBox);
     labOriginNote_->setWordWrap(true);
     labOriginNote_->setStyleSheet("QLabel { color: #b26a00; padding-left: 12px; }");
@@ -390,20 +371,15 @@ Ros3DPage::Ros3DPage(QWidget* parent)
     // （跨线程的那几条才用 QueuedConnection，见 mainwindow.cpp）。
     connect(gl_, &GLWidget::scan2DNoteChanged, this, &Ros3DPage::onScan2DNoteChanged);
 
-    // 「定位状态」显示位（工单 08）：文案由 gl_ 按模块的判据算好，这里只摆出来。
-    // 与 gl_ 同在主线程，直连即可。
-    connect(gl_, &GLWidget::localizationStatusChanged,
-            this, &Ros3DPage::onLocalizationStatusChanged);
-
     // 开机点（工单 09）：同上，文案与数值都由 gl_ 算好，这里只摆出来。
     connect(gl_, &GLWidget::originMarkerChanged,
             this, &Ros3DPage::onOriginMarkerChanged);
 
-    // 接好之后**主动推第一次**。原因是初值：本会话没读到过 `0x13` 时开机点是不画的
-    // （「未读到过」是常见态——`0x13` 不是周期帧，用户不点「读取参数」就一直没有），
-    // 而它**不会再变**，信号又只在变化时发 —— 不推这一次，那句「为什么不显示」
-    // 一整场都到不了界面，操作员看到的就是「图上有这么个东西但一直没出来」。
-    // （08 的定位状态不需要这一手：它的初值是真的会变，100 ms 后第一次节拍就会报。）
+    // 接好之后**主动推第一次**。原因是状态可能在本页构造之前就已定型：用户先点过「读取参数」、
+    // `0x02` 也到过，那次变化发生在信号接通之前，而它**不会再变**，信号又只在变化时发 ——
+    // 不推这一次，界面上那三个数一整场都出不来。
+    // （「没读到过模式参数」不画、也没有说明的那一种不在此列：界面初值就是收着的样子，
+    //   推与不推长得一样。）
     gl_->publishOriginMarkerState();
 
     // 信号连接
@@ -533,9 +509,8 @@ void Ros3DPage::clearModuleState()
 
     // 3. 规划 / 重定位状态标签回到初始文案：它们显示的是「一包都没收到」，
     //    正是重启后的真实状态（模块要等听到上游自述才发状态帧）。
-    //    「定位状态」那位不用在这里碰：它由 gl_ 推着走，上面 gl_->clearMap() 里
-    //    `0x02` 那条边被清掉之后就立刻变回「还没收到过 0x02」了（工单 08）。
-    //    「开机点」那几个数同理（工单 09）：边一没，整块就收起来了，不会留上一趟的数。
+    //    「开机点」那几个数不用在这里碰（工单 09）：上面 gl_->clearMap() 抹掉 `0x02`
+    //    那条边之后 gl_ 会立刻重推状态，整块就收起来了，不会留上一趟的数。
     labNavStatus_->setText(tr("未收到规划状态"));
     labRelocStatus_->setText(tr("未收到重定位状态"));
 
@@ -547,10 +522,7 @@ void Ros3DPage::clearModuleState()
     lastRelocState_ = -1;
     lastFcState_    = -1;
 
-    // 5. 位置控制指令 (0x08) 的「首次收到」锁存同理：模块回来后那一路要能重新写一行。
-    posCmdSeen_ = false;
-
-    // 6. 帧名不符的红状态位同理：它说的是**重启前那个模块**的帧名对不上，
+    // 5. 帧名不符的红状态位同理：它说的是**重启前那个模块**的帧名对不上，
     //    新模块回来之前继续挂着，就等于拿旧结论给新模块定罪。锁存一起清掉，
     //    这样新模块若仍不符，会重新亮红并再写一行日志（而不是被当成「没变化」静默掉）。
     labFrameNameTitle_->hide();
@@ -604,35 +576,24 @@ QString Ros3DPage::fcStatusText(int state)
 
 // 状态帧 (0x0B)：飞控 + 重定位 + 路径规划
 // 三件都是「当前值」不是「事件」：模块一旦听到过任一上游自述就 10 Hz 重发同一组值，
-// 所以每一件都只在相邻两包发生跳变时才动标签 / 写日志，日志不会按 10 Hz 刷屏。
+// 所以每一件都只在相邻两包发生跳变时才动标签，日志窗口写不下这种 10 Hz 的流水。
 void Ros3DPage::onNavStatusUpdated(const NavStatusMsg& msg)
 {
-    // 一件状态的跳变处理：没跳变就什么都不做；跳变了写一行日志，
-    // 有格子的（label 非空）顺便刷标签。last < 0 表示此前一包都没收到过。
-    const auto applyJump = [this](const QString& name, int& last, int value,
-                                  QLabel* label, QString (*textOf)(int)) {
+    // 一件状态的跳变处理：没跳变就什么都不做；跳变了刷新对应的格子（label 为空的没有格子）。
+    const auto applyJump = [](int& last, int value, QLabel* label, QString (*textOf)(int)) {
         if (value == last) return;
 
-        const QString text = textOf(value);
-        emit appendMessage(last < 0
-                               ? QStringLiteral("%1: 首次收到 %2").arg(name, text)
-                               : QStringLiteral("%1: %2 -> %3")
-                                     .arg(name, textOf(last), text));
-
         last = value;
-        if (label) label->setText(text);
+        if (label) label->setText(textOf(value));
     };
 
-    applyJump(QStringLiteral("重定位状态"), lastRelocState_, msg.relocalization,
-              labRelocStatus_, &relocStatusText);
-    applyJump(QStringLiteral("规划状态"), lastNavState_, msg.planning,
-              labNavStatus_, &navStatusText);
-    // 飞控不占格子：只解析、只写日志（串口链已有飞控状态显示，合并显示是独立话题）
-    applyJump(QStringLiteral("飞控状态"), lastFcState_, msg.fcState,
-              nullptr, &fcStatusText);
+    applyJump(lastRelocState_, msg.relocalization, labRelocStatus_, &relocStatusText);
+    applyJump(lastNavState_, msg.planning, labNavStatus_, &navStatusText);
+    // 飞控不占格子：只在锁存里记着（串口链已有飞控状态显示，合并显示是独立话题）
+    applyJump(lastFcState_, msg.fcState, nullptr, &fcStatusText);
 }
 
-// 帧名不符 (工单 05)：解析层已经把该帧丢了，这里只负责「留痕」。
+// 帧名不符 (工单 05)：解析层已经把该帧丢了，这里只负责在侧边栏留痕。
 //
 // **不弹窗、不阻塞**——这是刻意的：两端不同版时操作员该继续能操作，看见红字就知道
 // 对不上，而不是被一个对话框拦在路上。也**不把期望的帧名写出来**：期望值只有一份
@@ -648,8 +609,8 @@ void Ros3DPage::onFrameNameRejected(quint8 frameNo, const QString& frameId, cons
     if (!childFrameId.isEmpty())
         text += QStringLiteral(" → %1").arg(childFrameId);
 
-    // 不符的帧按 10 Hz 以上重发，同一个不符每帧都刷一遍就会把接收窗口淹掉：
-    // 只在文案**变化时**动标签、写日志（与上面状态帧「只在跳变时动」同一条规矩）。
+    // 不符的帧按 10 Hz 以上重发，同一个不符每帧都刷一遍都是白做：
+    // 只在文案**变化时**动标签（与上面状态帧「只在跳变时动」同一条规矩）。
     if (text == lastFrameNameMismatch_)
         return;
     lastFrameNameMismatch_ = text;
@@ -657,7 +618,6 @@ void Ros3DPage::onFrameNameRejected(quint8 frameNo, const QString& frameId, cons
     labFrameNameStatus_->setText(text);
     labFrameNameTitle_->show();
     labFrameNameStatus_->show();
-    emit appendMessage(QStringLiteral("帧名校验：%1（该帧已丢弃，不解析、不渲染）").arg(text));
 }
 
 // 2D 扫描「为什么不画」（工单 07）。gl_ 与这里同在主线程，直连即可。
@@ -678,31 +638,21 @@ void Ros3DPage::onScan2DNoteChanged(const QString &note)
     labScan2DNote_->show();
 }
 
-// 「定位状态」显示位（工单 08）。文案由 GLWidget::refreshLocalizationStatus() 算好
-// （判据**唯一**：最后一条 `0x02` 的到达时刻），这里只摆出来，**不自己判**——
-// 界面这层没有 `tf_`，另写一套判据就是第二份能与模块对不上的口径。
-//
-// **不写日志**（与工单 07 那句扫描说明同一条规矩）：位姿在 500 ms 边界上来回抖时
-// 这个标签会跟着反复变，逐次记日志会把接收窗口淹掉。它描述的是**当前状态**，不是事件。
-// 也**不弹窗**：未定位时操作员该继续能用界面（点云、栅格地图本来就不需要定位）。
-void Ros3DPage::onLocalizationStatusChanged(const QString &status)
-{
-    labLocalized_->setText(status);
-}
-
 // 开机点（工单 09）。文案与数值都由 GLWidget::publishOriginMarkerState() 算好
 // （判据**唯一**：`0x13` 说没说定位 + `0x02` 那条边到没到），这里只摆出来。
 //
-// 空串 = 画着：把三个数摆上、那句说明收掉。
-// 非空 = 这一趟不画：**整块数值收起来**（`hide()`），不留一行占位 —— 「建图模式下不绘制该标记、
+// `shown` = 画着：把三个数摆上、那句说明收掉。
+// 不画：**整块数值收起来**（`hide()`），不留一行占位 —— 「建图模式下不绘制该标记、
 // 也没有残留数值」这条因此是结构上成立的：数值跟着整块一起消失，不靠谁记得去清。
-// 为什么不显示那句话摆到「点云显示」那一块去（与 07 的扫描说明同一个位置）。
+// 为什么不显示那句话摆到「点云显示」那一块去（与 07 的扫描说明同一个位置）；
+// 而「本会话还没读到过模式参数（0x13）」时那句话也是空的，两处都不显 —— 一趟还没开张，
+// 没有变故要说，界面上保持构造时的样子就是对的。
 //
-// **不写日志**（与 07 / 08 同一条规矩）：模式是用户点「读取参数」时才变的低频事，但
+// **不写日志**（与 07 同一条规矩）：模式是用户点「读取参数」时才变的低频事，但
 // 「还没收到过 0x02」在收到第一帧前一直成立，逐次记日志没有意义；它描述的是**当前状态**。
-void Ros3DPage::onOriginMarkerChanged(const QString &note, double x, double y, double yawDeg)
+void Ros3DPage::onOriginMarkerChanged(bool shown, const QString &note, double x, double y, double yawDeg)
 {
-    if (note.isEmpty()) {
+    if (shown) {
         // 数值口径与「机器人坐标」那一组一致（两位小数 + 米 / 整数度）：
         // 两块读数就在上下相邻的位置，写法不统一会显得是两个来源的数。
         labOriginX_->setText(QString::number(x, 'f', 2) + " m");
@@ -716,19 +666,18 @@ void Ros3DPage::onOriginMarkerChanged(const QString &note, double x, double y, d
     }
 
     originBox_->hide();
+
+    // 空 `note` = 「没话说」（还没读到过模式参数）：只把整块收起来，不留一句话。
+    // 与上面「画着」那一路一样要走 clear()：'0x13' 从读出过到被忘掉（模块重启 / 重新连接）
+    // 中间可能隔着「建图」「还没收到 0x02」两句话，不清就会留着上一句。
+    if (note.isEmpty()) {
+        labOriginNote_->clear();
+        labOriginNote_->hide();
+        return;
+    }
+
     labOriginNote_->setText(note);
     labOriginNote_->show();
-}
-
-// 位置控制指令 (0x08)
-// 模块 100 Hz 逐帧下发期望位置，值每帧都在动，逐帧写日志会把接收窗口淹掉；
-// 数值日志由解析端按秒节流，这里只在首次收到时写一行，确认这一路接上了。
-void Ros3DPage::onPosCmdUpdated(const PosCmdMsg& msg)
-{
-    if (posCmdSeen_) return;
-
-    posCmdSeen_ = true;
-    emit appendMessage(QStringLiteral("位置控制指令: 首次收到 (topic=%1)").arg(msg.topic));
 }
 
 void Ros3DPage::onSendNavGoalClicked()

@@ -3,7 +3,6 @@
 #include <QMouseEvent>
 #include <QDebug>
 #include <QDateTime>
-#include <QTimer>
 #include <cmath>
 
 #ifndef M_PI
@@ -45,22 +44,9 @@ static inline void rotToYPR_ZYX(const Eigen::Matrix3d& R,
     roll = std::atan2(R(2,1), R(2,2));
 }
 
-// 「定位状态」显示位（工单 08）的判定节拍。**判定本身不是这个数**——「已定位 / 未定位」
-// 取的是模块里那个 kFreshWindow（恰好 500 ms 仍算新鲜），这个节拍只决定「多久去看一眼」：
-// 翻牌的延迟最多一个节拍，取窗口的 1/5（100 ms），不自己另立一个超时值。
-// 反过来，节拍**不能**靠「帧到达」来驱动：0x02 停发之后恰恰不再有事件，
-// 而 0x01 那条同频的 10 Hz 照旧在发，拿它当节拍会得到一个永远停在「已定位」的标签。
-constexpr int kLocalizationTickMs = 100;
-
 GLWidget::GLWidget(QWidget *parent)
     : QOpenGLWidget(parent)
 {
-    // 只问不记：到点就去问模块「被 0x02 喂的那条边还新不新鲜」，文案变了才发信号。
-    localizationTimer_ = new QTimer(this);
-    localizationTimer_->setInterval(kLocalizationTickMs);
-    connect(localizationTimer_, &QTimer::timeout,
-            this, &GLWidget::refreshLocalizationStatus);
-    localizationTimer_->start();
 }
 GLWidget::~GLWidget() {}
 
@@ -519,7 +505,7 @@ void GLWidget::paintGL()
         progSimple_.bind();
         // 同样直接使用 proj * view，因为点已在 map 系下
         progSimple_.setUniformValue("mvp", toQMatrix(proj_ * view_));
-        // 设置为红色以区别于机器人历史轨迹
+        // 红色。注意：历史轨迹现在也是红色，两者同色，只能靠线宽/走向区分
         progSimple_.setUniformValue("col", QVector3D(1.0f, 0.0f, 0.0f));
 
         vaoOptimalPath_.bind();
@@ -566,7 +552,7 @@ void GLWidget::paintGL()
         progSimple_.release();
     }
 
-    // ---------- 渲染轨迹线（绿色）- 放在点云之后确保可见 ----------
+    // ---------- 渲染轨迹线（红色）- 放在点云之后确保可见 ----------
     if (trail_.points.size() > 1)
     {
         std::vector<Eigen::Vector3f> tmp(trail_.points.begin(), trail_.points.end());
@@ -578,7 +564,7 @@ void GLWidget::paintGL()
 
         progSimple_.bind();
         progSimple_.setUniformValue("mvp", toQMatrix(proj_ * view_));
-        progSimple_.setUniformValue("col", QVector3D(0.0f, 1.0f, 0.0f)); // 绿色
+        progSimple_.setUniformValue("col", QVector3D(1.0f, 0.0f, 0.0f)); // 红色
 
         vaoTrail_.bind();
         vboTrail_.bind();
@@ -603,10 +589,11 @@ void GLWidget::paintGL()
     //
     // 与机器人箭头是**同一个几何体，只换颜色**：两个箭头会同时在图上，形状分不出谁是谁，
     // 颜色是这一票唯一的区分手段。取蓝色是因为一圈颜色都用掉了——机器人箭头红、实时点云青、
-    // 地图点云按高度配色、2D 扫描浅红、轨迹绿、规划路径红、指点箭头绿/黄。
+    // 地图点云按高度配色、2D 扫描浅红、轨迹红、规划路径红、指点箭头绿/黄。
     //
     // 位置与朝向都取模块那条静态边的**现值**，**不判新鲜度**：开机点是一趟里不变的事实，
-    // 不会因为 `0x02` 不再重发就不成立（判那条边新不新鲜是工单 08 那个显示位的事）。
+    // 不会因为 `0x02` 不再重发就不成立（`edgeTransform` 拿的是最后一帧的真值，
+    // 与 `isFresh()` 那个 500 ms 窗口无关）。
     // 建图模式下压根不画（见 originState()：那时它恒等于图原点，压在图原点坐标轴上只是噪声）。
     if (originState() == OriginState::Ready) {
         if (const auto T_origin = tf_.edgeTransform(TfTree::Edge::BaseInit))
@@ -692,55 +679,14 @@ void GLWidget::onRelocalizationPose(const RelocalizationPoseMsg &m)
     // 收下这条边就够了，**到此为止**：v2.8 的 `0x02` 是「这一趟的开机点在图里哪儿」，
     // 它不参与任何坐标变换——以前拿它当雷达位姿折点云，等于把所有激光数据整体
     // 平移一个开机点偏移（安装位姿 T 全 0 时看不出来，正是要消灭的那个静默错）。
-    // 显示开机点（工单 09）与「这条边到没到」的判据（工单 08）都从模块里取。
+    // 显示开机点（工单 09）从这里取。
     const Vec3 t(m.x, m.y, m.z);
     const Quat q(m.qw, m.qx, m.qy, m.qz);
     tf_.setPose(TfTree::Edge::BaseInit, t, q, TfTree::Clock::now());
 
-    // 「定位状态」立刻翻成「已定位」（工单 08）：不等下一个节拍，收帧这一下就是最新事实。
-    // 反方向（超时）没有事件可等，只能靠定时器到点去看，见 refreshLocalizationStatus()。
-    refreshLocalizationStatus();
-
     // 开机点也立刻跟上（工单 09）：新的一帧 `0x02` = 新的一次重定位，开机点可能挪了地方。
     // 标记的位置、界面上那三个数，都是从这里推出去的（数值原样取自刚喂进去的载荷）。
     publishOriginMarkerState();
-}
-
-// 「定位状态」显示位（工单 08）的**唯一**入口：帧到达、清图、定时器到点三处都走它。
-//
-// 判据**唯一来源**是最后一条 `0x02` 的到达时刻——问的就是模块里被 `0x02` 喂的那条边
-// （`Edge::BaseInit`）。**不拿 `0x0B` 状态帧里的 `relocalization` 位顶替**：那是模块的
-// **内部状态自述**（进行中 / 成功 / 失败 / 未响应），而界面缺的是「`base_init_map → base_init`
-// 这条边发出来了没有」——二者可以不一致（例如丢包），不能互相顶替。`0x0B` 那一路照旧
-// 喂「重定位 / 规划」两个标签（在 Ros3DPage 里），与这一位各占各的显示位。
-//
-// 三种文案都是**当前状态**（不是事件留痕），所以恢复正常时自己会变回来：
-//   已定位                  —— 最近一条 `0x02` 还在 kFreshWindow 内（**恰好 500 ms 仍算新鲜**）
-//   未定位（0x02 超时）      —— 收到过 `0x02`，但这一条之后已经超过 kFreshWindow 没有新的
-//   未定位（还没收到过 0x02）—— 本会话一条都没到过（含模块重启之后）
-//
-// 「超时」与「还没收到过」分开是本仓既有的规矩（同 Ros3DPage 里「未收到规划状态」与模块那句
-// 「未响应」必须显示得不一样）：**链路/模块没发**与**发过但断了**不是一个事实，
-// 一上来就说「超时」等于断言一条从没到过的帧超时了。这里也不弹窗、不写日志——
-// 位姿在 500 ms 边界上来回抖时它会跟着反复变，那是状态、不是事件（留痕归帧名校验那个红状态位）。
-void GLWidget::refreshLocalizationStatus()
-{
-    QString text;
-    if (tf_.isFresh(TfTree::Edge::BaseInit, TfTree::Clock::now())) {
-        text = tr("已定位");
-    } else if (tf_.edgeTransform(TfTree::Edge::BaseInit).has_value()) {
-        // 「这条边到过」问模块即可（有值 = 喂过），不另存一个「0x02 收到过没有」的标志：
-        // 多存一个标志就多一处能跟模块对不上的地方。
-        text = tr("未定位（0x02 超时）");
-    } else {
-        text = tr("未定位（还没收到过 0x02）");
-    }
-
-    // 节拍 100 ms，文案不变时发信号毫无意义 —— 与工单 05 的红状态位、工单 07 的扫描说明
-    // 同一条规矩：只在变化时动一次。
-    if (text == localizationStatus_) return;
-    localizationStatus_ = text;
-    emit localizationStatusChanged(text);
 }
 
 /* -------------- 开机点标记（工单 09） -------------- */
@@ -776,12 +722,15 @@ void GLWidget::publishOriginMarkerState()
     // 旋转是载荷的四元数 —— 所以显示出来的数与载荷逐位一致，图形层不另存一份副本。
     const auto T_origin = tf_.edgeTransform(TfTree::Edge::BaseInit);
 
+    bool shown = false;
     QString note;
     double x = 0.0, y = 0.0, yawDeg = 0.0;
 
     switch (originState()) {
     case OriginState::UnknownMode:
-        note = tr("开机点未显示：还没读到过模式参数（0x13）");
+        // **不写说明**：`0x13` 不是周期帧，用户没点过「读取参数」的整段会话里它都是 -1 ——
+        // 这是「一趟还没开张」，不是「本来画着、现在为什么停了」（下面那两句说的是后者）。
+        // 没有值要摆，也没有变故要说，界面上就什么都不显：`shown = false` + 空 `note`。
         break;
     case OriginState::Mapping:
         // 这句话是**必须**有的：建图模式下这个标记一整场都不画，不说出来
@@ -792,6 +741,7 @@ void GLWidget::publishOriginMarkerState()
         note = tr("开机点未显示：定位模式下还没收到过重定位结果（0x02）");
         break;
     case OriginState::Ready:
+        shown = true;
         // Ready 就是「这条边有值」判出来的（见 originState()），这里必然取得到。
         x = (*T_origin)(0, 3);
         y = (*T_origin)(1, 3);
@@ -804,20 +754,23 @@ void GLWidget::publishOriginMarkerState()
         break;
     }
 
-    // 只在真变了才发（`0x02` 是 10 Hz 重发的）：文案或三个数任一不同才算变。
-    // 第一次一定发（originMarkerPublished_）—— 初值是「还没读到过模式」，而它不会再变，
-    // 不推这一次，界面上那句说明就永远出不来（信号只在变化时发）。
-    if (originMarkerPublished_ && note == originMarkerNote_
+    // 只在真变了才发（`0x02` 是 10 Hz 重发的）：画不画、文案、三个数任一不同才算变。
+    // `shown` 也要进这一串比较：空 `note` 的两种意思（画着 / 没话说）只有它分得开，
+    // 而开机点恰好落在图原点（三个数都是 0）时，后三个数也分不开。
+    // 第一次一定发（originMarkerPublished_）—— 状态可能在界面接上之前就已定型，
+    // 而它不会再变，不推这一次，数值就永远到不了界面（信号只在变化时发）。
+    if (originMarkerPublished_ && shown == originMarkerShown_ && note == originMarkerNote_
         && x == originMarkerX_ && y == originMarkerY_ && yawDeg == originMarkerYawDeg_)
         return;
 
     originMarkerPublished_ = true;
+    originMarkerShown_     = shown;
     originMarkerNote_      = note;
     originMarkerX_         = x;
     originMarkerY_         = y;
     originMarkerYawDeg_    = yawDeg;
 
-    emit originMarkerChanged(note, x, y, yawDeg);
+    emit originMarkerChanged(shown, note, x, y, yawDeg);
 }
 
 void GLWidget::onCloud(const CloudMsg &m)
@@ -1170,11 +1123,6 @@ void GLWidget::clearMap()
     // 状态刚被整个复位，留着旧句子就是在说一件已经不存在的事。
     // 位姿若仍然陈旧，下一帧扫描到了会重新推出来（setScan2DNote 只在变化时发信号）。
     setScan2DNote(QString());
-
-    // 「定位状态」同一条道理（工单 08）：`0x02` 那条边刚被 clear() 抹掉，显示位立刻回到
-    // 「还没收到过」——不等下一个节拍，否则那 100 ms 里它还在说「已定位」，而那位姿已经无处可查。
-    // （这条边下一次收帧就会重新点亮它，模块的 `0x02` 是 10 Hz 重发的。）
-    refreshLocalizationStatus();
 
     // 开机点同理（工单 09）：标记画不画、界面上那三个数，都是由这条边推出来的，
     // 边刚被抹掉就得跟着走 —— 留着就是拿上一趟开机点当这一趟的。
