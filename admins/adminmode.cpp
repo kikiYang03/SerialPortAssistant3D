@@ -12,11 +12,20 @@ AdminMode& AdminMode::instance()
     static AdminMode ins;
     return ins;
 }
-AdminMode::AdminMode(QObject *parent): QObject(parent) {}
+AdminMode::AdminMode(QObject *parent)
+    : QObject(parent)
+    , m_enabled(Config::instance().value("Admin/enabled", true).toBool())
+{}
 
 void AdminMode::install(QWidget *w, bool edit, bool visible)
 {
     if (!w) return;
+    // 总开关关掉时等同非管理员：只摆正控件状态，不登记、不拦截
+    if (!m_enabled) {
+        w->setEnabled(!edit);
+        w->setVisible(!visible);
+        return;
+    }
     w->installEventFilter(this);
     if (edit)      m_editControls << w;
     if (visible)   m_visibleControls << w;
@@ -36,6 +45,7 @@ bool AdminMode::eventFilter(QObject *obj, QEvent *ev)
 
 void AdminMode::login(const QString &pwd)
 {
+    if (!m_enabled) return;
     if (pwd == ADMIN_PWD) {
         m_admin = true;
         for (auto w : m_editControls)   w->setEnabled(true);

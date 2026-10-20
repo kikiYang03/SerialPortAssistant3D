@@ -10,7 +10,9 @@ class AdminMode : public QObject
     Q_OBJECT
 public:
     static AdminMode& instance();
-    bool isAdmin() const { return m_admin; }
+    bool isAdmin() const { return m_enabled && m_admin; }
+    // 管理员模式总开关（config.ini 的 Admin/enabled）：关掉后入口不显示、登录无效
+    bool isEnabled() const { return m_enabled; }
 
     // 登录/退出
     void login(const QString& pwd);
@@ -30,6 +32,7 @@ private:
     explicit AdminMode(QObject *parent = nullptr);
     bool eventFilter(QObject *obj, QEvent *ev) override;
 
+    bool m_enabled = true;
     bool m_admin = false;
     QSet<QWidget*> m_editControls;   // 仅管理员可编辑
     QSet<QWidget*> m_visibleControls;// 仅管理员可见

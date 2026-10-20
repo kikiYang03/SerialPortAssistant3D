@@ -18,9 +18,10 @@ const QVector<Parameter> Params::s_parameters = {
     // 本仓按 ID 字符串匹配行，顺序只影响可读性；但折叠分组的行号是按下标推导的，插行请勿打乱分组。
     // 「描述」逐字抄自上表的「说明」列，只去掉 Qt 表格不渲染的 Markdown 强调标记（** 与反引号）；
     // 不再夹带本仓自己的补充。要改说明请先改协议表——两边没有机制自动同步。
-    // 0x00 取值集合只留新协议参数表列出的 4 项（删掉旧占位 12=m10 / 13=m10p）：
+    // 0x00 取值集合只留新协议参数表列出的项（删掉旧占位 12=m10 / 13=m10p）：
     // 用户不会选中一个协议表里不存在的值，也就不会踩「表外值静默丢弃、链路无任何回执」。
-    {"0x00", "雷达型号", "-", "0=mid360, 1=mid360s, 10=N10, 11=N10_P，默认0", 0},
+    // 2=mid360l 是本仓先加、协议表（upper/upper/config/通讯协议.md）尚未同步的一项，待补表。
+    {"0x00", "雷达型号", "-", "0=mid360, 1=mid360s, 2=mid360l, 10=N10, 11=N10_P，默认0", 0},
     {"-", "雷达安装位置", "-", "雷达相对于机器人中心的位置 = 安装位姿 T：base_link -> laser_link", 0},
     {"0x01", "X坐标", "-100~100", "雷达位置X坐标值，单位厘米，默认0", 0},
     {"0x02", "Y坐标", "-100~100", "雷达位置Y坐标值，单位厘米，默认0", 0},
@@ -289,6 +290,7 @@ QWidget* Params::createValueWidget(const QString &id, const QString &range, int 
         QComboBox *comboBox = new QComboBox();
         comboBox->addItem("mid360", 0);
         comboBox->addItem("mid360s", 1);
+        comboBox->addItem("mid360l", 2);
         comboBox->addItem("N10", 10);
         comboBox->addItem("N10_P", 11);
         // 12=m10 / 13=m10p 已从新协议的取值集合里删除，不再列出（见 s_parameters 的 0x00 注释）。
