@@ -5,7 +5,18 @@
 #include <QEvent>
 #include <QDateTime>
 
-static const QString ADMIN_PWD = Config::instance().value("Admin/password").toString();
+namespace {
+
+// 不能写成文件作用域的 static 全局：那会在 main() 之前（QApplication 还没构造时）
+// 就把 Config 单例建起来，此时拿不到 applicationDirPath，config.ini 定位会跑偏。
+// 改成首次登录时才读，保证路径和配置都已就绪。
+const QString &adminPassword()
+{
+    static const QString pwd = Config::instance().value("Admin/password").toString();
+    return pwd;
+}
+
+} // namespace
 
 AdminMode& AdminMode::instance()
 {
@@ -46,7 +57,7 @@ bool AdminMode::eventFilter(QObject *obj, QEvent *ev)
 void AdminMode::login(const QString &pwd)
 {
     if (!m_enabled) return;
-    if (pwd == ADMIN_PWD) {
+    if (pwd == adminPassword()) {
         m_admin = true;
         for (auto w : m_editControls)   w->setEnabled(true);
         for (auto w : m_visibleControls) w->setVisible(true);

@@ -81,6 +81,10 @@ COPIES += ini
 ini.files = $$PWD/config/config.ini
 ini.path   = $$OUT_PWD
 
+# 构建产物在 $$DESTDIR 子目录（debug\ / release\）里，config.ini 只拷到 $$OUT_PWD，
+# 由 utils/config/config.cpp 的查找顺序兜住（先找 exe 目录、再找上一级），
+# 所以这里不需要再拷一份到 debug\ 下面。
+
 # win32:LIBS += -lopengl32
 win32 {
     LIBS += -lopengl32
