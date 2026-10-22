@@ -1,0 +1,628 @@
+/* ============================================================================
+   app.qss.in —— 全应用唯一的样式源（模板）
+
+   本文件里的 @xxx 是**本项目自己的**占位符语法，不是 QSS 语法；
+   由 Theme::init() 在启动时一次性替换成实际取值（替换表在 ui/style/Theme.cpp）。
+   所以：改配色改 Theme 的调色板，改圆角/间距改 Metric，**不要在这里写死色值**。
+
+   两条硬约束（改动前先读，越界就退回）：
+
+   1) 禁止裸 `QWidget` / `QAbstractScrollArea` 选择器。
+      这类选择器会把 QOpenGLWidget 也画上背景，导致视口合成异常 ——
+      视口必须是全窗唯一「没有样式」的地方。要选中某个容器，用 #objectName
+      或类名（如 SerialPort / Params）精确选择。
+   2) 全局按钮的尺寸会带偏 QMessageBox 里的按钮，文末单独归零。
+   ========================================================================== */
+
+/* ---------------------------------------------------------------- 窗口与容器 */
+
+QMainWindow,
+QDialog {
+    background: @bg;
+    color: @text-1;
+}
+
+/* 整个程序四周那圈浅蓝描边**不在这条链上画**：
+   标题栏 / 中央区 / 状态栏三块把客户区铺满了，给 QMainWindow 写 border
+   （或靠 contentsMargins 把内容内缩）都会被它们盖掉，实测边缘一个像素都不变。
+   真正的实现是 FramelessWindow 里那层 2px 的覆盖条，颜色取 @frame。 */
+
+QMainWindow::separator {
+    background: @line;
+    width: 1px;
+    height: 1px;
+}
+
+/* 三个页面本身是裸 QWidget（类名即 ui 里的根控件名），只命中它们，不是裸选择器。
+   没有这一条，页面底色由 QPalette 给，切页时会闪一下系统灰。 */
+SerialPort,
+Params,
+Ros3DPage {
+    background: @bg;
+}
+
+/* ---------------------------------------------------------------- 文字 */
+
+QLabel {
+    color: @text-1;
+    background: transparent;
+}
+
+/* 状态色只有这一处定义：代码里通过 Theme::setState() 写动态属性 `state`，
+   样式在这里按属性着色（工单 03 起用）。info 即强调色：中性提示，不是故障。
+
+   清掉状态（setState(w, "")）后属性根本不存在，下面四条一条都不命中，
+   文字自然回到上面 QLabel 的正文色 —— 所以不需要再多写一条 [state=""]。 */
+QLabel[state="ok"]   { color: @ok; }
+QLabel[state="warn"] { color: @warn; }
+QLabel[state="err"]  { color: @err; }
+QLabel[state="info"] { color: @accent; }
+
+/* 说明文字有两档，别混用，也别互相叠：
+   role="note" —— 只是「说小一点、说弱一点」，不提醒也不报警；
+   #note       —— **状态说明**：需要看见但不算故障（「这块为什么没画」之类），橘色。 */
+QLabel[role="note"] {
+    color: @text-2;
+    font-size: @font-size-sm;
+}
+
+QLabel#note {
+    color: @warn;
+    font-size: @font-size-sm;
+    padding-left: @gap;
+}
+
+/* 侧边栏里的「字段名 / 值」：值比名字低一级，缩进 + 加粗（颜色仍交给 state） */
+QLabel#statusTitle {
+    color: @text-2;
+}
+
+QLabel#statusValue {
+    padding-left: @gap;
+    font-weight: bold;
+}
+
+/* 「操作说明」这种长句：小一档、次要色，不跟读数抢眼。
+   字号用 px（@font-size-hint = 11px）：原先这行写死 18px，比正文大一大截，
+   挤在侧边栏里最显眼——它是整块面板里最不需要抢眼的文字（工单 08）。 */
+QLabel#instructions {
+    color: @text-2;
+    font-size: @font-size-hint;
+}
+
+/* 参数页那一行状态文字：小一档；色由 state 给（读/写参数走 info） */
+QLabel#optLabel {
+    font-size: @font-size-sm;
+}
+
+/* 收发字节计数：弱文字，跟着状态栏一个重量 */
+QLabel#recvNum,
+QLabel#sendNum {
+    color: @text-2;
+    font-size: @font-size-sm;
+}
+
+/* ---------------------------------------------------------------- 按钮 */
+
+QPushButton {
+    min-height: @control-h;
+    padding: 0 @gap;
+    border: 1px solid @line-strong;
+    border-radius: @radius;
+    background: @bg;
+    color: @text-1;
+}
+
+QPushButton:hover {
+    background: @hover;
+    border-color: @line-strong;
+}
+
+QPushButton:pressed {
+    background: @pressed;
+}
+
+QPushButton:checked {
+    background: @accent-soft;
+    border-color: @accent;
+    color: @accent;
+}
+
+QPushButton:disabled {
+    background: @disabled-bg;
+    border-color: @line;
+    color: @text-3;
+}
+
+/* 主操作（连接/断开、读取参数）：命令栏会用到，按钮本身只需要打上 role */
+QPushButton[role="primary"] {
+    background: @accent;
+    border-color: @accent;
+    color: @on-accent;
+}
+
+QPushButton[role="primary"]:hover {
+    background: @accent;
+    border-color: @accent;
+    color: @on-accent;
+}
+
+QPushButton[role="primary"]:pressed {
+    background: @pressed;
+    border-color: @accent;
+    color: @accent;
+}
+
+QPushButton[role="primary"]:disabled {
+    background: @disabled-bg;
+    border-color: @line;
+    color: @text-3;
+}
+
+/* ---------------------------------------------------------------- 标题栏（工单 05）
+
+   三键与溢出入口是自绘控件（ui/shell/TitleBar.cpp 的 CaptionButton）：悬停底、
+   关闭键的红底反白、图标三态着色都在那边按 Theme 取色，这里管不到也不该管。
+   本段只定「容器底色 + 品牌行文字 + 连接状态胶囊」。
+
+   尺寸一律在代码里定：QSS 的 min-width / min-height 会落到 setMinimumWidth()，
+   会把 setFixedSize() 的钳制冲掉（04 踩过：三键被压成 14px 宽）。 */
+
+#titleBar {
+    background: @title;
+}
+
+QLabel#titleBrand {
+    color: @text-1;
+    font-size: @font-size-sm;
+}
+
+QLabel#titleVersion {
+    color: @text-3;
+    font-size: @font-size-xs;
+}
+
+/* 品牌行与胶囊之间的那条竖线：1×14，颜色只借用描边色 */
+QFrame#titleSep {
+    background: @line;
+    border: none;
+}
+
+/* 连接状态胶囊。绿/红只有一条入口：Theme::setState(胶囊/圆点/文字, "ok"|"err")，
+   下面三条按属性选择器着色 —— 不在这里另立一套状态色值。
+   注意 QLabel#portPillText 不写 color：id 选择器的特异性高于属性选择器，
+   写了就会把 state 的颜色盖掉（文字永远停在灰上）。 */
+
+QFrame#portPill {
+    background: @cmd;
+    border: 1px solid @line;
+    /* 10 而不是 11：Qt 的 border-radius **超过控件短边的一半**时会整个退回直角
+       （21px 高的胶囊写 11px 实测画出矩形，连圆角带背景一起变成硬边）。 */
+    border-radius: 10px;
+}
+
+/* 状态只改描边颜色；border-radius 由上面那条给，不用重复（Qt 按属性合并规则）。
+   文字色与圆点底色在下面按同样的 state 值着色 —— 三处状态名由
+   TitleBar::setPortState 一次写齐，不存在第二种绿/红定义。 */
+QFrame#portPill[state="ok"] {
+    border: 1px solid @ok;
+}
+
+QFrame#portPill[state="err"] {
+    border: 1px solid @err;
+}
+
+QLabel#portPillText {
+    font-size: @font-size-xs;
+}
+
+QLabel#portDot {
+    background: @text-3;
+    border-radius: 3px;
+}
+
+QLabel#portDot[state="ok"]  { background: @ok; }
+QLabel#portDot[state="err"] { background: @err; }
+
+/* ---------------------------------------------------------------- 输入控件 */
+
+QLineEdit,
+QComboBox,
+QSpinBox,
+QDoubleSpinBox {
+    min-height: @control-h;
+    padding: 0 @gap-sm;
+    border: 1px solid @line-strong;
+    border-radius: @radius;
+    background: @bg;
+    color: @text-1;
+    selection-background-color: @accent;
+    selection-color: @on-accent;
+}
+
+QLineEdit:focus,
+QComboBox:focus,
+QSpinBox:focus,
+QDoubleSpinBox:focus {
+    border-color: @accent;
+}
+
+QLineEdit:disabled,
+QComboBox:disabled,
+QSpinBox:disabled,
+QDoubleSpinBox:disabled {
+    background: @disabled-bg;
+    border-color: @line;
+    color: @text-3;
+}
+
+QLineEdit:read-only {
+    background: @disabled-bg;
+}
+
+/* 下拉箭头本期不接管：QSS 没有「画三角形」的能力（零尺寸盒 + 三边描边在 Qt 里
+   会被渲染成一个色块，试过了），自绘 drop-down 又会把原生箭头一起吃掉。
+   所以箭头先留给原生样式，工单 02 备好 chevron 图标后改成 image: url(...)。 */
+
+/* 弹层是独立顶层窗口，不走 palette 的 Highlight，必须单独给 */
+QComboBox QAbstractItemView {
+    border: 1px solid @line;
+    background: @bg;
+    color: @text-1;
+    outline: none;
+    selection-background-color: @accent-soft;
+    selection-color: @text-1;
+}
+
+/* ---------------------------------------------------------------- 分组框 */
+
+QGroupBox {
+    border: 1px solid @line;
+    border-radius: @radius-lg;
+    margin-top: @gap-lg;
+    padding-top: @gap-sm;
+    background: transparent;
+}
+
+QGroupBox::title {
+    subcontrol-origin: margin;
+    subcontrol-position: top left;
+    left: @gap;
+    padding: 0 @gap-xs;
+    /* 用页面底色把边框切断，标题才像「图例」而不是压在线上 */
+    background: @bg;
+    color: @text-1;
+}
+
+/* ---------------------------------------------------------------- 折叠分组（工单 08）
+
+   分组本体是自绘控件（ui/widgets/CollapsibleSection）：标题行底色、chevron、底部
+   1px 分隔线都在 paintEvent 里按 Theme 取色。QSS 表达不了「一行不带框的标题 + 点它
+   开合」，这里也不该管。
+
+   本段只管内容区里的两类文字：键值对。用 role 属性而不是 objectName —— 一组里有
+   六个同类标签，逐个起名等于把「它们是一类」写成六份；属性选择器一次命中全部，
+   与上面的 [role="note"] 同一个套路。 */
+
+QLabel[role="kvKey"] {
+    color: @text-2;
+    font-size: @font-size-sm;
+}
+
+/* 读数是**会变的数字**：等宽字体让小数位对齐，10 Hz 刷新时不会左右跳。 */
+QLabel[role="kvValue"] {
+    color: @text-1;
+    font-family: Consolas;
+}
+
+/* ---------------------------------------------------------------- 表格 */
+
+/* 参数表格。整体外观（表头 / 行高 / 选中色 / 网格线）都在这里，
+   参数页自己去 setStyleSheet 的那一套已经删掉（工单 03）——同一件事两处定义，
+   迟早出现「改了全局没变」或「两套色值打架」。
+   行高不写死在代码里：由单元格上下 padding + 表头的 ResizeToContents 撑出来。 */
+QTableWidget,
+QTableView {
+    background: @bg;
+    alternate-background-color: @cmd;
+    gridline-color: @line;
+    border: 1px solid @line;
+    border-radius: @radius;
+    selection-background-color: @accent-soft;
+    selection-color: @text-1;
+}
+
+QTableWidget::item,
+QTableView::item {
+    padding: @gap-xs @gap-sm;
+    border: none;
+}
+
+/* 选中行也要带上内边距：只写 QTableWidget::item 时，某些风格下选中行会退回无 padding */
+QTableWidget::item:selected,
+QTableView::item:selected {
+    background: @accent-soft;
+    color: @text-1;
+}
+
+QHeaderView::section {
+    background: @cmd;
+    color: @text-2;
+    border: none;
+    border-right: 1px solid @line;
+    border-bottom: 1px solid @line;
+    padding: @gap-xs @gap-sm;
+    min-height: @control-h-sm;
+    font-weight: bold;
+}
+
+QTableCornerButton::section {
+    background: @cmd;
+    border: none;
+}
+
+/* 参数表第一列里那个 20×20 的折叠按钮。
+   全局 QPushButton 的内边距是给页面按钮定的（左右各 @gap），把它塞进 20px 的方块里
+   会连一个字符都放不下——原先看着像「被裁掉的括号 + 一个点」。这里把内边距和最小尺寸
+   一起归零，只留悬停时一层浅底。 */
+QPushButton#foldButton {
+    min-width: 0;
+    min-height: 0;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: @radius-sm;
+    background: transparent;
+    color: @text-2;
+    font-weight: bold;
+}
+
+QPushButton#foldButton:hover {
+    background: @hover;
+    border-color: @line;
+    color: @text-1;
+}
+
+/* ---------------------------------------------------------------- 文本区（收发日志/说明） */
+
+QTextBrowser,
+QTextEdit,
+QPlainTextEdit {
+    background: @bg;
+    border: 1px solid @line;
+    border-radius: @radius;
+    padding: @gap-xs;
+    selection-background-color: @accent;
+    selection-color: @on-accent;
+}
+
+/* 收发日志：原来是一块纯白 + 硬边框，压在页面里像嵌了个别的软件。
+   底色退一格（@cmd），边框用常规描边，四角跟全局一致。 */
+QTextBrowser#recvEdit {
+    background: @cmd;
+    border: 1px solid @line;
+    border-radius: @radius;
+    padding: @gap-sm;
+}
+
+/* 坐标页左下的参数说明：原来的浅灰底 + 无边框是行内样式写的，
+   现在跟着页底色走，只留圆角与内边距。 */
+QTextEdit#introductText {
+    background: @cmd;
+    border: none;
+    border-radius: @radius;
+    padding: @gap-sm;
+}
+
+/* ---------------------------------------------------------------- 滚动区与滚动条 */
+
+QScrollArea {
+    border: none;
+    background: transparent;
+}
+
+QScrollBar:vertical {
+    background: transparent;
+    width: 10px;
+    margin: 0;
+}
+
+QScrollBar::handle:vertical {
+    background: @line-strong;
+    min-height: 28px;
+    border-radius: 5px;
+}
+
+QScrollBar::handle:vertical:hover {
+    background: @text-3;
+}
+
+QScrollBar:horizontal {
+    background: transparent;
+    height: 10px;
+    margin: 0;
+}
+
+QScrollBar::handle:horizontal {
+    background: @line-strong;
+    min-width: 28px;
+    border-radius: 5px;
+}
+
+QScrollBar::handle:horizontal:hover {
+    background: @text-3;
+}
+
+/* 去掉两端的箭头方块：原型里没有，留着会让细滚动条显得笨重 */
+QScrollBar::add-line,
+QScrollBar::sub-line {
+    width: 0;
+    height: 0;
+    border: none;
+    background: none;
+}
+
+QScrollBar::add-page,
+QScrollBar::sub-page {
+    background: none;
+}
+
+/* ---------------------------------------------------------------- 分隔条 */
+
+QSplitter::handle:horizontal {
+    width: @radius;
+    background: transparent;
+}
+
+QSplitter::handle:horizontal:hover {
+    background: @accent-soft;
+}
+
+QSplitter::handle:vertical {
+    height: @radius;
+    background: transparent;
+}
+
+/* ---------------------------------------------------------------- 菜单 / 提示 */
+
+QMenuBar {
+    background: @bg;
+    color: @text-1;
+}
+
+QMenuBar::item {
+    background: transparent;
+    padding: @gap-xs @gap-sm;
+}
+
+QMenuBar::item:selected {
+    background: @accent-soft;
+}
+
+QMenu {
+    background: @bg;
+    border: 1px solid @line;
+    padding: @gap-xs;
+}
+
+QMenu::item {
+    padding: @gap-xs @gap-lg;
+    border-radius: @radius-sm;
+}
+
+QMenu::item:selected {
+    background: @accent-soft;
+    color: @text-1;
+}
+
+QMenu::separator {
+    height: 1px;
+    background: @line;
+    margin: @gap-xs @gap-sm;
+}
+
+QToolTip {
+    background: @bg;
+    color: @text-1;
+    border: 1px solid @line-strong;
+    border-radius: @radius-sm;
+    padding: @gap-xs @gap-sm;
+}
+
+/* ---------------------------------------------------------------- 状态栏（工单 07）
+
+   三段：串口 · 控制链路 · TF 帧名。容器底色与那条 1px 上边框由上面的 QStatusBar
+   给；本段只管「一段里两种字」和两个状态圆点。
+
+   值文字**不写 color**：它的默认色要留给全局 QLabel 的正文色 —— 在这里写一条
+   `QLabel#statusBarValue { color: ... }` 会压过下面的 `[state="err"]`（id 选择器的
+   特异性更高），断线那一段就永远是灰的，只能靠圆点看。 */
+
+QStatusBar {
+    background: @cmd;
+    color: @text-2;
+    border-top: 1px solid @line;
+}
+
+QStatusBar::item {
+    border: none;
+}
+
+/* 段名：比读数弱一档（原型 .status 的 #7a8698） */
+QLabel#statusBarCaption {
+    color: @text-2;
+    font-size: @font-size-xs;
+}
+
+/* 读数：只定字号，颜色交给正文色 / state */
+QLabel#statusBarValue {
+    font-size: @font-size-xs;
+}
+
+/* 一段之间的竖线：1×11，颜色借用描边色 */
+QFrame#statusBarSep {
+    background: @line;
+    border: none;
+}
+
+/* 状态圆点。两段共用一个 objectName —— 同一件事只有一处定义。
+   6px 配 3px 圆角：圆角超过短边的一半时 Qt 会整个退回直角，5px 只能写 2px。 */
+QLabel#statusBarDot {
+    background: @text-3;
+    border-radius: 3px;
+}
+
+QLabel#statusBarDot[state="ok"]  { background: @ok; }
+QLabel#statusBarDot[state="err"] { background: @err; }
+
+/* ---------------------------------------------------------------- 进度（等待框） */
+
+QProgressBar {
+    min-height: @gap-sm;
+    max-height: @gap-sm;
+    border: 1px solid @line;
+    border-radius: @radius-sm;
+    background: @cmd;
+    color: @text-2;
+    text-align: center;
+}
+
+QProgressBar::chunk {
+    background: @accent;
+    border-radius: @radius-sm;
+}
+
+/* ---------------------------------------------------------------- 复选框 / 单选框 */
+
+/* 只调间距与文字色，不动 indicator：本票没有图标资源，
+   自绘 indicator 会丢掉对勾，看起来像「选中了但没打勾」。 */
+QCheckBox,
+QRadioButton {
+    color: @text-1;
+    spacing: @gap-sm;
+    background: transparent;
+}
+
+QCheckBox:disabled,
+QRadioButton:disabled {
+    color: @text-3;
+}
+
+/* ---------------------------------------------------------------- 弹窗（必须放在最后）
+
+   全局 QPushButton 的 min-height / padding 是给页面按钮定的，
+   QMessageBox 里的按钮继承了就会把弹窗撑得又高又宽，
+   所以这里把 min-width / min-height 显式归零，只留内边距。 */
+
+QMessageBox {
+    background: @bg;
+}
+
+QMessageBox QLabel {
+    color: @text-1;
+}
+
+QMessageBox QPushButton {
+    min-width: 0;
+    min-height: 0;
+    padding: @gap-xs @gap-lg;
+}

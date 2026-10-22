@@ -1,12 +1,16 @@
 ﻿#include "ros3dpage.h"
 #include "tcpclient.h"
 #include "protocolros3d.h"
+#include "CollapsibleSection.h"   // 右面板折叠分组（工单 08）
+#include "Theme.h"     // 状态色：setState 只写属性，颜色在全局 QSS 里定（工单 03）
+#include "FloatingBar.h"     // 视口底部悬浮条（工单 10）
+#include "PointsCapsule.h"   // 视口右上角点数胶囊（工单 10）
+#include "PanelRail.h"       // 右面板两态容器 + 26px 窄条 + 共用把手（工单 09）
 
 #include <QHBoxLayout>
 #include <QVBoxLayout>
-#include <QFormLayout>
+#include <QGridLayout>
 #include <QFrame>
-#include <QGroupBox>
 #include <QPushButton>
 #include <QLabel>
 #include <QFileDialog>
@@ -16,11 +20,74 @@
 #include <QMessageBox>
 #include <QScrollArea>
 #include <QSplitter>
+#include <QEvent>
+#include <QResizeEvent>
+#include <QSignalBlocker>
+
+namespace {
+
+// 键值对里的「名字」（x / y / yaw …）。字号与颜色在全局 QSS 的
+// `QLabel[role="kvKey"]` 里（工单 08），这里只说「我是哪一类文字」——
+// 与 #statusTitle / #note 是同一个套路，不在代码里写样式。
+QLabel* makeKvKey(const QString& text, QWidget* parent)
+{
+    auto* lab = new QLabel(text, parent);
+    lab->setProperty("role", QStringLiteral("kvKey"));
+    return lab;
+}
+
+// 数值：等宽字体（QSS 里的 `QLabel[role="kvValue"]`）。10 Hz 刷新时小数位不左右跳，
+// 六个读数在一列里对齐，扫一眼就能比较大小。
+void markKvValue(QLabel* lab)
+{
+    lab->setProperty("role", QStringLiteral("kvValue"));
+}
+
+} // namespace
 
 Ros3DPage::Ros3DPage(QWidget* parent)
     : QWidget(parent)
 {
     gl_ = new GLWidget(this);
+
+    // ---------- 视口浮层（工单 10）----------
+    // 两个都是 **gl_ 的子控件**：坐标即视口坐标，换算式只面对「视口尺寸 + 控件尺寸」。
+    //
+    // 位置由 relayoutOverlays() 在两种时机给：本页 resize（视口跟着变）与 gl_ 自己的
+    // resize（拖分隔条时**只改视口、不改本页大小**，本页的 resizeEvent 不会来）。
+    // 这就是为什么除了 resizeEvent 还要盯一下 gl_ 的 resize —— 不改 glwidget.cpp
+    // 的替代做法就是一个事件过滤器，它只旁听，不参与任何绘制。
+    bar_     = new FloatingBar(gl_);
+    capsule_ = new PointsCapsule(gl_);
+
+    // 六个按钮走的全是 GLWidget **既有**的公开槽，一行动画/相机代码都不新增
+    // （spec 实现决策 19）。表就这么一张，改按钮语义只改这里。
+    connect(bar_, &FloatingBar::actionTriggered, this, [this](FloatingBar::Action action) {
+        switch (action) {
+        case FloatingBar::ResetView:   gl_->setCamera();                       break;
+        case FloatingBar::YawLeft:     gl_->addYaw(-FloatingBar::kStepDegrees);   break;
+        case FloatingBar::YawRight:    gl_->addYaw(+FloatingBar::kStepDegrees);   break;
+        case FloatingBar::PitchUp:     gl_->addPitch(-FloatingBar::kStepDegrees); break;
+        case FloatingBar::PitchDown:   gl_->addPitch(+FloatingBar::kStepDegrees); break;
+        case FloatingBar::ClearCanvas: gl_->clearMap();                        break;
+        }
+    });
+
+    gl_->installEventFilter(this);   // 只为了盯 QEvent::Resize，见 eventFilter()
+
+    // 胶囊的宽度跟着点数走（"0" → "24.5 k"），而位置是按尺寸算的：尺寸一变就得重摆，
+    // 否则它会长出右边距（甚至压到面板上）。宽度的量化在 PointsCapsule 里，
+    // 这里只负责「跟着挪一下」。
+    connect(capsule_, &PointsCapsule::contentSizeChanged, this, &Ros3DPage::relayoutOverlays);
+
+    // 点数读数：每 500ms 取一次两个 getter 的快照。**没有计时埋点** ——
+    // 这一块只回答「地图是不是还在长」，不显示帧率、不显示渲染耗时。
+    // setCounts() 对「值没变」直接返回，所以这个定时器平时不产生任何重绘。
+    pointsTimer_ = new QTimer(this);
+    pointsTimer_->setInterval(500);
+    connect(pointsTimer_, &QTimer::timeout, this, [this]() {
+        capsule_->setCounts(gl_->realtimePointCount(), gl_->mapPointCount());
+    });
 
     // ---------- 侧边栏 ----------
     auto* side = new QFrame(this);
@@ -29,85 +96,96 @@ Ros3DPage::Ros3DPage(QWidget* parent)
     // 这里只留一个下限，防止拖到把内容挤成一条
     side->setMinimumWidth(200);
 
-    // TF group
-    auto* tfBox = new QGroupBox(tr("机器人坐标"), side);
-    labX_   = new QLabel("-", tfBox);
-    labY_   = new QLabel("-", tfBox);
-    labZ_   = new QLabel("-", tfBox);
-    labYaw_ = new QLabel("-", tfBox);
-    labPitch_ = new QLabel("-", tfBox);
-    labRoll_ = new QLabel("-", tfBox);
+    // ---------- 七个分组（工单 08）----------
+    // 原来的 7 个 QGroupBox 换成自绘折叠分组：标题行 + 内容区，折叠时只收内容区。
+    // **顺序与原功能完全一致**：机器人坐标 → 开机点 → 目标点指引 → 点云显示
+    // → Z 轴范围控制 → 操作按钮 → 操作说明。一项不多、一项不少。
+    // 里面的控件与信号连接一行没改，只是父对象从 QGroupBox 换成 section 的内容区；
+    // 分组之间也不再另加 10px 间距 —— 分隔线已经是分组的边界，再叠一层会显得太碎。
 
-    // 三行两列：左边 xyz，右边 yaw/pitch/roll
-    auto* tfGrid = new QGridLayout(tfBox);
+    // ---------- 1 机器人坐标 ----------
+    auto* secCoords = new CollapsibleSection(tr("机器人坐标"), side);
+    labX_   = new QLabel("-", secCoords->content());
+    labY_   = new QLabel("-", secCoords->content());
+    labZ_   = new QLabel("-", secCoords->content());
+    labYaw_ = new QLabel("-", secCoords->content());
+    labPitch_ = new QLabel("-", secCoords->content());
+    labRoll_ = new QLabel("-", secCoords->content());
+    for (QLabel* lab : {labX_, labY_, labZ_, labYaw_, labPitch_, labRoll_})
+        markKvValue(lab);
 
-    // 第 0 行
-    tfGrid->addWidget(new QLabel("x: "),     0, 0);
-    tfGrid->addWidget(labX_,              0, 1);
-    tfGrid->addWidget(new QLabel("yaw: "),  0, 2);
-    tfGrid->addWidget(labYaw_,            0, 3);
+    // 三行两列：左边 xyz、右边 yaw/pitch/roll（六个数值在一屏内看得完）。
+    // 键名去掉冒号、键值各占一格：原先是「x: 」这种带标点的长键名，白占宽度。
+    auto* tfGrid = new QGridLayout;
+    tfGrid->setHorizontalSpacing(Theme::Metric::GapSm);
+    tfGrid->setVerticalSpacing(Theme::Metric::GapXs);
 
-    // 第 1 行
-    tfGrid->addWidget(new QLabel("y: "),     1, 0);
-    tfGrid->addWidget(labY_,              1, 1);
-    tfGrid->addWidget(new QLabel("pitch: "), 1, 2);
-    tfGrid->addWidget(labPitch_,          1, 3);
+    tfGrid->addWidget(makeKvKey(QStringLiteral("x"), secCoords->content()),     0, 0);
+    tfGrid->addWidget(labX_,   0, 1);
+    tfGrid->addWidget(makeKvKey(QStringLiteral("yaw"), secCoords->content()),   0, 2);
+    tfGrid->addWidget(labYaw_, 0, 3);
 
-    // 第 2 行
-    tfGrid->addWidget(new QLabel("z: "),     2, 0);
-    tfGrid->addWidget(labZ_,              2, 1);
-    tfGrid->addWidget(new QLabel("roll: "),  2, 2);
-    tfGrid->addWidget(labRoll_,           2, 3);
+    tfGrid->addWidget(makeKvKey(QStringLiteral("y"), secCoords->content()),     1, 0);
+    tfGrid->addWidget(labY_,   1, 1);
+    tfGrid->addWidget(makeKvKey(QStringLiteral("pitch"), secCoords->content()), 1, 2);
+    tfGrid->addWidget(labPitch_, 1, 3);
+
+    tfGrid->addWidget(makeKvKey(QStringLiteral("z"), secCoords->content()),     2, 0);
+    tfGrid->addWidget(labZ_,   2, 1);
+    tfGrid->addWidget(makeKvKey(QStringLiteral("roll"), secCoords->content()),  2, 2);
+    tfGrid->addWidget(labRoll_, 2, 3);
 
     // 让数值列可拉伸，保持对齐
     tfGrid->setColumnStretch(1, 1);
     tfGrid->setColumnStretch(3, 1);
+    secCoords->bodyLayout()->addLayout(tfGrid);
 
-    // ---------- 开机点（工单 09）----------
+    // ---------- 2 开机点（工单 09）----------
     // 「这一趟开机那一刻，机器人中心落在图里哪儿」——与上面「机器人坐标」是**同一类读数**，
     // 所以整块紧挨着它：操作员一眼能同时读到「机器人现在在哪」和「这次从哪开机的」。
-    // （状态那一片（`targetBox`）放的是**状态**：重定位 / 规划。这三行是**数值**，
+    // （状态那一片（`secTarget`）放的是**状态**：重定位 / 规划。这三行是**数值**，
     //   两片各归各的地方，不往一起塞。）
     //
     // 平时整块 hide()：只有定位模式且 `0x02` 到过才有得显示。不画时连数值一起收起来，
     // 侧边栏里不留一块全是「-」的格子——那正好会被当成卡顿。**为什么不显示**那句话
-    // 在下面「点云显示」那一块里说（与工单 07 的扫描说明同一个位置）。
-    originBox_ = new QGroupBox(tr("开机点"), side);
-    labOriginX_   = new QLabel("-", originBox_);
-    labOriginY_   = new QLabel("-", originBox_);
-    labOriginYaw_ = new QLabel("-", originBox_);
+    // 在下面「点云显示」那一块里说。
+    //
+    // 显形时是**展开**的：这一块平时整块收着，一旦出来就是「有数可看了」；
+    // 若还停在收起态，就只剩一个标题，和「拿到后显示 x/y/yaw」自相矛盾。
+    originSection_ = new CollapsibleSection(tr("开机点"), side);
+    labOriginX_   = new QLabel("-", originSection_->content());
+    labOriginY_   = new QLabel("-", originSection_->content());
+    labOriginYaw_ = new QLabel("-", originSection_->content());
+    for (QLabel* lab : {labOriginX_, labOriginY_, labOriginYaw_})
+        markKvValue(lab);
 
-    auto* originGrid = new QGridLayout(originBox_);
-    originGrid->addWidget(new QLabel("x: "),   0, 0); originGrid->addWidget(labOriginX_,   0, 1);
-    originGrid->addWidget(new QLabel("y: "),   1, 0); originGrid->addWidget(labOriginY_,   1, 1);
-    originGrid->addWidget(new QLabel("yaw: "), 2, 0); originGrid->addWidget(labOriginYaw_, 2, 1);
+    auto* originGrid = new QGridLayout;
+    originGrid->setHorizontalSpacing(Theme::Metric::GapSm);
+    originGrid->setVerticalSpacing(Theme::Metric::GapXs);
+    originGrid->addWidget(makeKvKey(QStringLiteral("x"), originSection_->content()),   0, 0);
+    originGrid->addWidget(labOriginX_,   0, 1);
+    originGrid->addWidget(makeKvKey(QStringLiteral("y"), originSection_->content()),   1, 0);
+    originGrid->addWidget(labOriginY_,   1, 1);
+    originGrid->addWidget(makeKvKey(QStringLiteral("yaw"), originSection_->content()), 2, 0);
+    originGrid->addWidget(labOriginYaw_, 2, 1);
     originGrid->setColumnStretch(1, 1);   // 数值列可拉伸，与上面那块同一个对齐习惯
-    originBox_->hide();
+    originSection_->bodyLayout()->addLayout(originGrid);
+    originSection_->hide();
 
-    // 操作按钮栏
-    auto* controlBox = new QGroupBox(tr("操作按钮"), side);
-    auto* btnClear = new QPushButton(tr("清理地图"), controlBox);
-    auto* btnReset = new QPushButton(tr("初始化相机"), controlBox);
-    btnSave_ = new QPushButton(tr("保存地图"), controlBox);
-    btnSave_->setEnabled(false);   // 初始不可点，连上链路后由 setLinkConnected() 打开
-
-    // 紧挨着「保存地图」：两者都是模块侧地图文件的操作，门禁也共用同一条
-    btnDownload_ = new QPushButton(tr("下载地图"), controlBox);
-    btnDownload_->setEnabled(false);
-
-    // ---------- 目标点设置 (新增面板) ----------
-    auto* targetBox = new QGroupBox(tr("目标点指引"), side);
-    auto* btnNavGoal = new QPushButton(tr("设置目标点"), targetBox);
+    // ---------- 3 目标点指引 ----------
+    auto* secTarget = new CollapsibleSection(tr("目标点指引"), side);
+    auto* targetBody = secTarget->content();
+    auto* btnNavGoal = new QPushButton(tr("设置目标点"), targetBody);
     btnNavGoal->setCheckable(true);
 
     // 发送目标点按钮
-    btnSendNavGoal_ = new QPushButton(tr("发送目标点"), targetBox);
+    btnSendNavGoal_ = new QPushButton(tr("发送目标点"), targetBody);
     btnSendNavGoal_->setEnabled(false); // 初始状态为不可用，直到目标点确认
 
-    spinNavX_ = new QDoubleSpinBox(targetBox);
-    spinNavY_ = new QDoubleSpinBox(targetBox);
-    spinNavZ_ = new QDoubleSpinBox(targetBox);
-    spinNavYaw_ = new QDoubleSpinBox(targetBox);
+    spinNavX_ = new QDoubleSpinBox(targetBody);
+    spinNavY_ = new QDoubleSpinBox(targetBody);
+    spinNavZ_ = new QDoubleSpinBox(targetBody);
+    spinNavYaw_ = new QDoubleSpinBox(targetBody);
 
     // 配置数值框范围和精度
     auto setupNavSpinBox = [](QDoubleSpinBox* sp, const QString& suffix, double min, double max) {
@@ -124,49 +202,82 @@ Ros3DPage::Ros3DPage(QWidget* parent)
     spinNavYaw_->setDecimals(0);       // 小数位数设为 0
     spinNavYaw_->setSingleStep(1.0);   // 每次点击上下箭头增减 1 度
 
+    // 「Z = 当前机器人高度」：勾上之后 Z 由位姿帧驱动，微调框置灰 —— 两个入口同时能改
+    // 同一个数，最终谁赢取决于调用顺序，那种事在界面上没法解释。所以只留一个主人。
+    ckNavZFollow_ = new QCheckBox(tr("Z = 当前机器人高度"), targetBody);
+    ckNavZFollow_->setToolTip(tr("勾选后目标点高度跟随机器人当前高度，Z 微调框不可手动修改"));
+
     // 状态帧 (0x0B)：初值必须是「未收到…」——一包都没收到既不代表「进行中」，
     // 也不代表模块明说「未响应」（那是 3；模块听到过上游自述之前一包都不发）
-    labNavStatus_   = new QLabel(tr("未收到规划状态"), targetBox);
-    labRelocStatus_ = new QLabel(tr("未收到重定位状态"), targetBox);
+    labNavStatus_   = new QLabel(tr("未收到规划状态"), targetBody);
+    labRelocStatus_ = new QLabel(tr("未收到重定位状态"), targetBody);
 
     // 帧名校验 (工单 05) 的红状态位。**不留初值文案**：它是异常留痕，
     // 正常时不占地方（下面整块 hide()），只有真出现帧名不符才显形。
-    labFrameNameTitle_  = new QLabel(tr("帧名校验:"), targetBox);
-    labFrameNameStatus_ = new QLabel(targetBox);
+    labFrameNameTitle_  = new QLabel(tr("帧名校验:"), targetBody);
+    labFrameNameStatus_ = new QLabel(targetBody);
 
-    auto* targetLay = new QGridLayout(targetBox);
+    auto* targetLay = new QGridLayout;
+    targetLay->setHorizontalSpacing(Theme::Metric::GapSm);
+    targetLay->setVerticalSpacing(Theme::Metric::GapSm);
     targetLay->addWidget(btnNavGoal, 0, 0, 1, 2);
     targetLay->addWidget(btnSendNavGoal_, 0, 2, 1, 2);
     targetLay->addWidget(new QLabel("X:"), 1, 0); targetLay->addWidget(spinNavX_, 1, 1);
     targetLay->addWidget(new QLabel("Y:"), 1, 2); targetLay->addWidget(spinNavY_, 1, 3);
     targetLay->addWidget(new QLabel("Z:"), 2, 0); targetLay->addWidget(spinNavZ_, 2, 1);
     targetLay->addWidget(new QLabel("Yaw:"), 2, 2); targetLay->addWidget(spinNavYaw_, 2, 3);
+    // 单独占一行、跨满四列：它管的是整个 Z（微调框 + 画布取点平面），不是旁边那一格的附属品
+    targetLay->addWidget(ckNavZFollow_, 3, 0, 1, 4);
+    secTarget->bodyLayout()->addLayout(targetLay);
+
+    // 勾选状态只做两件事：把 Z 框置灰、把判据交给 gl_。真正的「取哪个高度」在
+    // GLWidget::setNavZFollowRobot 里（进模式 / 取点 / 回填三处都要用同一条判据，
+    // 分两处各算一次迟早会不一致）。
+    connect(ckNavZFollow_, &QCheckBox::toggled, this, [this](bool on) {
+        spinNavZ_->setEnabled(!on);
+        gl_->setNavZFollowRobot(on);
+        // 勾上那一刻先把框里的数同步过去（没收到过位姿就保持原值，等位姿来了再跟）
+        if (on && hasRobotZ_) {
+            const QSignalBlocker blocker(spinNavZ_);   // 只改显示，不再回头喂 gl_
+            spinNavZ_->setValue(robotZ_);
+        }
+    });
+
     // 状态这两行改成「字段名一行、值下一行」：一行里塞「字段名 + 值」在窄侧边栏里
-    // 会被挤断或撑宽，分开后值独占一行，缩到最窄也读得全。名字跨满四列，值缩进对齐。
-    auto* labNavTitle   = new QLabel(tr("规划状态:"), targetBox);
-    auto* labRelocTitle = new QLabel(tr("重定位状态:"), targetBox);
+    // 会被挤断或撑宽，分开后值独占一行，缩到最窄也读得全。
+    auto* labNavTitle   = new QLabel(tr("规划状态:"), targetBody);
+    auto* labRelocTitle = new QLabel(tr("重定位状态:"), targetBody);
 
-    targetLay->addWidget(labNavTitle, 3, 0, 1, 4);
-    targetLay->addWidget(labNavStatus_, 4, 0, 1, 4);
-    targetLay->addWidget(labRelocTitle, 5, 0, 1, 4);
-    targetLay->addWidget(labRelocStatus_, 6, 0, 1, 4);
-    // 帧名校验挤在紧下面一行：它与上面几块状态是同一片显示区（协议文档 4.7 说的
+    // 状态区（4 行，外加异常时才显形的帧名校验）**不进上面那个 grid**：
+    // 这些标签是 wordWrap 的，QGridLayout 里一有 heightForWidth 的项，Qt5 的
+    // grid 尺寸计算就会把整块的建议高度算成 0 —— 实测表现是这一组被压成一条缝、
+    // 文字叠在一起。它们本来就各占一整行，用竖直布局既对，也躲开了那个坑。
+    auto* statusLay = new QVBoxLayout;
+    statusLay->setSpacing(Theme::Metric::GapXs);
+    statusLay->addWidget(labNavTitle);
+    statusLay->addWidget(labNavStatus_);
+    statusLay->addWidget(labRelocTitle);
+    statusLay->addWidget(labRelocStatus_);
+    // 帧名校验挤在紧下面：它与上面几块状态是同一片显示区（协议文档 4.7 说的
     // 「帧名不符的红状态位可以复用同一个显示区」），只在异常时出现。
-    targetLay->addWidget(labFrameNameTitle_, 7, 0, 1, 4);
-    targetLay->addWidget(labFrameNameStatus_, 8, 0, 1, 4);
+    statusLay->addWidget(labFrameNameTitle_);
+    statusLay->addWidget(labFrameNameStatus_);
+    secTarget->bodyLayout()->addLayout(statusLay);
 
-    // 值比字段名低一级：缩进一点，和上面的名字错开
-    const QString statusTitleStyle = "QLabel { color: #666666; }";
-    const QString statusValueStyle = "QLabel { padding-left: 12px; font-weight: bold; }";
-    labNavTitle->setStyleSheet(statusTitleStyle);
-    labRelocTitle->setStyleSheet(statusTitleStyle);
-    labNavStatus_->setStyleSheet(statusValueStyle);
-    labRelocStatus_->setStyleSheet(statusValueStyle);
+    // 字段名与值分两级：只挂 objectName，样子在全局 QSS 里（QLabel#statusTitle / #statusValue）。
+    // 原来这两人各带一段行内 setStyleSheet，色值散在代码里（工单 03 收敛）。
+    // 值比字段名低一级：缩进 + 加粗；**颜色不在这里定**——状态色只走 Theme::setState。
+    labNavTitle->setObjectName(QStringLiteral("statusTitle"));
+    labRelocTitle->setObjectName(QStringLiteral("statusTitle"));
+    labFrameNameTitle_->setObjectName(QStringLiteral("statusTitle"));
 
-    labFrameNameTitle_->setStyleSheet(statusTitleStyle);
-    // 红字 + 加粗：状态位变红就是这条改动的「留痕」。
-    labFrameNameStatus_->setStyleSheet(
-        "QLabel { padding-left: 12px; font-weight: bold; color: #c62828; }");
+    labNavStatus_->setObjectName(QStringLiteral("statusValue"));
+    labRelocStatus_->setObjectName(QStringLiteral("statusValue"));
+
+    // 红字 + 加粗：状态位变红就是这条改动的「留痕」。加粗来自 #statusValue，
+    // 红来自 setState("err")——与串口断线用的是同一个色值，不再各写一份。
+    labFrameNameStatus_->setObjectName(QStringLiteral("statusValue"));
+    Theme::setState(labFrameNameStatus_, QStringLiteral("err"));
     // 一上来就藏起来：没有帧名不符时它连同标题一行都不该出现，
     // 否则侧边栏里挂着一个空标签，会被当成「有个状态一直没数据」。
     labFrameNameTitle_->hide();
@@ -178,144 +289,197 @@ Ros3DPage::Ros3DPage(QWidget* parent)
     // 帧名的值里带着两个名字，最窄时一定会换行
     labFrameNameStatus_->setWordWrap(true);
 
-    auto* controlLay = new QVBoxLayout(controlBox);
-    controlLay->addWidget(btnClear);
-    controlLay->addWidget(btnReset);
-    controlLay->addWidget(btnSave_);
-    controlLay->addWidget(btnDownload_);   // 紧邻「保存地图」
-    controlLay->addStretch();   // 把按钮顶到上面
-
-    // 新增：视角旋转按钮组
-    // auto* rotBox = new QGroupBox(tr("视角旋转"), side);
-    // auto* yawLeft   = new QPushButton(tr("左转 ◀"), rotBox);
-    // auto* yawRight  = new QPushButton(tr("右转 ▶"), rotBox);
-    // auto* pitchUp   = new QPushButton(tr("上仰 ▲"), rotBox);
-    // auto* pitchDown = new QPushButton(tr("下俯 ▼"), rotBox);
-
-    // auto* rotLay = new QGridLayout(rotBox);
-    // rotLay->addWidget(pitchUp,   0, 0, 1, 2);
-    // rotLay->addWidget(yawLeft,   1, 0);
-    // rotLay->addWidget(yawRight,  1, 1);
-    // rotLay->addWidget(pitchDown, 2, 0, 1, 2);
-
-    // ---------- 新增：点云显隐开关 ----------
-    auto* cloudBox = new QGroupBox(tr("点云显示"), side);
-    auto* ckRealtime = new QCheckBox(tr("实时点云"), cloudBox);
-    auto* ckMap       = new QCheckBox(tr("地图点云"), cloudBox);
+    // ---------- 4 点云显示 ----------
+    auto* secCloud = new CollapsibleSection(tr("点云显示"), side);
+    auto* ckRealtime = new QCheckBox(tr("实时点云"), secCloud->content());
+    auto* ckMap       = new QCheckBox(tr("地图点云"), secCloud->content());
     ckRealtime->setChecked(true);
     ckMap->setChecked(true);
 
-    auto* cloudLay = new QVBoxLayout(cloudBox);
-    cloudLay->addWidget(ckRealtime);
-    cloudLay->addWidget(ckMap);
+    secCloud->bodyLayout()->addWidget(ckRealtime);
+    secCloud->bodyLayout()->addWidget(ckMap);
 
-    // 2D 扫描「为什么不画」（工单 07）：放在这一块下面 —— 「点云显示」管的正是
-    // 「图上画什么」。这次改动一共新引入了三处「可能不画」（未定位时不画 2D 扫描、
-    // `0x01` 陈旧时清空扫描、建图模式下不画开机点），三处都要有话说，
-    // 否则操作员看到的是「图上少了一块」，只会当成卡顿。
-    labScan2DNote_ = new QLabel(cloudBox);
-    labScan2DNote_->setWordWrap(true);
-    // 橙色（不是红色）：它是**状态说明**不是故障留痕——帧名不符那种「协议对不上」才用红。
-    labScan2DNote_->setStyleSheet("QLabel { color: #b26a00; padding-left: 12px; }");
-    labScan2DNote_->hide();   // 正常时扫描是画着的，这句话没有说出来的必要
-    cloudLay->addWidget(labScan2DNote_);
+    // 这里**只有两个开关**：实时点云、地图点云，各自直连既有的两个显示开关。
+    // 2D / 3D 是数据自己判定的（扫到 2D 就按 2D 画），不提供手动开关 ——
+    // 给一个「选了也不生效」的开关，比不给更容易误导（工单 08 / spec D6）。
+    //
+    // 原来这里还挂着一条「2D 扫描暂不显示：位姿数据已陈旧」的说明标签（工单 07 加的），
+    // 本票把它**连控件带 connect 一起删了**：它说的是内部自动判定的结果，
+    // 摆到界面上只会让人以为坏了。GLWidget 侧的判断与通知保持不变，
+    // 只是没有界面接收者（`scan2DNoteChanged` 现在没人接）。
 
-    // 开机点「为什么不显示」（工单 09）：与上面那句扫描说明**同一个位置、同一个颜色**。
-    // 「点云显示」这一块管的就是「图上画什么」，本次新引入的几处「可能不画」
-    // （未定位 / 位姿陈旧时不画 2D 扫描、建图模式下不画开机点）说明都收在这里，
-    // 免得同一个话题的几句话散在侧边栏三处。初值不写死文案：GLWidget 推第一次就会填上
-    // （见构造函数末尾那次 publishOriginMarkerState()）——**也可能一直没文案**：
-    // 「还没读到过模式参数（0x13）」就不配一句话，这里保持空着、收着。
-    labOriginNote_ = new QLabel(cloudBox);
+    // 开机点「为什么不显示」（工单 09）：这一块管的就是「图上画什么」，
+    // 所以「建图模式下不画开机点」这句说明留在这里。初值不写死文案：
+    // GLWidget 推第一次就会填上（见构造函数末尾那次 publishOriginMarkerState()）——
+    // **也可能一直没文案**：「还没读到过模式参数（0x13）」就不配一句话，这里保持空着、收着。
+    labOriginNote_ = new QLabel(secCloud->content());
     labOriginNote_->setWordWrap(true);
-    labOriginNote_->setStyleSheet("QLabel { color: #b26a00; padding-left: 12px; }");
+    labOriginNote_->setObjectName(QStringLiteral("note"));   // 状态说明那一类文字（橘色）
     labOriginNote_->hide();
-    cloudLay->addWidget(labOriginNote_);
+    secCloud->bodyLayout()->addWidget(labOriginNote_);
 
-    // ---------- 修改：Z轴范围控制 ----------
-    auto* zFilterBox = new QGroupBox(tr("Z轴范围控制"), side);
+    // ---------- 5 Z 轴范围控制 ----------
+    // 控件与行为一字不动（下限不越过上限、步长 0.1、手感不变），只换容器。
+    // 区间约束的纯逻辑在 ui/widgets/RangeLimits.h，由 tests/test_panel.cpp 覆盖。
+    auto* secZ = new CollapsibleSection(tr("Z 轴范围控制"), side);
 
-    ckZFilter_ = new QCheckBox(tr("启用Z轴过滤"), zFilterBox);
+    ckZFilter_ = new QCheckBox(tr("启用 Z 轴过滤"), secZ->content());
     ckZFilter_->setChecked(false);
 
     // 双滑块
-    dualSlider_ = new DualRangeSlider(zFilterBox);
+    dualSlider_ = new DualRangeSlider(secZ->content());
     dualSlider_->setRange(-1.0, 5.0);  // 设置范围-1~5m
     dualSlider_->setValues(-1.0, 2.0);  // 初始值
     dualSlider_->setMinimumHeight(60);
+    // 读数带上单位：两个手柄下面原先只有「-1.0」「2.0」，读不出量纲。
+    // 单位属于**调用方的语义**，所以由这里给，控件本身不假设是米。
+    dualSlider_->setValueSuffix(QStringLiteral(" m"));
+
+    // 单位说明单独一行：滑块上的后缀是贴在数字后面的，字很小、挤在刻度边上，
+    // 侧边栏再窄一点还会被夹到控件边界内。这一行把「米」和「这段区间管什么」说完整。
+    auto* labZUnit = new QLabel(tr("单位：米（m），只显示高度在区间内的点云"), secZ->content());
+    labZUnit->setWordWrap(true);
+    labZUnit->setProperty("role", QStringLiteral("note"));   // 弱文字：说明而已，不是读数
 
     // 布局 - 只保留启用按钮和双滑块
-    auto* zFilterLay = new QVBoxLayout(zFilterBox);
-    zFilterLay->addWidget(ckZFilter_);
-    zFilterLay->addWidget(dualSlider_);
-    zFilterLay->addStretch();
-    // ---------- 操作说明 ----------
-    auto* instBox = new QGroupBox(tr("操作说明"), side);
+    secZ->bodyLayout()->addWidget(ckZFilter_);
+    secZ->bodyLayout()->addWidget(dualSlider_);
+    secZ->bodyLayout()->addWidget(labZUnit);
+
+    // ---------- 6 操作按钮 ----------
+    auto* secActions = new CollapsibleSection(tr("操作按钮"), side);
+    auto* actionsBody = secActions->content();
+    auto* btnClear = new QPushButton(tr("清理地图"), actionsBody);
+    auto* btnReset = new QPushButton(tr("初始化相机"), actionsBody);
+    btnSave_ = new QPushButton(tr("保存地图"), actionsBody);
+    btnSave_->setEnabled(false);   // 初始不可点，连上链路后由 setLinkConnected() 打开
+
+    // 紧挨着「保存地图」：两者都是模块侧地图文件的操作，门禁也共用同一条
+    btnDownload_ = new QPushButton(tr("下载地图"), actionsBody);
+    btnDownload_->setEnabled(false);
+
+    // 两列两行（原型同一个排法）：四个按钮原先是竖着一列，占了四行的高度，
+    // 而它们彼此之间没有先后顺序，两列正好把这一块压掉一半。
+    auto* actionsLay = new QGridLayout;
+    actionsLay->setHorizontalSpacing(Theme::Metric::GapSm);
+    actionsLay->setVerticalSpacing(Theme::Metric::GapSm);
+    actionsLay->addWidget(btnClear,       0, 0);
+    actionsLay->addWidget(btnReset,       0, 1);
+    actionsLay->addWidget(btnSave_,       1, 0);
+    actionsLay->addWidget(btnDownload_,   1, 1);   // 紧邻「保存地图」
+    actionsLay->setColumnStretch(0, 1);
+    actionsLay->setColumnStretch(1, 1);
+    secActions->bodyLayout()->addLayout(actionsLay);
+
+    // ---------- 7 操作说明 ----------
+    // 字号在全局 QSS 的 QLabel#instructions 里（@font-size-hint = 11px）：
+    // 原先这行写死 18px，是整块面板里最刺眼的粗陋点 —— 它是最不需要抢眼的文字。
+    auto* secInst = new CollapsibleSection(tr("操作说明"), side);
     auto* labInstructions = new QLabel(
         tr("1. 左键旋转视角<br>2. 右键移动视角<br>3. 滚轮缩放"),
-        instBox);
+        secInst->content());
     labInstructions->setWordWrap(true);
-    labInstructions->setStyleSheet("QLabel { font-size: 18px; }");
-
-    auto* instLay = new QVBoxLayout(instBox);
-    instLay->addWidget(labInstructions);
-    instLay->addStretch();
-
-
-    // 更新侧边栏布局，将zFilterBox添加到cloudBox之后：
+    labInstructions->setObjectName(QStringLiteral("instructions"));
+    secInst->bodyLayout()->addWidget(labInstructions);
+    // 默认收起：它是「看过一次就不用再看」的备注，不该在默认视图里占掉三行。
+    secInst->setCollapsed(true);
+    // ---------- 侧边栏布局：七组，顺序即面板上的顺序 ----------
+    // 分组之间不再另加 spacing：每组自带 1px 分隔线 + 底部留白，再叠 10px 会显得太碎。
     auto* sideLay = new QVBoxLayout(side);
-    sideLay->addWidget(tfBox);
-    sideLay->addWidget(originBox_);  // 开机点：与「机器人坐标」同类读数，紧挨着它（工单 09）
-    sideLay->addSpacing(10);
-    sideLay->addWidget(targetBox);   // <--- 加入目标面板
-    sideLay->addSpacing(10);
-    // sideLay->addWidget(rotBox);
-    // sideLay->addSpacing(10);
-    sideLay->addWidget(cloudBox);
-    sideLay->addSpacing(10);
-    sideLay->addWidget(zFilterBox);  // 新增的Z轴范围控制
-    sideLay->addSpacing(10);
-    sideLay->addWidget(controlBox);
-    sideLay->addSpacing(10);
-    sideLay->addWidget(instBox);
-    sideLay->addSpacing(10);
+    sideLay->setContentsMargins(0, 0, 0, 0);
+    sideLay->setSpacing(0);
+    sideLay->addWidget(secCoords);
+    sideLay->addWidget(originSection_);   // 开机点：与「机器人坐标」同类读数，紧挨着它（工单 09）
+    sideLay->addWidget(secTarget);
+    sideLay->addWidget(secCloud);
+    sideLay->addWidget(secZ);
+    sideLay->addWidget(secActions);
+    sideLay->addWidget(secInst);
     sideLay->addStretch(1);
 
-    // ---------- 将侧边栏放入滚动区域 ----------
-    auto* scrollArea = new QScrollArea(this);
+    // ---------- 展开态：把侧边栏放入滚动区域 ----------
+    // 父对象不在这里给：它马上要交给 PanelHost 的栈（两态共用同一个位置，切态只换页）。
+    auto* scrollArea = new QScrollArea;
     scrollArea->setWidget(side);
     scrollArea->setWidgetResizable(true);  // 允许内容自适应宽度
     scrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);  // 禁用横向滚动
     scrollArea->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);     // 需要时显示纵向滚动
-    // 不再写死宽度：初始宽度由分隔条的 setSizes 给，之后由用户拖；下限要容下滚动条本身
-    scrollArea->setMinimumWidth(240);
+    // 展开态的下限：容得下滚动条本身。收起态与它无关 —— 那时候整页换成窄条，
+    // 面板的最小宽度由 PanelHost 自己降回 26px（这就是「收起态不再被拦住」的来路）。
+    scrollArea->setMinimumWidth(PanelWidth::kMinExpanded);
+
+    // ---------- 面板两态容器（工单 09）----------
+    // 展开 = 上面那个滚动区；收起 = 26px 窄条（竖排「属性面板」）。
+    // 收起/展开用**同一个**把手，它挂在「同时盖住视口与面板」的这一层（本页）上 ——
+    // 见 PanelHost::setToggleLayer 里的说明（Qt 会把子控件裁到父控件矩形内）。
+    panelHost_ = new PanelHost(this);
+    panelHost_->setExpandedContent(scrollArea);
 
     // ---------- 主布局 ----------
     // 左右之间用分隔条：拖它就能把「机器人坐标 / 目标点指引」这块调宽或调窄。
     // 窗口整体缩放时多出来的空间全给画布（stretch 0 = 1 / 1 = 0），侧边栏保持用户拖出来的宽度。
-    auto* splitter = new QSplitter(Qt::Horizontal, this);
-    splitter->setChildrenCollapsible(false);   // 不允许把任一侧拖到完全消失
-    splitter->setHandleWidth(6);
-    splitter->setStyleSheet(
-        "QSplitter::handle:horizontal { background-color: #c8c8c8; }"
-        "QSplitter::handle:horizontal:hover { background-color: #8ab4f8; }");
-    gl_->setMinimumWidth(240);   // 画布也留个下限，别让人把它拖成一条缝
-    splitter->addWidget(gl_);
-    splitter->addWidget(scrollArea);
-    splitter->setStretchFactor(0, 1);
-    splitter->setStretchFactor(1, 0);
-    splitter->setSizes(QList<int>() << 700 << 300);   // 初始：侧边栏约 300，与改动前一致
+    splitter_ = new QSplitter(Qt::Horizontal, this);
+    // 不允许拖到宽度 0：收起态给的是 26px 窄条，比 0 大，所以这条不会跟收起打架。
+    splitter_->setChildrenCollapsible(false);
+    // 分隔条外观在全局 QSS 的 QSplitter::handle 里（平时透明、悬停淡淡一层强调色）。
+    splitter_->setHandleWidth(PanelWidth::kHandle);
+    gl_->setMinimumWidth(PanelWidth::kMinViewport);   // 画布也留个下限，别让人把它拖成一条缝
+    splitter_->addWidget(gl_);
+    splitter_->addWidget(panelHost_);
+    panelHost_->setToggleLayer(this);   // 把手挂到本页上（唯一能容下「压在视口上那半」的一层）
+    splitter_->setStretchFactor(0, 1);
+    splitter_->setStretchFactor(1, 0);
+    // 初始：侧边栏 296（原型值），与改动前的 300 是同一个观感
+    splitter_->setSizes(QList<int>()
+                        << 700 << PanelWidth::kDefaultExpanded);
 
-    // setSizes 给的绝对值会被 QSplitter 按「当时还没量出来的宽度」等比缩放（1000 -> 实际宽度），
-    // 所以等第一次布局跑完再钉一次 300，启动时的观感才和改动前一样；之后拖过就归用户了。
-    QTimer::singleShot(0, splitter, [splitter]() {
-        if (splitter->width() <= 340) return;   // 还没排出来（宽度为 0 或太窄），就维持等比那版
-        splitter->setSizes(QList<int>() << splitter->width() - 300 << 300);
+    // 收起/展开之后重排分裂器（把手宽度、两段宽度都在 applyPanelLayout 里定）
+    connect(panelHost_, &PanelHost::collapsedChanged, this, [this](bool) { applyPanelLayout(); });
+
+    // 用户拖过分隔条就记下宽度：下次展开回到这里，而不是回到出厂默认值。
+    // 只在展开态记 —— 收起态的 26px 不是用户的意愿（PanelWidth::remember 里也挡了一道）。
+    connect(splitter_, &QSplitter::splitterMoved, this, [this](int, int) {
+        if (panelHost_ && !panelHost_->isCollapsed())
+            panelHost_->rememberExpandedWidth(splitter_->sizes().value(1));
     });
 
+    // setSizes 给的绝对值会被 QSplitter 按「当时还没量出来的宽度」等比缩放（1000 -> 实际宽度），
+    // 所以等第一次布局跑完再钉一次 296，启动时的观感才和改动前一样；之后拖过就归用户了。
+    //
+    // 与收起的冲突（工单 09）在这一行解决：**只做一次**，且只在展开态做 ——
+    // 收起态直接跳过，否则窄条会在启动几十毫秒后被顶回 296。
+    QTimer::singleShot(0, this, [this]() {
+        if (panelPinned_)
+            return;
+        panelPinned_ = true;
+
+        if (!panelHost_ || !splitter_ || panelHost_->isCollapsed())
+            return;
+
+        const int panel = panelHost_->preferredWidth();
+        // 还没排出来（宽度为 0）或容器太窄：维持等比那版，不硬钉
+        if (!PanelWidth::canPin(splitter_->width(), panel))
+            return;
+
+        splitter_->setSizes(PanelWidth::splitSizes(splitter_->width(), panel, PanelWidth::kHandle));
+    });
+
+    // 左侧留一条页面底色（@bg）的边距：画布不再顶到窗口左缘。
+    // 原先这里是 0 —— 深色视口与窗口左边框重合，那一条看起来就成了「画布自己」。
+    // 取 Gap（12）与命令栏 / 状态栏自身的内边距同值，画布左缘正好压在两条栏
+    // 内容的同一条竖线上；右边与上下三边不动（仍是满幅，右边由右面板接着）。
     auto* mainLay = new QHBoxLayout(this);
-    mainLay->setContentsMargins(0,0,0,0);
-    mainLay->addWidget(splitter);
+    mainLay->setContentsMargins(Theme::Metric::Gap, 0, 0, 0);
+    mainLay->addWidget(splitter_);
+
+    // ---------- 浮层收尾（工单 10）----------
+    // 摆一次位置（此刻视口可能还没量出来，摆出来的只是初值），然后把两者抬到 GL 之上。
+    // **raise() 只在这里调一次**：之后的位置变化只需 move()，不用每帧去动 z 序
+    // （spec 实现决策 18）。点数定时器也在这里起步 —— 界面已经接好了。
+    relayoutOverlays();
+    bar_->raise();
+    capsule_->raise();
+    pointsTimer_->start();
 
     // ---------- 连接原有按钮 ----------
     connect(btnClear, &QPushButton::clicked, gl_, &GLWidget::clearMap);
@@ -328,31 +492,11 @@ Ros3DPage::Ros3DPage(QWidget* parent)
     // 发送方与等待方同处一地），这里只发一个信号
     connect(btnDownload_, &QPushButton::clicked, this, [this](){ emit downloadMapRequested(); });
 
-    // ---------- 长按连发定时器 ----------
-    // auto* repeatTimer = new QTimer(this);
-    // repeatTimer->setInterval(200);          // 200 ms 连发间隔
-    // repeatTimer->setSingleShot(false);
-
-    // auto connectRepeat = [&](QPushButton* btn, int yawDelta, int pitchDelta){
-    //     connect(btn, &QPushButton::pressed, this, [=](){
-    //         gl_->addYaw(yawDelta);
-    //         gl_->addPitch(pitchDelta);
-    //         repeatTimer->disconnect();
-    //         connect(repeatTimer, &QTimer::timeout, this, [=](){
-    //             gl_->addYaw(yawDelta);
-    //             gl_->addPitch(pitchDelta);
-    //         });
-    //         repeatTimer->start();
-    //     });
-    //     connect(btn, &QPushButton::released, this, [repeatTimer](){
-    //         repeatTimer->stop();
-    //     });
-    // };
-
-    // connectRepeat(yawLeft,   -5, 0);
-    // connectRepeat(yawRight,  +5, 0);
-    // connectRepeat(pitchUp,    0, -5);
-    // connectRepeat(pitchDown,  0, +5);
+    // ---------- 长按连发定时器：已删除（工单 10）----------
+    // 原来这里是给面板里那组「视角旋转」按钮做的连发逻辑。那组按钮已经被视口底部的
+    // 悬浮条取代，而悬浮条按 spec 的定案**只做「点一下 15°」、不做连发也不做拖拽**
+    // —— 连发会和「在按钮上按下再拖」抢手势，把本该交给画布的拖动吃掉。
+    // 要连点几下微调，鼠标连点几下就够了。
 
     // ---------- TF 显示更新 ----------
     connect(gl_, &GLWidget::tfInfoChanged, this,
@@ -365,13 +509,21 @@ Ros3DPage::Ros3DPage(QWidget* parent)
                 labYaw_->setText(QString::number(yaw)   + "°");
                 labPitch_->setText(QString::number(pitch) + "°");
                 labRoll_->setText(QString::number(roll)  + "°");
+
+                // 「Z = 当前机器人高度」：高度就从这一路位姿帧来（与上面那个 z 是同一个数，
+                // 不另开数据源）。勾着的时候把框里的显示也顶过去 —— 框已置灰，
+                // 但读数必须跟着走，否则操作员看到的 Z 和真正会发出去的 Z 是两个数。
+                robotZ_    = z;
+                hasRobotZ_ = true;
+                if (ckNavZFollow_->isChecked()) {
+                    const QSignalBlocker blocker(spinNavZ_);
+                    spinNavZ_->setValue(z);
+                }
             });
 
-    // 2D 扫描「为什么不画」的说明（工单 07）：gl_ 与本页同在主线程，直连即可
-    // （跨线程的那几条才用 QueuedConnection，见 mainwindow.cpp）。
-    connect(gl_, &GLWidget::scan2DNoteChanged, this, &Ros3DPage::onScan2DNoteChanged);
-
     // 开机点（工单 09）：同上，文案与数值都由 gl_ 算好，这里只摆出来。
+    // （2D 扫描「为什么不画」那条说明在工单 08 里删了：GLWidget 仍会发 scan2DNoteChanged，
+    //   但界面不再有接收者 —— 那是内部自动判定的结果，摆出来只会像「界面坏了」。）
     connect(gl_, &GLWidget::originMarkerChanged,
             this, &Ros3DPage::onOriginMarkerChanged);
 
@@ -435,6 +587,85 @@ Ros3DPage::Ros3DPage(QWidget* parent)
     connect(spinNavY_, valueChangedSignal, this, &Ros3DPage::onNavSpinBoxChanged);
     connect(spinNavZ_, valueChangedSignal, this, &Ros3DPage::onNavSpinBoxChanged);
     connect(spinNavYaw_, valueChangedSignal, this, &Ros3DPage::onNavSpinBoxChanged);
+}
+
+// ---------------------------------------------------------------- 视口浮层（工单 10）
+
+// 两个浮层的位置都在这里算：**不在 GLWidget 的 resizeEvent 里做**（那是渲染路径，
+// 本次改造一行不动），而是在外面按视口几何换算，换算式是各自类里的纯函数。
+//
+// 为什么要两个入口：
+//   * 本页 resize —— 窗口缩放、页切换，视口跟着变。这条也是 spec 指定的落点。
+//   * gl_ 的 resize —— **拖分隔条**时视口变宽变窄，但本页尺寸不变，本页的 resizeEvent
+//     根本不会来。少了这一条，拖动分隔条时悬浮条会一直停在旧的中心位置上。
+void Ros3DPage::relayoutOverlays()
+{
+    if (!bar_ || !capsule_)
+        return;
+
+    // 父对象是 gl_，所以视口坐标系就是父控件坐标系，不需要 mapTo / geometry 偏移
+    const QSize viewport = gl_->size();
+    bar_->move(FloatingBar::placeRect(viewport, bar_->size()).topLeft());
+    capsule_->move(PointsCapsule::placeRect(viewport, capsule_->size()).topLeft());
+}
+
+void Ros3DPage::resizeEvent(QResizeEvent *e)
+{
+    QWidget::resizeEvent(e);
+    relayoutOverlays();
+}
+
+// ---------------------------------------------------------------- 面板两态（工单 09）
+
+// 收起/展开之后重排分裂器。就两件事：
+//
+//   1) **把手宽度**：收起态必须真的收到 0，否则窄条左边会多出一条 6px 的缝（硬约束）。
+//      这件事要**两处一起做**，少一处都不行（两处都实测过）：
+//        a. `setHandleWidth(0)` —— QSplitter 内部按它给把手留位置；
+//        b. 对把手本体 `setFixedWidth(0)` —— 只做 a 的话，全局 QSS 里
+//           `QSplitter::handle:horizontal { width: 6px }` 会把把手撑回来（实测还剩 4px）。
+//      只做 b 的话，QSplitter 仍按 handleWidth()=6 算可用宽度，setSizes 会被等比缩掉
+//      那 6px —— 表现为窄条左边一条深色缝。展开时两处都要解回 6。
+//
+//   2) **两段宽度**：收起态给窄条（26），展开态给记住的那个宽度
+//      （纯换算在 PanelWidth::splitSizes，控制台测试直接跑那一个）。
+//
+// 换算式不在这里现算：这里只负责「问状态、下命令」，所以两态之间不会出现
+// 两套互相打架的宽度口径。
+void Ros3DPage::applyPanelLayout()
+{
+    if (!splitter_ || !panelHost_)
+        return;
+
+    const bool rail = panelHost_->isCollapsed();
+
+    if (QWidget* handle = splitter_->handle(1)) {
+        if (rail) {
+            handle->setFixedWidth(0);
+        } else {
+            handle->setMinimumWidth(0);              // 解开收起时那个 fixed
+            handle->setMaximumWidth(QWIDGETSIZE_MAX);
+        }
+    }
+    // 把手本体收成 0 还不够：QSplitter 内部仍按 handleWidth() 给把手留位置
+    // （两处不对齐的表现是 setSizes 被等比缩掉那 6px，窄条左边多出一条深色缝）。
+    splitter_->setHandleWidth(rail ? 0 : PanelWidth::kHandle);
+
+    const int avail = splitter_->width();
+    if (avail <= 0)
+        return;   // 还没排出来：首次显示那条 singleShot 会兜住
+
+    const int handle = rail ? 0 : PanelWidth::kHandle;
+    splitter_->setSizes(PanelWidth::splitSizes(avail, panelHost_->preferredWidth(), handle));
+}
+
+// 只旁听 gl_ 的尺寸变化，其余一律原样放行 —— 这不是「改 GLWidget 的 resizeEvent」，
+// GLWidget 的实现文件一个字节都不动，事件照旧先到它自己手里。
+bool Ros3DPage::eventFilter(QObject *watched, QEvent *e)
+{
+    if (watched == gl_ && e->type() == QEvent::Resize)
+        relayoutOverlays();
+    return QWidget::eventFilter(watched, e);
 }
 
 // 新增槽函数
@@ -506,6 +737,11 @@ void Ros3DPage::clearModuleState()
     for (QLabel* lab : tfLabels) {
         lab->setText(QStringLiteral("-"));
     }
+
+    // 「Z = 当前机器人高度」那份高度缓存同理作废：gl_ 那边 tf_.clear() 之后已经取不到高度了，
+    // 这里若还留着上一趟的数，勾选项看着像有来源，其实是个无处可查的旧值。
+    hasRobotZ_ = false;
+    robotZ_    = 0.0;
 
     // 3. 规划 / 重定位状态标签回到初始文案：它们显示的是「一包都没收到」，
     //    正是重启后的真实状态（模块要等听到上游自述才发状态帧）。
@@ -620,35 +856,17 @@ void Ros3DPage::onFrameNameRejected(quint8 frameNo, const QString& frameId, cons
     labFrameNameStatus_->show();
 }
 
-// 2D 扫描「为什么不画」（工单 07）。gl_ 与这里同在主线程，直连即可。
-//
-// 空串 = 正常（扫描正按最近一帧 `0x01` 摆着）：把标签收起来，别在侧边栏里留一句
-// 已经不成立的话。非空 = 把这句原因摆出来，免得操作员把「扫描没画」当成卡顿。
-// **不写日志**：位姿在 500 ms 边界上来回抖时这句话会跟着反复出现（见 glwidget 里
-// setScan2DNote 的说明），它描述的是当前状态、不是事件，留痕交给上面那个红状态位。
-void Ros3DPage::onScan2DNoteChanged(const QString &note)
-{
-    if (note.isEmpty()) {
-        labScan2DNote_->clear();
-        labScan2DNote_->hide();
-        return;
-    }
-
-    labScan2DNote_->setText(note);
-    labScan2DNote_->show();
-}
-
 // 开机点（工单 09）。文案与数值都由 GLWidget::publishOriginMarkerState() 算好
 // （判据**唯一**：`0x13` 说没说定位 + `0x02` 那条边到没到），这里只摆出来。
 //
 // `shown` = 画着：把三个数摆上、那句说明收掉。
 // 不画：**整块数值收起来**（`hide()`），不留一行占位 —— 「建图模式下不绘制该标记、
 // 也没有残留数值」这条因此是结构上成立的：数值跟着整块一起消失，不靠谁记得去清。
-// 为什么不显示那句话摆到「点云显示」那一块去（与 07 的扫描说明同一个位置）；
+// 为什么不显示那句话摆到「点云显示」那一块去；
 // 而「本会话还没读到过模式参数（0x13）」时那句话也是空的，两处都不显 —— 一趟还没开张，
 // 没有变故要说，界面上保持构造时的样子就是对的。
 //
-// **不写日志**（与 07 同一条规矩）：模式是用户点「读取参数」时才变的低频事，但
+// **不写日志**：模式是用户点「读取参数」时才变的低频事，但
 // 「还没收到过 0x02」在收到第一帧前一直成立，逐次记日志没有意义；它描述的是**当前状态**。
 void Ros3DPage::onOriginMarkerChanged(bool shown, const QString &note, double x, double y, double yawDeg)
 {
@@ -661,11 +879,15 @@ void Ros3DPage::onOriginMarkerChanged(bool shown, const QString &note, double x,
 
         labOriginNote_->clear();
         labOriginNote_->hide();
-        originBox_->show();
+        // 显形时**顺带展开**：用户的折叠选择在本次运行内算数，但「整块本来收着、
+        // 刚冒出来」那一刻只剩标题的话，等于让人再点一次才看得到数（工单 08）。
+        if (originSection_->isCollapsed())
+            originSection_->setCollapsed(false);
+        originSection_->show();
         return;
     }
 
-    originBox_->hide();
+    originSection_->hide();
 
     // 空 `note` = 「没话说」（还没读到过模式参数）：只把整块收起来，不留一句话。
     // 与上面「画着」那一路一样要走 clear()：'0x13' 从读出过到被忘掉（模块重启 / 重新连接）

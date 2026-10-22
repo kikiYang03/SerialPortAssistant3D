@@ -1,5 +1,6 @@
 ﻿#include "coordinate.h"
 #include "ui_coordinate.h"
+#include "Theme.h"     // 画布底色与网格/坐标轴的色值都从调色板来（工单 03）
 #include <QPainter>
 #include <QWheelEvent>
 #include <QtMath>
@@ -20,7 +21,12 @@ CanvasWidget::CanvasWidget(QWidget *parent)
 {
     setFrameStyle(QFrame::Box);
     setLineWidth(1);
-    setStyleSheet("background-color: white;");
+    // 底色不自己写（原来是行内的 "background-color: white;"）：走调色板，
+    // 换肤时画布跟着走；paintEvent 里填背景读的是同一份取值。
+    QPalette pal = palette();
+    pal.setColor(QPalette::Window, Theme::color(QStringLiteral("bg")));
+    setPalette(pal);
+    setAutoFillBackground(true);
     setMinimumSize(400, 400);
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
 
@@ -67,15 +73,17 @@ void CanvasWidget::paintEvent(QPaintEvent *event)
     int width = this->width();
     int height = this->height();
 
-    // 背景
-    painter.fillRect(0, 0, width, height, Qt::white);
+    // 背景：与上面 setPalette 的是同一份色值，改一处两边一起变
+    painter.fillRect(0, 0, width, height, palette().color(QPalette::Window));
 
     // 视图中心点（画布原点）
     int centerX = width / 2 + m_offset.x();
     int centerY = height / 2 + m_offset.y();
 
     // ---------------- 绘制网格 ----------------
-    painter.setPen(QPen(Qt::lightGray, 1, Qt::DotLine));
+    // 网格与坐标轴的颜色也从调色板取：原来写的是 Qt::lightGray / Qt::black，
+    // 换肤时这两处不会跟着变（工单 03）。
+    painter.setPen(QPen(Theme::color(QStringLiteral("line-strong")), 1, Qt::DotLine));
 
     double gridSize = 1.0; // 每格 1m
     int gridCount = 10;    // 共10格（±5m）
@@ -94,7 +102,7 @@ void CanvasWidget::paintEvent(QPaintEvent *event)
     // ---------------- 绘制坐标系原点（FLU） ----------------
     // FLU: F（前）- 屏幕上方, L（左）- 屏幕左方, U（上）暂不显示
     double axisLength = 1.0 * m_scale; // 1m 长度
-    QPen axisPen(Qt::black, 1); // 与网格线等粗
+    QPen axisPen(Theme::color(QStringLiteral("text-1")), 1); // 与网格线等粗
     painter.setPen(axisPen);
 
     // F轴（前 - 上方向，y减小）
@@ -106,7 +114,7 @@ void CanvasWidget::paintEvent(QPaintEvent *event)
                      QPointF(centerX - axisLength, centerY));
 
     // 绘制箭头
-    painter.setPen(QPen(Qt::black, 1.5));
+    painter.setPen(QPen(Theme::color(QStringLiteral("text-1")), 1.5));
     double arrowSize = 6;
 
     // F箭头

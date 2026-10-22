@@ -45,6 +45,11 @@ public:
 public slots:
     void updateParameter(quint8 paramIdRaw, qint16 value);
 
+    // 读取参数的请求入口（工单 06）：命令栏的「读取参数」按钮直接调这里，
+    // 与页内那颗「获取参数」按钮走**同一条**路径（数条数 → 写状态行 → 发
+    // readParamsRequested），不因为入口不同而有两套行为。
+    void requestRead();
+
     // 控制指令链路（TCP / UDP）状态：未连接（含只有串口）时「写入参数」不可点。
     // 与可视化页「保存地图」同一个信号源，两处门禁不会各说各话。
     void setLinkConnected(bool connected);

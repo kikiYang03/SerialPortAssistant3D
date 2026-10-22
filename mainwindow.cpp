@@ -3,17 +3,44 @@
 #include <QThread>
 #include <QInputDialog>
 #include <QLineEdit>
+#include <QMenu>       // 标题栏溢出菜单（管理员入口的宿主，工单 06）
 
 MainWindow::MainWindow(QWidget *parent)
-    : QMainWindow(parent)
+    : FramelessWindow(parent)
     , ui(new Ui::MainWindow)
 {
     ui->setupUi(this);
+
+    // 无边框外壳（工单 04）：标题栏挂在 QMainWindow::setMenuWidget() 上，
+    // centralWidget 布局与状态栏都不动。标题栏内容归 ui/shell/TitleBar（工单 05）：
+    // 品牌 + 版本 + 串口状态胶囊 + 三键 + 一个留给 06 的空溢出菜单。
+    titleBar = new TitleBar(this);
+    setTitleBar(titleBar);
+
+    // 底部状态栏（工单 07）：.ui 里那条空 QStatusBar 换成自绘两段版
+    // （串口 · 控制链路；TF 帧名那一段已按现场要求删除）。两段的数据源各一处 ——
+    // 串口来自 portStateChanged、控制链路来自 controlLinkTextChanged；本窗口只接线，
+    // 不在这里再算一遍任何一段的状态。
+    statusBarEx = new StatusBarEx(this);
+    setStatusBar(statusBarEx);
+
     // 实例化页面
     serialPort = new SerialPort;
     params = new Params;
     ros3dPage = new Ros3DPage;
     serialPort->setGLWidget(ros3dPage->glWidget());
+
+    // 标题栏胶囊订阅串口链路状态：与串口页自己的标签同一个信号源，
+    // 不会出现「页面说已连接、标题栏说未连接」（工单 05）。
+    connect(serialPort, &SerialPort::portStateChanged,
+            titleBar, &TitleBar::setPortState);
+
+    // 状态栏第一段同理：同一个信号、同一段文字（端口 · 波特率 · 状态）。
+    // 第二段订阅控制链路的那条文案信号，文案本身已经区分 TCP / UDP。
+    connect(serialPort, &SerialPort::portStateChanged,
+            statusBarEx, &StatusBarEx::setPortState);
+    connect(serialPort, &SerialPort::controlLinkTextChanged,
+            statusBarEx, &StatusBarEx::setControlLinkState);
 
 
     // 添加子页面
@@ -24,38 +51,40 @@ MainWindow::MainWindow(QWidget *parent)
     // 设置当前页面
     ui->stackedWidget->setCurrentWidget(serialPort);
 
-    // 隐藏菜单栏上的右击菜单
+    // 标题栏上不要系统右击菜单（外壳自己就是标题栏）
     this->setContextMenuPolicy(Qt::NoContextMenu);
 
-    // 创建基础顶部菜单并让其隐藏
-    QMenuBar *bar = menuBar();
-    this->setMenuBar(bar);
-    QMenu * fileMenu = bar->addMenu("Ptr");
+    // 命令栏（工单 06）：替掉菜单栏 + 工具栏。原来挂在工具栏上的三页切换变成左段
+    // 分段控件；右侧多了「读取参数」与「连接 / 断开设备」。命令栏只发请求，
+    // 堆栈、参数页、串口各自仍是自己那份逻辑的持有者。
+    CommandBar *cmdBar = ui->commandBar;
 
-    // 隐藏菜单
-    bar->setVisible(false);
+    // 页切换：命令栏点段 → 堆栈换页；反过来堆栈是权威，换到哪一页命令栏就显示哪一段。
+    // 两条连线的方向是单向的（activate → 堆栈 → currentChanged → 命令栏），不会绕成环。
+    connect(cmdBar, &CommandBar::pageSelected,
+            ui->stackedWidget, &QStackedWidget::setCurrentIndex);
+    connect(ui->stackedWidget, &QStackedWidget::currentChanged,
+            cmdBar, &CommandBar::setCurrentPage);
+    cmdBar->setCurrentPage(ui->stackedWidget->currentIndex());
 
-    // 添加子菜单
-    QAction *NewAction = fileMenu->addAction("连接设置");
-    QAction *ReadAction = fileMenu->addAction("参数设置");
-    QAction *Ros3DAction = fileMenu->addAction("可视化");
+    // 「读取参数」：直接复用参数页既有的读取入口（它自己数条数、自己写状态行），
+    // 命令栏不重复实现一遍 —— 也不必先切到参数页。
+    connect(cmdBar, &CommandBar::readParamsRequested,
+            params, &Params::requestRead);
 
-    // 创建工具栏
-    QToolBar *toolBar = new QToolBar(this);
-    addToolBar(Qt::TopToolBarArea,toolBar);
+    // 主按钮：开关串口的逻辑只有 SerialPort 那一份，命令栏只发一条「toggle」请求
+    connect(cmdBar, &CommandBar::toggleConnectionRequested,
+            serialPort, &SerialPort::togglePortConnection);
 
-    // 将菜单项依次添加到工具栏
-    toolBar->addAction(NewAction);
-    toolBar->addAction(ReadAction);
-    toolBar->addAction(Ros3DAction);
+    // 主按钮长什么样只由串口的真实状态决定（不在这里记一个本地布尔）
+    connect(serialPort, &SerialPort::portStateChanged, cmdBar,
+            [cmdBar](const QString &, bool connected) {
+                cmdBar->setPortConnected(connected);
+            });
 
-    // 设置禁止移动属性,工具栏默认贴在上方
-    toolBar->setFloatable(false);
-    toolBar->setMovable(false);
-    toolBar->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
-
-    // mainwindow.cpp 构造函数追加
-    QAction *adminLogin = new QAction("管理员登录/退出");
+    // 管理员入口迁移：原来挂在 QToolBar 上，现在挂进标题栏右上角的溢出菜单
+    // （05 预留的空菜单）。config.ini 的 Admin/enabled 判断与消息转发逻辑原样保留。
+    QAction *adminLogin = new QAction("管理员登录/退出", this);
     connect(adminLogin, &QAction::triggered, this, [](){
         if (AdminMode::instance().isAdmin()) {
             AdminMode::instance().logout();
@@ -70,8 +99,9 @@ MainWindow::MainWindow(QWidget *parent)
             serialPort, &SerialPort::appendMessage);
 
     // 管理者模式入口：由 config.ini 的 Admin/enabled 控制，false 时整条入口不显示
+    // （菜单里空着时标题栏那个溢出按钮也不显示，见 TitleBar::syncOverflowEntry）
     if (AdminMode::instance().isEnabled())
-        toolBar->addAction(adminLogin);
+        titleBar->overflowMenu()->addAction(adminLogin);
 
     //==========================================================
     // 1) 创建协议处理线程（ProtocolRouter + ProtocolRos3D 都在此线程）
@@ -149,17 +179,8 @@ MainWindow::MainWindow(QWidget *parent)
             ros3dPage, &Ros3DPage::onFrameNameRejected, Qt::QueuedConnection);
 
     // ----------------------------------------------------------
-    // 绑定槽函数——显示页面
+    // 页面切换的连线已在上面交给命令栏（工单 06）
     // ----------------------------------------------------------
-    connect(NewAction,&QAction::triggered,this,[=](){
-        ui->stackedWidget->setCurrentIndex(0);
-    });
-    connect(ReadAction,&QAction::triggered,this,[=](){
-        ui->stackedWidget->setCurrentIndex(1);
-    });
-    connect(Ros3DAction,&QAction::triggered,this,[=](){
-        ui->stackedWidget->setCurrentIndex(2);
-    });
 
     connect(serialPort, &SerialPort::tcpConnectionChanged,
             protocolHandler, &ProtocolRos3D::setLinkAlive);

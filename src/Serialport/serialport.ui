@@ -50,9 +50,6 @@
            <layout class="QHBoxLayout" name="horizontalLayout_16">
             <item>
              <widget class="QLabel" name="recvNum">
-              <property name="styleSheet">
-               <string notr="true">font: 10pt &quot;Microsoft YaHei UI&quot;;</string>
-              </property>
               <property name="text">
                <string>接收字节数量：0</string>
               </property>
@@ -126,9 +123,6 @@
            <layout class="QHBoxLayout" name="horizontalLayout_18">
             <item>
              <widget class="QLabel" name="sendNum">
-              <property name="styleSheet">
-               <string notr="true">font: 10pt &quot;Microsoft YaHei UI&quot;;</string>
-              </property>
               <property name="text">
                <string>发送字节数量：0</string>
               </property>

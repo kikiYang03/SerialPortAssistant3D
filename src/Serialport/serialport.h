@@ -98,8 +98,18 @@ public slots:
     // 与 3D 页 / 参数页的同名方法接的是同一个信号，本页只是追加了一路接收方。
     void setLinkConnected(bool connected);
 
+    // 命令栏主按钮的入口（工单 06）：按**真实连接状态**决定这一次是开还是关。
+    // 开/关的流程（判定、提示、定时器、门禁）仍然只有 on_portOpenBt_clicked 那一份，
+    // 命令栏不重写一遍串口逻辑，这里只是一条电话线。
+    void togglePortConnection();
+
 private slots:
     void onTestTimeout();
+    // 本页状态标签对 portStateChanged 的订阅端：文字与红/绿都只在这里落地
+    void applyPortState(const QString &text, bool ok);
+    // 本页「WiFi 状态」标签对 controlLinkTextChanged 的订阅端（工单 07）：
+    // 与状态栏第二段同一个数据源，本页不再直接 setText / setState 那个标签
+    void applyControlLinkState(const QString &text, bool ok);
     void onSaveMapTimeout();
     void onSaveParamsTimeout();
     void onReadParamsTimeout();      // 读取参数超时：没在窗口内收齐参数表条数
@@ -302,6 +312,12 @@ signals:
     // 与测试按钮在串口模式下被禁用是同一条规矩。
     void controlLinkStateChanged(bool connected);
 
+    // 控制链路状态的**显示文案**（工单 07）：与上面那条门禁信号在同样的位置发出，
+    // 但带文字（"TCP 已连接" / "UDP 已连接" / "尝试自动重连" / "未连接"）。
+    // 门禁只要布尔，状态栏第二段要文案 —— 本页标签与状态栏都订阅这一条，
+    // 谁都不再自己去推「现在走的是 TCP 还是 UDP」（双写就会出现两处说法不一致）。
+    void controlLinkTextChanged(const QString &text, bool ok);
+
     // 保存参数等待期间：为真时参数页不拿模块回读值刷界面（回读只喂本页的比对器）
     void paramEchoSuppressedChanged(bool suppressed);
 
@@ -320,6 +336,12 @@ signals:
     // 状态标签与跳变锁存（工单 02）。**只在成功时发** —— 超时失败路径不发，那时模块
     // 很可能根本没重启，界面上的数据依然有效，清掉就是毁掉还在用的东西。
     void restartSucceeded();
+
+    // 串口链路状态（工单 05）：text 是本页那行状态文字（"COM3 串口已打开" 之类），
+    // ok = 这条链路现在是通的。**本页的状态标签与标题栏的胶囊都订阅它** ——
+    // 从此只有一个数据源，不会出现「页面说已连接、标题栏说未连接」。
+    // 构造末尾会发一次初值，避免启动到第一次连接之间两处都是空的。
+    void portStateChanged(const QString &text, bool ok);
 
 };
 

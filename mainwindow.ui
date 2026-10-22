@@ -18,24 +18,39 @@
     <normaloff>:/images/logo256.ico</normaloff>:/images/logo256.ico</iconset>
   </property>
   <widget class="QWidget" name="centralwidget">
-   <layout class="QHBoxLayout" name="horizontalLayout">
+   <layout class="QVBoxLayout" name="verticalLayout">
+    <property name="spacing">
+     <number>0</number>
+    </property>
+    <property name="leftMargin">
+     <number>0</number>
+    </property>
+    <property name="topMargin">
+     <number>0</number>
+    </property>
+    <property name="rightMargin">
+     <number>0</number>
+    </property>
+    <property name="bottomMargin">
+     <number>0</number>
+    </property>
+    <item>
+     <widget class="CommandBar" name="commandBar"/>
+    </item>
     <item>
      <widget class="QStackedWidget" name="stackedWidget"/>
     </item>
    </layout>
   </widget>
-  <widget class="QStatusBar" name="statusbar"/>
-  <widget class="QMenuBar" name="menubar">
-   <property name="geometry">
-    <rect>
-     <x>0</x>
-     <y>0</y>
-     <width>991</width>
-     <height>25</height>
-    </rect>
-   </property>
-  </widget>
  </widget>
+ <customwidgets>
+  <customwidget>
+   <class>CommandBar</class>
+   <extends>QWidget</extends>
+   <header>CommandBar.h</header>
+   <container>0</container>
+  </customwidget>
+ </customwidgets>
  <resources>
   <include location="resource.qrc"/>
  </resources>

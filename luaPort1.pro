@@ -1,4 +1,5 @@
-QT += core gui serialport network opengl widgets
+# svg：图标运行时着色（ui/style/IconTint 用 QSvgRenderer 把 currentColor 换色后渲染）
+QT += core gui serialport network opengl widgets svg
 
 greaterThan(QT_MAJOR_VERSION, 4): QT += widgets
 
@@ -20,6 +21,10 @@ INCLUDEPATH += $$PWD/utils/tcp
 INCLUDEPATH += $$PWD/utils/protocol
 INCLUDEPATH += $$PWD/thirds/Eigen
 INCLUDEPATH += $$PWD/ui
+INCLUDEPATH += $$PWD/ui/style
+INCLUDEPATH += $$PWD/ui/frameless
+INCLUDEPATH += $$PWD/ui/shell
+INCLUDEPATH += $$PWD/ui/widgets
 INCLUDEPATH += $$PWD/admins
 
 SOURCES += \
@@ -32,6 +37,20 @@ SOURCES += \
     src/Params/params.cpp \
     src/Serialport/serialport.cpp \
     ui/dualrangeslider.cpp \
+    ui/frameless/FramelessHelper.cpp \
+    ui/frameless/FramelessWindow.cpp \
+    ui/frameless/WindowGeometry.cpp \
+    ui/style/IconTint.cpp \
+    ui/style/Theme.cpp \
+    ui/widgets/IconButton.cpp \
+    ui/widgets/CollapsibleSection.cpp \
+    ui/widgets/FloatingBar.cpp \
+    ui/widgets/PanelRail.cpp \
+    ui/widgets/PointsCapsule.cpp \
+    ui/widgets/SegmentedControl.cpp \
+    ui/shell/CommandBar.cpp \
+    ui/shell/StatusBarEx.cpp \
+    ui/shell/TitleBar.cpp \
     ui/waitdialog.cpp \
     utils/protocol/maparchive.cpp \
     utils/protocol/protocolros3d.cpp \
@@ -50,6 +69,21 @@ HEADERS += \
     src/Serialport/serialport.h \
     stdafx.h \
     ui/dualrangeslider.h \
+    ui/frameless/FramelessHelper.h \
+    ui/frameless/FramelessWindow.h \
+    ui/frameless/WindowGeometry.h \
+    ui/style/IconTint.h \
+    ui/style/Theme.h \
+    ui/widgets/IconButton.h \
+    ui/widgets/CollapsibleSection.h \
+    ui/widgets/RangeLimits.h \
+    ui/widgets/FloatingBar.h \
+    ui/widgets/PanelRail.h \
+    ui/widgets/PointsCapsule.h \
+    ui/widgets/SegmentedControl.h \
+    ui/shell/CommandBar.h \
+    ui/shell/StatusBarEx.h \
+    ui/shell/TitleBar.h \
     ui/waitdialog.h \
     utils/protocol/maparchive.h \
     utils/protocol/protocol_msg.h \
@@ -74,7 +108,9 @@ else: unix:!android: target.path = /opt/$${TARGET}/bin
 !isEmpty(target.path): INSTALLS += target
 
 RESOURCES += \
-    resource.qrc
+    resource.qrc \
+    resource/style/style.qrc \
+    resource/icons/icons.qrc
 
 CONFIG += file_copies
 COPIES += ini
@@ -88,6 +124,11 @@ ini.path   = $$OUT_PWD
 # win32:LIBS += -lopengl32
 win32 {
     LIBS += -lopengl32
+    # 无边框窗口（ui/frameless）：Win32 命中测试与窗口度量。
+    # 我们自己的目标文件里直接调 user32，MSVC 链接期不会从 Qt 的 DLL 里「传递」到这些导入库。
+    LIBS += -luser32
+    # DwmSetWindowAttribute 设 Win11 圆角偏好
+    LIBS += -ldwmapi
 } else {
     LIBS += -lGL
 }

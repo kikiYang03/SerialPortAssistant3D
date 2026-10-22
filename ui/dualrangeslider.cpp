@@ -1,5 +1,7 @@
 ﻿#include "dualrangeslider.h"
+#include "RangeLimits.h"
 #include <QPainter>
+#include <QFontMetrics>
 #include <QMouseEvent>
 #include <QDebug>
 #include <cmath>
@@ -27,16 +29,21 @@ void DualRangeSlider::setRange(double min, double max)
 
 void DualRangeSlider::setValues(double lower, double upper)
 {
-    m_lowerValue = std::max(m_min, std::min(lower, m_max));
-    m_upperValue = std::max(m_min, std::min(upper, m_max));
-
-    // 确保 lower <= upper
-    if (m_lowerValue > m_upperValue) {
-        std::swap(m_lowerValue, m_upperValue);
-    }
+    // 夹范围 + 反了就调头：这一段是纯逻辑，搬到 RangeLimits 里单独测（工单 08）
+    const RangeLimits::Interval v = RangeLimits::normalize(lower, upper, m_min, m_max);
+    m_lowerValue = v.lower;
+    m_upperValue = v.upper;
 
     updateHandleRects();
     update();
+}
+
+void DualRangeSlider::setValueSuffix(const QString& suffix)
+{
+    if (m_suffix == suffix)
+        return;
+    m_suffix = suffix;
+    update();   // 只是文字变了，手柄位置不用重算
 }
 
 int DualRangeSlider::valueToPos(double value) const
@@ -98,12 +105,21 @@ void DualRangeSlider::paintEvent(QPaintEvent* event)
     font.setPointSize(8);
     painter.setFont(font);
 
-    QString lowerText = QString::number(m_lowerValue, 'f', 1);
-    QString upperText = QString::number(m_upperValue, 'f', 1);
-
-    int textY = height() - 5;   // 距离底边 5 px
-    painter.drawText(m_lowerHandle.center().x() - 10, textY, lowerText);
-    painter.drawText(m_upperHandle.center().x() - 10, textY, upperText);
+    // 以手柄为中心、贴到控件两端时向内收：原先固定写 center.x() - 10，
+    // 左边那个手柄停在最左时，「-1.0」的负号会被裁到控件外面，读数看起来成了「1.0」
+    // —— 一个显示**相反数**的读数比不显示更糟（工单 08 顺手修）。
+    const QFontMetrics fm(font);
+    const int textY = height() - 5;
+    const auto drawValue = [&](int handleCenterX, double value) {
+        // 带上单位（" m"）：文本框里只有「-1.0」「2.0」时，读不出这个数是米、是度还是格。
+        const QString text = QString::number(value, 'f', 1) + m_suffix;
+        const int textW = fm.horizontalAdvance(text);
+        int x = handleCenterX - textW / 2;
+        x = std::max(0, std::min(x, width() - textW));
+        painter.drawText(x, textY, text);
+    };
+    drawValue(m_lowerHandle.center().x(), m_lowerValue);
+    drawValue(m_upperHandle.center().x(), m_upperValue);
 }
 
 void DualRangeSlider::mousePressEvent(QMouseEvent* event)
@@ -136,15 +152,17 @@ void DualRangeSlider::mouseMoveEvent(QMouseEvent* event)
         return;
     }
 
-    double newValue = posToValue(event->pos().x());
+    // 值到哪儿为止由 RangeLimits 决定（下限不得越过上限、越界被夹住、留 0.1 的间距），
+    // 这里只负责把鼠标 x 换成一个数值、把结果重画出来 —— 工单 08 把这段约束搬出去，
+    // 是为了它能进控制台测试；手感与原来逐字一致（原来就是三行 min/max）。
+    const double requested = posToValue(event->pos().x());
+    const RangeLimits::Interval current{m_lowerValue, m_upperValue};
+    const RangeLimits::Interval next =
+        m_draggingLower ? RangeLimits::dragLower(requested, current, m_min, m_max)
+                        : RangeLimits::dragUpper(requested, current, m_min, m_max);
 
-    if (m_draggingLower) {
-        // 限制不能超过upper
-        m_lowerValue = std::min(newValue, m_upperValue - 0.1);
-    } else if (m_draggingUpper) {
-        // 限制不能低于lower
-        m_upperValue = std::max(newValue, m_lowerValue + 0.1);
-    }
+    m_lowerValue = next.lower;
+    m_upperValue = next.upper;
 
     updateHandleRects();
     update();

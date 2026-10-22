@@ -1,0 +1,5 @@
+<!-- Lucide "x" (ISC, https://lucide.dev) — 只取路径数据，stroke/fill 全用 currentColor，由 IconTint 运行时换色 -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M18 6 6 18" />
+  <path d="m6 6 12 12" />
+</svg>

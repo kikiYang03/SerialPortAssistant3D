@@ -15,6 +15,11 @@ public:
 
     void setRange(double min, double max);
     void setValues(double lower, double upper);
+
+    // 画在两端手柄下面的**单位后缀**（例如 " m"）。零长度 = 只画数字（旧观感）。
+    // 数字本身只保留一位小数，光看「-1.0」「2.0」读不出量纲 —— 由调用方决定挂什么单位，
+    // 本控件不假设它是米。
+    void setValueSuffix(const QString& suffix);
     double lowerValue() const { return m_lowerValue; }
     double upperValue() const { return m_upperValue; }
 
@@ -33,6 +38,7 @@ private:
     double m_max = 20.0;
     double m_lowerValue = -5.0;
     double m_upperValue = 5.0;
+    QString m_suffix;   // 读数后缀（单位），见 setValueSuffix()
     int m_sliderWidth = 200;
     int m_sliderHeight = 30;
     bool m_draggingLower = false;

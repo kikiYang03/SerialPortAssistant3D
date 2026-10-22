@@ -6,6 +6,7 @@
 #include <QTimer>      // 折叠后延后一趟重摆 cell widget（见 refreshTableLayout）
 #include <QDebug>
 #include <adminmode.h>
+#include "Theme.h"     // 状态行着色：setState 只写属性，颜色在全局 QSS 里定（工单 03）
 
 // 参数值那一列的列号（输入控件都挂在这一列上，折叠时要连它们一起藏）
 namespace {
@@ -103,38 +104,16 @@ void Params::setupTable()
     ui->tableWidget->setWordWrap(true);
     ui->tableWidget->setTextElideMode(Qt::ElideNone);
 
-    // 关键：设置行高自适应且紧凑
+    // 行高不钉数字：单元格的内边距在全局 QSS 里（QTableWidget::item 的 padding），
+    // 配合这里的 ResizeToContents 由内容（含换行）自己撑出来。原先写死的 20px 是配着
+    // 本页那段 font-size:20px 的局部样式用的——那段已经删了（工单 03）。
     ui->tableWidget->verticalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
-    ui->tableWidget->verticalHeader()->setDefaultSectionSize(20); // 设置默认行高
-    ui->tableWidget->verticalHeader()->setMinimumSectionSize(20); // 最小行高
 
     // 设置第一列居中对齐
     ui->tableWidget->horizontalHeader()->setDefaultAlignment(Qt::AlignCenter);
 
-    // 设置支持换行的样式
-    ui->tableWidget->setStyleSheet(
-        "QTableWidget {"
-        "    gridline-color: #d0d0d0;"
-        "    selection-background-color: #cde6f7;"
-        "    alternate-background-color: #fafafa;"
-        "    background-color: #ffffff;"
-        "    font-size: 20px;"
-        "}"
-        "QTableWidget::item {"
-        "    padding: 1px 2px;"
-        "    border: none;"
-        "}"
-        "QTableWidget::item:selected {"
-        "    background-color: #cde6f7;"
-        "}"
-        "QHeaderView::section {"
-        "    background-color: #f0f0f0;"
-        "    padding: 4px;"
-        "    border: 1px solid #d0d0d0;"
-        "    font-weight: bold;"
-        "}"
-        );
-
+    // 表格本身的外观（表头 / 行高 / 选中色 / 网格线）全在 resource/style/app.qss.in。
+    // 这里不再 setStyleSheet：同一件事两处定义，改一处不生效时会很难查（工单 03）。
 
     // 设置表格的间距属性
     ui->tableWidget->setShowGrid(true);
@@ -142,8 +121,6 @@ void Params::setupTable()
 
     // 设置布局间距
     ui->tableWidget->setContentsMargins(0, 0, 0, 0);
-
-    ui->optLabel->setStyleSheet("font-size: 10px;");
 }
 
 // 初始化参数信息
@@ -191,6 +168,9 @@ void Params::setupParameters()
             foldButton->setText("−");
             foldButton->setFixedSize(20, 20);
             foldButton->setToolTip("折叠 / 展开这一组参数");
+            // 全局 QSS 里 QPushButton 的内边距是按页面按钮定的，塞进 20×20 会把字挤没；
+            // 这个 objectName 对应一条把它归零的规则（工单 03）。
+            foldButton->setObjectName(QStringLiteral("foldButton"));
 
             // 分组状态留在成员里，不留在按钮上：按钮是 cell widget，
             // 表格重新布局时它可以被重建，「挂在它身上的状态」就跟着没了。
@@ -415,7 +395,14 @@ void Params::updateParameter(quint8 paramIdRaw, qint16 value)
 // 与「写入参数」同一条规矩：这里不持有连接、不查连接、不自己拼帧。
 // 0x03 的应答是**按表序发的全表 AA 10（现 22 条）、没有终结帧**，所以「收齐了没」只能由
 // 收帧的那一侧（链路层）来判——本页只负责报出「表里有多少条」这个分母。
+//
+// 页内的按钮与命令栏的「读取参数」（工单 06）都走 requestRead()：两个入口、一套行为。
 void Params::on_readButton_clicked()
+{
+    requestRead();
+}
+
+void Params::requestRead()
 {
     // 分母从表里数：带参数ID的行才是参数，"-" 那两行是折叠分组表头。
     // 不写死 21：将来参数表插行，这里的期望条数跟着走，不会停在一个过时的常数上。
@@ -426,7 +413,7 @@ void Params::on_readButton_clicked()
     }
 
     ui->optLabel->setText("正在获取所有参数...");
-    ui->optLabel->setStyleSheet("color: blue;");
+    Theme::setState(ui->optLabel, "info");
 
     QString timestamp = QDateTime::currentDateTime().toString("HH:mm:ss >> 用户操作: ");
     emit appendMessage(timestamp + "读取当前参数");
@@ -477,7 +464,7 @@ void Params::on_writeButton_clicked()
     // 下面这行只说明「已下发、正在等」——成功与否由链路层的回读比对给出（工单 06），
     // 这里不能先说「写入完成」：那正是要替掉的那句假话。
     ui->optLabel->setText("正在保存参数，等待模块回读…");
-    ui->optLabel->setStyleSheet("color: blue;");
+    Theme::setState(ui->optLabel, "info");
 
     // 同线程直连交给链路层：它负责发帧、等待、比对、弹结果（不阻塞，等的是事件循环）
     emit writeParamsRequested(params);
@@ -499,14 +486,14 @@ void Params::setEchoSuppressed(bool suppressed)
 void Params::setSaveSummary(const QString &summary)
 {
     ui->optLabel->setText(summary);
-    ui->optLabel->setStyleSheet("color: blue;");
+    Theme::setState(ui->optLabel, "info");
 }
 
 // 读取闭环的结论落在同一行状态文字上（收齐 / 超时）
 void Params::setReadSummary(const QString &summary)
 {
     ui->optLabel->setText(summary);
-    ui->optLabel->setStyleSheet("color: blue;");
+    Theme::setState(ui->optLabel, "info");
 }
 // 折叠按钮槽函数
 void Params::onFoldButtonClicked()
@@ -575,7 +562,7 @@ void Params::on_defaultButton_clicked()
     QString timestamp = QDateTime::currentDateTime().toString("HH:mm:ss >> 用户操作: ");
     emit appendMessage(timestamp + "恢复参数默认值");
     ui->optLabel->setText("恢复参数默认值");
-    ui->optLabel->setStyleSheet("color: blue;");
+    Theme::setState(ui->optLabel, "info");
     QMessageBox::information(this, "恢复默认", "上位机已恢复默认参数，需写入参数");
 }
 

@@ -671,6 +671,17 @@ void GLWidget::onRobotPose(const RobotPoseMsg &m)
     int deg_roll  = static_cast<int>(std::lround(ypr_roll  * 180.0 / M_PI));
 
     emit tfInfoChanged(m.x, m.y, m.z, deg_yaw, deg_pitch, deg_roll);
+
+    // 目标点 Z 跟随（界面勾选项）：每帧位姿把已有目标点的 Z 顶到机器人当前高度 ——
+    // 「当前高度」得是当前，不能停在勾选那一刻的快照上。只在**真的生成了目标点**时才动：
+    // 没点过就不该凭空冒出箭头（hasNavTarget_ 才是「有箭头」的那一位）。
+    // 高度没变（差 < 1mm）就不重绘 —— `0x01` 是 10 Hz，地面行进时 Z 基本纹丝不动。
+    if (navZFollowRobot_ && hasNavTarget_ && std::abs(navTarget3D_.z() - m.z) > 1e-3) {
+        navTarget3D_.z() = m.z;
+        emit navTargetUpdated(navTarget3D_.x(), navTarget3D_.y(), navTarget3D_.z(),
+                              navYaw_ * 180.0 / M_PI);
+        update();
+    }
 }
 
 /* -------------- 新协议：重定位结果处理 (0x02 → base_init_map → base_init) -------------- */
@@ -977,6 +988,13 @@ void GLWidget::mousePressEvent(QMouseEvent* e)
 
     // 拦截：如果处于指点模式，并且按下左键
     if (isNavMode_ && e->button() == Qt::LeftButton) {
+        // 勾了「Z = 当前机器人高度」：取点平面换成机器人此刻的高度（没位姿就沿用原来的 Z）。
+        // 这一句必须在 screenToWorld 之前 —— 那个函数拿 targetZ 当求交平面，
+        // 平面用的是「上一次的 Z」就会把目标点摆到别的高度上去。
+        double z = 0.0;
+        if (navZFollowRobot_ && robotZ(&z))
+            navTarget3D_.z() = z;
+
         // 1. 按下瞬间：确定起点位置 (X, Y)，保持 Z 不变
         navTarget3D_ = screenToWorld(e->pos(), navTarget3D_.z());
         hasNavTarget_ = true;
@@ -1270,6 +1288,10 @@ void GLWidget::setNavMode(bool enable)
         if (!hasNavTarget_) {
             navTarget3D_.z() = is2DMode_ ? 0.0 : 1.0;
         }
+        // 勾了「Z = 当前机器人高度」就以它为准，盖掉上面那两条默认值（没位姿时不动）
+        double z = 0.0;
+        if (navZFollowRobot_ && robotZ(&z))
+            navTarget3D_.z() = z;
     } else {
         // 退出模式：锁定为黄色并发送目标信号
         if (hasNavTarget_) {
@@ -1277,6 +1299,35 @@ void GLWidget::setNavMode(bool enable)
             emit navGoalSet(navTarget3D_.x(), navTarget3D_.y(), navTarget3D_.z(), navYaw_);
         }
     }
+    update();
+}
+
+// 机器人当前高度（图系 Z）。取不到（`0x01` 一条边都还没到）就返回 false，
+// 由调用方保持原值 —— 这一层不猜「机器人应该在地面上」。
+bool GLWidget::robotZ(double* z) const
+{
+    const auto T = tf_.edgeTransform(TfTree::Edge::BaseLink);
+    if (!T)
+        return false;
+    *z = (*T)(2, 3);
+    return true;
+}
+
+void GLWidget::setNavZFollowRobot(bool on)
+{
+    if (navZFollowRobot_ == on)
+        return;
+    navZFollowRobot_ = on;
+
+    // 勾上那一刻立刻贴到机器人高度：否则要等下一帧 `0x01`（也可能是「一直没来」），
+    // 界面上会短暂看到一个与机器人高度不同的 Z，看起来像勾了没生效。
+    double z = 0.0;
+    if (navZFollowRobot_ && hasNavTarget_ && robotZ(&z)) {
+        navTarget3D_.z() = z;
+        emit navTargetUpdated(navTarget3D_.x(), navTarget3D_.y(), navTarget3D_.z(),
+                              navYaw_ * 180.0 / M_PI);
+    }
+    // 取消勾选时**什么都不改**：Z 停在最后跟随到的那个高度，用户想改就直接改微调框。
     update();
 }
 
@@ -1324,6 +1375,12 @@ void GLWidget::mouseReleaseEvent(QMouseEvent* e)
 
 void GLWidget::updateNavTargetFromUI(double x, double y, double z, double yaw_deg)
 {
+    // 勾了「Z = 当前机器人高度」就以机器人高度为准，不信界面上那个数：
+    // 界面那边 Z 框已经置灰，但它里面存的是上一帧的高度，两者在时间上本来就差一帧。
+    double rz = 0.0;
+    if (navZFollowRobot_ && robotZ(&rz))
+        z = rz;
+
     navTarget3D_ = Eigen::Vector3d(x, y, z);
     navYaw_ = yaw_deg * M_PI / 180.0;
     hasNavTarget_ = true; // 用户在界面输入也算作生成了目标

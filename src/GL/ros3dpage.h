@@ -12,7 +12,14 @@
 class GLWidget;
 class QLabel;
 class QPushButton;
-class QGroupBox;
+class CollapsibleSection;   // 右面板折叠分组（工单 08）
+class PanelHost;            // 右面板两态容器：展开 = 滚动区 / 收起 = 26px 窄条（工单 09）
+class QEvent;
+class QResizeEvent;
+class QSplitter;
+class QTimer;
+class FloatingBar;
+class PointsCapsule;
 
 class Ros3DPage : public QWidget
 {
@@ -42,11 +49,6 @@ public slots:
     // （期望值只有一份，在 tftree.cpp 那张对照表里，见 protocolros3d.h 的信号声明）。
     void onFrameNameRejected(quint8 frameNo, const QString& frameId, const QString& childFrameId);
 
-    // 2D 扫描「现在画不出来」的说明（工单 07）：**空串 = 正常**，把标签收起来。
-    // 与上面那个红状态位不同，它说的是**当前状态**（`0x01` 陈旧 ⇒ 扫描摆不进图里），
-    // 不是一次事件的留痕：位姿回来、状态解除，标签就该消失。
-    void onScan2DNoteChanged(const QString &note);
-
     // 开机点（工单 09）：`shown` = 画着，把 `x` / `y` / `yawDeg` 三个数摆出来；
     // 不画时 `note` 就是「为什么不画」那句话（建图模式 / 0x02 还没到），**也可能是空串**
     // —— 那是「本会话还没读到过模式参数（0x13）」，界面上什么都不显。
@@ -62,8 +64,43 @@ public slots:
     // 只由 SerialPort 的 restartSucceeded 触发；超时失败路径不调用（那时数据依然有效）。
     void clearModuleState();
 
+protected:
+    // 视口浮层（工单 10）的定位时机之一：本页大小变了，视口跟着变。
+    // 另一个时机（拖分隔条只改视口、不改本页大小）走 gl_ 的 resize 事件过滤器，
+    // 见 .cpp 里 relayoutOverlays() 的说明。
+    void resizeEvent(QResizeEvent *e) override;
+
+    // 只盯 gl_ 的 QEvent::Resize：其余事件原样放行（不改 glwidget.cpp 的一个替代做法）。
+    bool eventFilter(QObject *watched, QEvent *e) override;
+
 private:
+    // 把两个浮层挪到该在的位置。纯几何换算，不碰绘制、不碰渲染。
+    void relayoutOverlays();
+
+    // 收起/展开之后重排分裂器：把手宽度、两段宽度都在这儿定（纯换算在 PanelWidth 里）。
+    // 收起来时把宽度还给视口，展开时把宽度还给面板 —— 两件事都只走这一个入口。
+    void applyPanelLayout();
+
     GLWidget* gl_ = nullptr;
+
+    // ------------------------------------------------------------- 右面板两态（工单 09）
+    // 分裂器要从构造期活到之后（收起/展开时得重排两段宽度），所以是成员不是局部变量。
+    QSplitter* splitter_ = nullptr;
+    PanelHost* panelHost_ = nullptr;
+
+    // 「首次布局后钉一次宽度」只做一次：钉完归用户（拖过就记在 PanelHost 里）。
+    bool panelPinned_ = false;
+
+    // ------------------------------------------------------------- 视口浮层（工单 10）
+    // 两者都是 **gl_ 的子控件**（不是本页的），所以坐标就是视口坐标，换算不用绕。
+    // 「按内容固定尺寸」由各自构造时 setFixedSize 保证 —— 若哪天有人把它们改成
+    // 铺满视口的容器，画布就再也拖不动了（见 FloatingBar.h 里那三条硬约束）。
+    FloatingBar*   bar_     = nullptr;
+    PointsCapsule* capsule_ = nullptr;
+
+    // 点数读数没有信号可订阅（glwidget 不发帧事件，也不做计时埋点），所以按固定间隔
+    // 取一次快照。500ms 足够看出「地图还在长」，又不值得为它做任何推送机制。
+    QTimer* pointsTimer_ = nullptr;
 
     // TF 显示
     QLabel* labX_   = nullptr;
@@ -83,6 +120,13 @@ private:
     QDoubleSpinBox* spinNavY_ = nullptr;
     QDoubleSpinBox* spinNavZ_ = nullptr;
     QDoubleSpinBox* spinNavYaw_ = nullptr;
+
+    // 「Z = 当前机器人高度」：勾上之后 Z 微调框置灰，值由位姿帧驱动，
+    // 画布取点的平面也换成机器人高度（判据在 GLWidget::setNavZFollowRobot 里，
+    // 本页只负责勾选状态与框里的显示）。
+    QCheckBox* ckNavZFollow_ = nullptr;
+    double robotZ_     = 0.0;    // 最近一帧位姿的 Z（图系，米）
+    bool   hasRobotZ_  = false;  // false = 这一趟还没收到过 `0x01`，没有「当前高度」可言
 
     QPushButton* btnSendNavGoal_ = nullptr;
 
@@ -105,18 +149,18 @@ private:
     QLabel* labFrameNameTitle_  = nullptr;
     QLabel* labFrameNameStatus_ = nullptr;
 
-    // 2D 扫描「为什么不画」（工单 07）：挂在「点云显示」那一块下面——它管的正是
-    // 「图上画不画」这件事。平时 hide()：正常时扫描画着，这话没有说出来的必要。
-    QLabel* labScan2DNote_ = nullptr;
+    // 2D 扫描「为什么不画」那条说明标签在工单 08 里**整条删掉了**：不再创建、不再显示，
+    // 它的 connect 也一并去掉。GLWidget 侧的判断与 `scan2DNoteChanged` 信号保持不变，
+    // 只是没有界面接收者 —— 那句话说的是内部自动判定的结果，摆出来只会像「界面坏了」。
 
     // 开机点（工单 09）：本次开机那一刻机器人中心在图里的位置。与「机器人坐标」是同一类
     // **读数**（都是位姿），所以整块紧跟在它下面；而「为什么不显示」那句话挂在
-    // 「点云显示」那一块（与 07 的扫描说明同一个位置，两处都是「图上画不画」）——
+    // 「点云显示」那一块（两处都是「图上画不画」）——
     // 但**不是每个「不显示」都有话说**：还没读到过模式参数（0x13）那种，两处都空着。
     //
     // 整块平时收起来：只有定位模式且 `0x02` 到过才有得显示。不画时**连数值一起收**，
     // 不留一行占位 —— 「没有残留数值」这条因此是结构上成立的，不靠谁记得去清。
-    QGroupBox* originBox_ = nullptr;
+    CollapsibleSection* originSection_ = nullptr;
     QLabel* labOriginX_   = nullptr;
     QLabel* labOriginY_   = nullptr;
     QLabel* labOriginYaw_ = nullptr;

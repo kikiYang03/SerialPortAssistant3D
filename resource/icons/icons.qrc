@@ -1,0 +1,19 @@
+<!-- 图标源（Lucide, ISC）。单独一个 qrc，测试目标可以直接挂同一份，
+     资源路径固定为 :/icons/<name>.svg，IconTint::svgPath() 依赖这个形状。 -->
+<RCC>
+    <qresource prefix="/icons">
+        <file>chevron-down.svg</file>
+        <file>chevron-left.svg</file>
+        <file>chevron-right.svg</file>
+        <file>chevron-up.svg</file>
+        <file>download.svg</file>
+        <file>eraser.svg</file>
+        <file>minus.svg</file>
+        <file>plug.svg</file>
+        <file>redo-2.svg</file>
+        <file>rotate-ccw.svg</file>
+        <file>square.svg</file>
+        <file>undo-2.svg</file>
+        <file>x.svg</file>
+    </qresource>
+</RCC>

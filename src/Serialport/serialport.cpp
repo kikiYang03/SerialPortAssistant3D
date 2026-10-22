@@ -4,6 +4,7 @@
 #include "protocolros3d.h"
 #include "protocolrouter.h"
 #include "maparchive.h"     // 地图下传分块的拼装 + CRC-32 校验（工单 09）
+#include "Theme.h"         // 状态色：setState 只写属性，颜色在全局 QSS 里定（工单 03）
 
 #include <QDataStream>
 #include <QTimer>
@@ -20,6 +21,21 @@
 // 延迟，又不至于让人干等。定义在这一处，以后要调只改这里。
 static const int RESTART_ACK_TIMEOUT_MS = 3000;
 
+namespace {
+
+// 串口链路的文本格式只在这里定（工单 07）：端口 · 波特率 · 状态。
+// 串口页那行标签、标题栏胶囊的 tooltip、状态栏第一段吃的都是这**一条**字符串
+// （同一条 portStateChanged），所以格式必须只有一处 —— 三处各拼一遍迟早不同步。
+// 端口未知（还没选过口）时用占位符，不留空、也不留半截的「· · 已关闭」。
+QString portStateText(const QString &port, qint32 baud, const QString &state)
+{
+    const QString name = port.trimmed().isEmpty() ? QStringLiteral("—") : port;
+    return QStringLiteral("%1 · %2 · %3").arg(name).arg(baud).arg(state);
+}
+
+} // namespace
+
+
 
 // 初始化ui界面
 SerialPort::SerialPort(QWidget *parent)
@@ -34,6 +50,13 @@ SerialPort::SerialPort(QWidget *parent)
     connect(this, &SerialPort::appendToDisplay, this, [this](const QString &message) {
         ui->recvEdit->append(message);
     });
+
+    // 串口链路状态只有一个数据源（工单 05）：本页的标签是 portStateChanged 的订阅者，
+    // 标题栏的胶囊也是。所以下面各处只 emit、不再自己 setText / setState。
+    connect(this, &SerialPort::portStateChanged, this, &SerialPort::applyPortState);
+    // 控制链路（TCP / UDP）的显示同理（工单 07）：本页标签与状态栏第二段都订阅这一条，
+    // 本页不再直接改 ui->lblWifiState —— 双写迟早出现「页面说 TCP、状态栏说 UDP」。
+    connect(this, &SerialPort::controlLinkTextChanged, this, &SerialPort::applyControlLinkState);
 
     // 初始化串口
     findFreePorts();
@@ -62,8 +85,7 @@ SerialPort::SerialPort(QWidget *parent)
     connect(tcpClient, &TcpClient::dataReceived, this, &SerialPort::processReceivedData);
     connect(tcpClient, &TcpClient::connectionStatusChanged, this, [this](bool connected) {
         if (connected) {
-            ui->lblWifiState->setText("TCP已连接");
-            ui->lblWifiState->setStyleSheet("color:green");
+            emit controlLinkTextChanged(QStringLiteral("TCP 已连接"), true);
             ui->wifiConnectBt->setText("关闭连接");
 
             // TCP连接成功时启动统计定时器
@@ -73,8 +95,13 @@ SerialPort::SerialPort(QWidget *parent)
             }
 
         } else {
-            ui->lblWifiState->setText("尝试自动重连");
-            ui->lblWifiState->setStyleSheet("color:red");
+            // TCP 掉了：UDP 还绑着的话链路其实没断，文案就得说 UDP —— 判据与门禁
+            // 那条 controlLinkStateChanged 的 `connected || isUdpBound` 是同一个，
+            // 不在这里另立一套「算不算断了」的规则。
+            if (isUdpBound)
+                emit controlLinkTextChanged(QStringLiteral("UDP 已连接"), true);
+            else
+                emit controlLinkTextChanged(QStringLiteral("尝试自动重连"), false);
 
             // 停止统计定时器
             if (statsTimer->isActive()) {
@@ -139,12 +166,15 @@ SerialPort::SerialPort(QWidget *parent)
     restartTimer->setSingleShot(true);
     connect(restartTimer, &QTimer::timeout, this, &SerialPort::onRestartTimeout);
 
-    //设置状态标签为红色 表示等待连接状态
-    ui->lblPortState->setStyleSheet("color:red");
+    // 本页「串口待连接」的红字由构造末尾那次 portStateChanged 初值落地（工单 05），
+    // 不在这里直接写标签 —— 否则又是一份不受信号管辖的状态。
+
+    // 控制链路的初值（工单 07）：还没连过 TCP / UDP。与串口那条一样走信号，
+    // 本页标签与状态栏第二段一起落地，别在这里再写一遍标签。
+    // 初值统一放到构造末尾那一次 QTimer::singleShot(0) 里发（见那里）——此刻本页
+    // 之外的订阅者（标题栏胶囊、状态栏）还没接上信号。
 
     // ui->serialBox->setEnabled(false);
-
-    ui->lblWifiState->setStyleSheet("color:red");
 
     // 发送、接收计数清零
     sendNum = 0;
@@ -176,8 +206,7 @@ SerialPort::SerialPort(QWidget *parent)
 
             // 界面恢复成"断开"状态
             ui->wifiConnectBt->setText("打开连接");
-            ui->lblWifiState->setText("未连接");
-            ui->lblWifiState->setStyleSheet("color:red");
+            emit controlLinkTextChanged(QStringLiteral("未连接"), false);
             ui->serialBox->setEnabled(true);
         }
     });
@@ -193,8 +222,7 @@ SerialPort::SerialPort(QWidget *parent)
 
         ui->wifiConnectBt->setText("打开连接");
         // 不写「尝试自动重连」—— 这一次确实一次都不会尝试（那是上面那个 lambda 的话）
-        ui->lblWifiState->setText("未连接");
-        ui->lblWifiState->setStyleSheet("color:red");
+        emit controlLinkTextChanged(QStringLiteral("未连接"), false);
         // serialBox 不动：恢复办法是手动重连 TCP / UDP，不是切回串口
     });
 
@@ -303,6 +331,42 @@ SerialPort::SerialPort(QWidget *parent)
                 ui->recvEdit->append(
                     QString("%1  原始数据: %2").arg(t, hex));   // C++14 起支持多参数 arg
             });
+
+    // 串口链路状态的初值（工单 05/07）：启动到第一次连接之间，串口页的标签、标题栏的
+    // 胶囊、状态栏的第一段都该有话说。文字走与打开/关闭同一条 portStateText()，
+    // 所以三段格式一致（端口 · 波特率 · 状态）—— 状态栏第一段在没连过时也能看出
+    // 即将用哪个口、哪个波特率，而不是只剩一个「未连接」。
+    //
+    // 用 singleShot(0) 推到事件循环第一轮再发，而不是在构造函数里直接 emit：
+    // 此刻 MainWindow 还没执行到 connect(serialPort, ...) —— 标题栏胶囊与状态栏
+    // 都还没订阅，直接 emit 会让它们永远停在自己的默认值上（「状态栏说未连接、
+    // 串口页说 COM4 · 115200 · 未连接」）。这条初值与后来的每次状态变化走的是同一条
+    // 信号、同一份文字，没有第二份状态。
+    QTimer::singleShot(0, this, [this]() {
+        emit portStateChanged(
+            portStateText(ui->portNames->currentText(), QSerialPort::Baud115200,
+                          QStringLiteral("未连接")),
+            false);
+        emit controlLinkTextChanged(QStringLiteral("未连接"), false);
+    });
+}
+
+// 本页状态标签的唯一写入点：文字 + 红/绿都跟着 portStateChanged 走。
+void SerialPort::applyPortState(const QString &text, bool ok)
+{
+    if (!text.isEmpty())
+        ui->lblPortState->setText(text);
+    // 颜色只由 Theme::setState 表达（"ok" 绿 / "err" 红），不写色值（工单 03）
+    Theme::setState(ui->lblPortState, ok ? "ok" : "err");
+}
+
+// 本页「WiFi 状态」标签的唯一写入点（工单 07）：与状态栏第二段同一条信号，
+// 文案已经区分 TCP / UDP，这里只负责落地文字与红/绿。
+void SerialPort::applyControlLinkState(const QString &text, bool ok)
+{
+    if (!text.isEmpty())
+        ui->lblWifiState->setText(text);
+    Theme::setState(ui->lblWifiState, ok ? "ok" : "err");
 }
 
 // 析构函数
@@ -1464,8 +1528,7 @@ void SerialPort::on_wifiConnectBt_clicked()
                     isUdpBound = true;
                     emit controlLinkStateChanged(tcpClient->isConnected() || isUdpBound);
                     ui->wifiConnectBt->setText("关闭连接");
-                    ui->lblWifiState->setText("UDP已连接");
-                    ui->lblWifiState->setStyleSheet("color:green");
+                    emit controlLinkTextChanged(QStringLiteral("UDP 已连接"), true);
 
                     // UDP连接成功时启动统计定时器
                     if (!statsTimer->isActive()) {
@@ -1510,8 +1573,7 @@ void SerialPort::on_wifiConnectBt_clicked()
                 // 没连上就不会有断开信号，autoReconnectSuppressed 也就不来，标签得在这里归位：
                 // 断线时 connectionStatusChanged(false) 那一支把它写成了「尝试自动重连」，而这一次
                 // 一次都不会尝试 —— 留着就是在骗操作员（与工单 03 同一条规矩）。
-                ui->lblWifiState->setText("未连接");
-                ui->lblWifiState->setStyleSheet("color:red");
+                emit controlLinkTextChanged(QStringLiteral("未连接"), false);
             }
         }else if(protocol == "UDP"){
             if (isUdpBound) {
@@ -1520,8 +1582,7 @@ void SerialPort::on_wifiConnectBt_clicked()
                 emit controlLinkStateChanged(tcpClient->isConnected() || isUdpBound);
 
                 ui->wifiConnectBt->setText("打开连接");
-                ui->lblWifiState->setText("未连接");
-                ui->lblWifiState->setStyleSheet("color:red");
+                emit controlLinkTextChanged(QStringLiteral("未连接"), false);
             }
         }
 
@@ -1583,7 +1644,9 @@ void SerialPort::on_portOpenBt_clicked()
     serialPort->setParity(checkBits);
 
     // 如果打开成功，反转打开按钮显示和功能。打开失败，无变化，并且弹出错误对话框。
-    if(ui->portOpenBt->text() == "打开串口"){
+    // 分支判据是 isSerialPortConnected 而不是按钮上的文字（工单 06）：命令栏那颗主按钮
+    // 与页内这颗按钮是同一个动作的两个入口，靠「读按钮文案」推链路状态迟早会不同步。
+    if (!isSerialPortConnected) {
         if(serialPort->open(QIODevice::ReadWrite) == true){
             // 设置WifiBox不可选
             ui->wifiBox->setEnabled(false);
@@ -1595,10 +1658,10 @@ void SerialPort::on_portOpenBt_clicked()
             ui->portOpenBt->setText("关闭串口");
             // 让端口号下拉框不可选，避免误操作（选择功能不可用，控件背景为灰色）
             ui->portNames->setEnabled(false);
-            QString sm = "%1 串口已打开";
-            QString status = sm.arg(serialPort->portName());
-            ui->lblPortState->setText(status);
-            ui->lblPortState->setStyleSheet("color:green");
+            // 状态标签 / 标题栏胶囊 / 状态栏第一段共用这一条信号（工单 05、07），
+            // 文字格式只在 portStateText() 里定：端口 · 波特率 · 状态
+            emit portStateChanged(
+                portStateText(serialPort->portName(), baudRate, QStringLiteral("已连接")), true);
             QMessageBox::warning(this, "提示", "仅用于测试串口输出坐标");
 
             // 串口连接成功，启动打印定时器
@@ -1615,10 +1678,8 @@ void SerialPort::on_portOpenBt_clicked()
             }
         }else{
             QMessageBox::critical(this, "错误", "串口打开失败，请检查串口是否被占用");
-            QString sm = "%1 串口不可用";
-            QString status = sm.arg(serialPort->portName());
-            ui->lblPortState->setText(status);
-            ui->lblPortState->setStyleSheet("color:red");
+            emit portStateChanged(
+                portStateText(serialPort->portName(), baudRate, QStringLiteral("打开失败")), false);
         };
 
 
@@ -1628,11 +1689,9 @@ void SerialPort::on_portOpenBt_clicked()
         ui->portOpenBt->setText("打开串口");
         // 端口号下拉框恢复可选，避免误操作
         ui->portNames->setEnabled(true);
-        //statusBar 状态栏显示端口状态
-        QString sm = "%1 串口已关闭";
-        QString status = sm.arg(serialPort->portName());
-        ui->lblPortState->setText(status);
-        ui->lblPortState->setStyleSheet("color:red");
+        // 关闭时端口号还留着，所以三段仍是「COM3 · 115200 · 已关闭」—— 看得出刚才用的是哪个口
+        emit portStateChanged(
+            portStateText(serialPort->portName(), baudRate, QStringLiteral("已关闭")), false);
         // 设置WifiBox可选
         ui->wifiBox->setEnabled(true);
         // 支持发送数据
@@ -1648,6 +1707,14 @@ void SerialPort::on_portOpenBt_clicked()
             statsPrintTimer->stop();
         }
     };
+}
+
+// 命令栏「连接设备 / 断开设备」（工单 06）：一条电话线，不复制流程。
+// 开还是关由上面那一段按真实连接状态自己判，这里不传方向、也不缓存状态 ——
+// 主按钮的外观另有数据源（portStateChanged 回到 CommandBar::setPortConnected）。
+void SerialPort::togglePortConnection()
+{
+    on_portOpenBt_clicked();
 }
 
 // 接收字节数统计归零
