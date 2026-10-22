@@ -190,6 +190,7 @@ QHash<QString, QString> tokens(Variant v)
     t.insert(QStringLiteral("radius-lg"), px(Metric::RadiusLg));
     t.insert(QStringLiteral("control-h"), px(Metric::ControlH));
     t.insert(QStringLiteral("control-h-sm"), px(Metric::ControlHSmall));
+    t.insert(QStringLiteral("fold-btn"), px(Metric::FoldBtnPx));
     t.insert(QStringLiteral("gap-xs"), px(Metric::GapXs));
     t.insert(QStringLiteral("gap-sm"), px(Metric::GapSm));
     t.insert(QStringLiteral("gap"), px(Metric::Gap));
@@ -198,6 +199,7 @@ QHash<QString, QString> tokens(Variant v)
     t.insert(QStringLiteral("font-size"), pt(Metric::FontPtBase));
     t.insert(QStringLiteral("font-size-sm"), pt(Metric::FontPtSmall));
     t.insert(QStringLiteral("font-size-xs"), pt(Metric::FontPtTiny));
+    t.insert(QStringLiteral("font-size-param"), pt(Metric::FontPtParam));
     t.insert(QStringLiteral("font-size-hint"), px(Metric::FontPxHint));
 
     return t;

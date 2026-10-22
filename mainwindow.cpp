@@ -209,15 +209,21 @@ MainWindow::MainWindow(QWidget *parent)
     connect(protocolHandler, &ProtocolRos3D::mapChunkUpdated,
             serialPort, &SerialPort::onMapChunkReceived, Qt::QueuedConnection);
 
-    // 未连接时「保存地图」不可点（控制指令链路 = TCP / UDP，串口不算）
+    // 未连接时「保存地图」不可点。门禁口径：TCP / UDP / 串口任一在就行 ——
+    // 串口自协议 v2.9 起也能存图（命令帧 0x00 的子命令 02）
     connect(serialPort, &SerialPort::controlLinkStateChanged,
             ros3dPage, &Ros3DPage::setLinkConnected);
+
+    // 「下载地图」单独一道门禁：只有 TCP / UDP（串口命令面五条里没有 05 下传地图）
+    connect(serialPort, &SerialPort::mapDownloadLinkChanged,
+            ros3dPage, &Ros3DPage::setDownloadAvailable);
 
     // 「写入参数」：参数页只收集值，帧由 SerialPort 统一发送（发送方与等待方同处一地）
     connect(params, &Params::writeParamsRequested,
             serialPort, &SerialPort::onWriteParamsRequested);
 
     // 未连接时「写入参数」也不可点，门禁与「保存地图」同一个信号源
+    // （串口同样算数：参数帧 0x10 与保存子命令 04 在串口上都有）
     connect(serialPort, &SerialPort::controlLinkStateChanged,
             params, &Params::setLinkConnected);
 

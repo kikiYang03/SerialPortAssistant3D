@@ -361,25 +361,65 @@ QTableCornerButton::section {
     border: none;
 }
 
-/* 参数表第一列里那个 20×20 的折叠按钮。
-   全局 QPushButton 的内边距是给页面按钮定的（左右各 @gap），把它塞进 20px 的方块里
+/* ---------------------------------------------------------------- 参数设置页字号
+
+   参数表是「一行一项、对着屏幕念」的阅读场景，比正文再大一档（@font-size-param）。
+   范围只到 `Params` 这一页：表格正文、表头、格子里的下拉框 / 数码框、右侧三个按钮
+   一起走，其它页面仍是全局 @font-size。
+
+   为什么不给表格写一个全局更大的字号：说明列文字很长，一放大就把别的页的表格
+   （日志 / 数据表）也一起撑开了，那些地方并不需要。
+
+   #foldButton 不在这条链上：它是 26px 的固定方块，字号由它自己那段 QSS 定
+   （`QPushButton#foldButton` 是 id 选择器，特异性高于这里的 `Params QPushButton`）。 */
+Params QTableWidget,
+Params QHeaderView,
+Params QComboBox,
+Params QSpinBox,
+Params QPushButton {
+    font-size: @font-size-param;
+}
+
+/* 状态行（「正在获取所有参数…」这类）：保持「比表格小一档」的层级，
+   不能停在全局的 @font-size-sm —— 整页放大后它会变成最小的一行。 */
+Params QLabel#optLabel {
+    font-size: @font-size;
+}
+
+/* 参数表第一列里那个 26×26 的折叠按钮。
+   全局 QPushButton 的内边距是给页面按钮定的（左右各 @gap），把它塞进 26px 的方块里
    会连一个字符都放不下——原先看着像「被裁掉的括号 + 一个点」。这里把内边距和最小尺寸
-   一起归零，只留悬停时一层浅底。 */
+   一起归零。
+   外观要「一眼能找到」：分组表头行的底色是 @bg / @cmd，按钮原来是全透明的，只留一个
+   12pt 的「−」，扫一眼根本看不见。改成淡蓝底 + 强调色描边 + 强调色符号，悬停直接反白
+   成实心强调色，鼠标移上去就知道能点。 */
 QPushButton#foldButton {
-    min-width: 0;
-    min-height: 0;
+    /* 这四条一起给，按钮才是定死的方块：只给 min 的话，min 是「@fold-btn + 描边」（28），
+       而 setFixedSize 留下的 max 还是 26，min 比 max 大 → 按钮被裁成缺右边和下边的一半方块。
+       所以尺寸由 QSS 一家说了算，代码里不再 setFixedSize（见 Theme.h 的 FoldBtnPx 注释）。 */
+    min-width: @fold-btn;
+    min-height: @fold-btn;
+    max-width: @fold-btn;
+    max-height: @fold-btn;
     padding: 0;
-    border: 1px solid transparent;
-    border-radius: @radius-sm;
-    background: transparent;
-    color: @text-2;
+    border: 1px solid @accent;
+    border-radius: @radius;
+    background: @accent-soft;
+    color: @accent;
     font-weight: bold;
+    font-size: @font-size;
 }
 
 QPushButton#foldButton:hover {
-    background: @hover;
-    border-color: @line;
-    color: @text-1;
+    background: @accent;
+    border-color: @accent;
+    color: @on-accent;
+}
+
+QPushButton#foldButton:pressed {
+    background: @pressed;
+    border-color: @accent;
+    color: @accent;
 }
 
 /* ---------------------------------------------------------------- 文本区（收发日志/说明） */

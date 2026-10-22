@@ -56,8 +56,13 @@ public slots:
     // 而这个槽还要多做一件事：不画的时候把整块数值**收起来**（见 .cpp 里的说明）。
     void onOriginMarkerChanged(bool shown, const QString &note, double x, double y, double yawDeg);
 
-    // 链路状态：未连接时「保存地图」与「下载地图」都不可点（两个按钮共用这一条门禁）
+    // 指令链路状态（TCP / UDP / 串口任一）：未连接时「保存地图」不可点。
+    // 串口自协议 v2.9 起也能存图（命令帧 0x00 的子命令 02），所以这里只判「有没有链路」。
     void setLinkConnected(bool connected);
+
+    // 「下载地图」的专属门禁：**只认 TCP / UDP**。串口的命令面没有 `05`（下传地图），
+    // 发过去模块会静默丢弃，所以这颗键不能跟「保存地图」共用同一条判据。
+    void setDownloadAvailable(bool available);
 
     // 模块重启判定成功后：清掉「模块运行态的镜像」（工单 02）—— 3D 视图那一片走既有的
     // gl_->clearMap()，加上 TF 数值标签、规划 / 重定位状态标签、以及两者的内部跳变锁存。
@@ -134,7 +139,7 @@ private:
     QPushButton* btnSave_ = nullptr;
 
     // 下载地图（模块侧打包分块下传，见 AA 00 05 0A）：紧邻「保存地图」，
-    // 共用同一条连接门禁（控制指令只走 TCP / UDP）
+    // 但**门禁不同**——它只认 TCP / UDP（串口命令面没有 05），见 setDownloadAvailable()
     QPushButton* btnDownload_ = nullptr;
 
     // 状态帧 (0x0B)

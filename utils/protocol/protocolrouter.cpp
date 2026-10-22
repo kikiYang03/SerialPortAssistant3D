@@ -281,10 +281,13 @@ void ProtocolRouter::dispatchFrameBySignal(const QByteArray &frame, quint8 comma
     }
 }
 
+// 控制帧：TCP 是 AA 00 子命令 0A（4 字节），串口是 AA 00 子命令 00×11 0A（15 字节）。
+// 两种形状的**子命令都在第 3 个字节**，所以这里用一条实现接两条链路 —— 协议原文的口径是
+// 「两条链路的行为由同一段实现保证，不是照着写了两遍」：与其再写一份 15 字节的 switch，
+// 不如把长度判成「4 或 15」，其余一个字都不分叉。
 void ProtocolRouter::handleControlFrame(const QByteArray &frame)
 {
-    // 控制帧格式：AA 00 子命令 0A（固定4字节）
-    if (frame.size() != 4) return;
+    if (frame.size() != 4 && frame.size() != 15) return;
 
     quint8 subCmd = static_cast<quint8>(frame.at(2));
 
@@ -313,11 +316,13 @@ void ProtocolRouter::handleControlFrame(const QByteArray &frame)
     }
 }
 
-// 参数配置
+// 参数配置：TCP 是 AA 10 id vH vL 0A（6 字节），串口是 AA 10 id vH vL 00×9 0A（15 字节）。
+// 两种形状的 **id 在第 3 个字节、值是大端 int16 跟在后面两格**，位置完全相同 ——
+// 所以同 handleControlFrame 一样，只按长度认两种形状，解析只有一份。
 void ProtocolRouter::handleParameterFrame(const QByteArray &frame)
 {
-    if (frame.size() != 6) { // AA 10 ID VALUE_H VALUE_L 0A
-        qWarning() << "参数帧长度错误：" << frame.size() << "应为6";
+    if (frame.size() != 6 && frame.size() != 15) {
+        qWarning() << "参数帧长度错误：" << frame.size() << "应为6（TCP）或15（串口）";
         return;
     }
 
@@ -426,13 +431,23 @@ void ProtocolRouter::processUart15BFrame(const QByteArray &fr)
 
     // 0x01 (当前位姿) 和 0x03 (位置控制指令) 是从模块发给上位机的
     // 0x02 (导航目标点) 上位机发送后，模块会完整返回
-    if (msgId == 0x01 || msgId == 0x03) {
+    if (msgId == 0x00) {
+        // 串口命令帧：Byte 2 是子命令，与 TCP 的 AA 00 <cmd> 0A 逐个同号。
+        // 交给**同一个** handleControlFrame —— 模块的回显、以及主控侧（若本机被当作对端）
+        // 发来的指令，都走这一条，两条链路不各写一份判定。
+        handleControlFrame(fr);
+    } else if (msgId == 0x10) {
+        // 串口参数帧：主控发 = 改参数（不回帧）；模块发 = 读参数应答 / 保存参数回显。
+        // 同样交给 TCP 那一份解析，参数号与值的位置两种形状一致。
+        handleParameterFrame(fr);
+    } else if (msgId == 0x01 || msgId == 0x03) {
         emit uartPoseReceived(msgId, x, y, z, roll, pitch, yaw);
     } else if (msgId == 0x02) {
         // 0x02目标点回传，发送完整原始帧
         emit navGoalEchoReceived(fr);
     } else if (msgId == 0x04) {
-        // 0x04 实时速度帧（100Hz）：与 0x01~0x03 共用线格式，但六格装的是速度不是位姿。
+        // 0x04 规划速度帧（100Hz）：与 0x01~0x03 共用线格式，但六格装的是速度不是位姿。
+        // 值是 pos_cmd 的规划速度指令（非实测实时速度）。
         // vx/vy/vz 单位 cm/s（int16 大端），yaw_dot 单位度/s；Byte 8~11 无数据源、恒 0，
         // 不参与解析（读了也永远是 0，只会把六个偏移的语义搅混）。
         qint16 vx     = i16(2);
@@ -441,17 +456,49 @@ void ProtocolRouter::processUart15BFrame(const QByteArray &fr)
         qint16 yawDot = i16(12);
         emit uartSpeedReceived(vx, vy, vz, yawDot);
     } else if (msgId == 0x05) {
-        // 0x05 状态帧（1Hz）：三件状态各占一个字节，顺排在前三个字节 ——
-        // Byte 2 飞控枚举、Byte 3 重定位、Byte 4 路径规划，取值与 TCP 的 AA 0B 同义同值。
-        // ⚠️ Byte 5~13 是恒零的预留区，不参与解析：按别的格位读（如把 Byte 8~9 当规划值）
+        // 0x05 状态帧（1Hz）：**五件**状态顺排在前五个字节 ——
+        // Byte 2 飞控枚举、Byte 3 重定位、Byte 4 路径规划、Byte 5 CPU 百分比、Byte 6 运存百分比。
+        // 前三件与 TCP 的 AA 0B 同义同值；后两件是模块自己的资源占用，**0xFF = 未知**
+        // （upper 没起 / 超 2 秒没采样），收端必须照哨兵处理 —— 当成 255% 或钳成 100% 都是在编造读数。
+        // ⚠️ Byte 7~13 是恒零的预留区，不参与解析：按别的格位读（如把 Byte 8~9 当规划值）
         // 会静默读到 0（读成「规划中」），协议层不报任何错，帧里也没有版本字节可自检。
         quint8 fcState        = quint8(fr[2]);
         quint8 relocalization = quint8(fr[3]);
         quint8 planning       = quint8(fr[4]);
-        emit uartFlightStatusReceived(fcState, relocalization, planning);
+        quint8 cpuPercent     = quint8(fr[5]);
+        quint8 memPercent     = quint8(fr[6]);
+        emit uartFlightStatusReceived(fcState, relocalization, planning, cpuPercent, memPercent);
     } else {
         qWarning() << "收到预期外的串口 MsgID:" << msgId;
     }
+}
+
+QByteArray ProtocolRouter::buildUartCommandFrame(quint8 subCmd)
+{
+    // 命令帧：AA 00 <cmd> 00 ×11 0A。载荷空、补零到 14 字节，Byte 14 是帧尾。
+    // 帧长恒为 15，所以串口上没有长度字段（协议「数据帧结构 (固定 15 字节)」一节）。
+    QByteArray frame(15, '\0');
+    frame[0] = static_cast<char>(0xAA);
+    frame[1] = static_cast<char>(0x00);          // Byte 1 = 0x00 → 命令帧（三段互斥的判别位）
+    frame[2] = static_cast<char>(subCmd);        // Byte 2 = 子命令，与 TCP 的 AA 00 <cmd> 0A 同号
+    frame[14] = static_cast<char>(0x0A);
+
+    return frame;
+}
+
+QByteArray ProtocolRouter::buildUartParamFrame(quint8 paramId, qint16 value)
+{
+    // 参数帧：AA 10 <id> <vH> <vL> 00 ×9 0A。id 在 Byte 2、值是大端 int16 跟在 Byte 3~4 ——
+    // 与 TCP 的 AA 10 <id> <vH> <vL> 0A **位置完全相同**，只是尾巴上多九个零。
+    QByteArray frame(15, '\0');
+    frame[0] = static_cast<char>(0xAA);
+    frame[1] = static_cast<char>(0x10);          // Byte 1 = 0x10 → 参数帧
+    frame[2] = static_cast<char>(paramId);
+    frame[3] = static_cast<char>((value >> 8) & 0xFF);   // 高字节在前（大端）
+    frame[4] = static_cast<char>(value & 0xFF);
+    frame[14] = static_cast<char>(0x0A);
+
+    return frame;
 }
 
 QByteArray ProtocolRouter::buildTestFrame(bool isResponse)

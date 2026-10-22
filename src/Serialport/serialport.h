@@ -94,7 +94,7 @@ public slots:
     // 超时路径既不清理也不弹框，只在日志里写一行「重启算法失败」。
     void onRestartAckReceived();
 
-    // 控制链路（TCP 已连接或 UDP 已绑定）门禁：切换本页「重启算法」的可用性。
+    // 控制链路（TCP 已连接 / UDP 已绑定 / **串口已打开**）门禁：切换本页「重启算法」的可用性。
     // 与 3D 页 / 参数页的同名方法接的是同一个信号，本页只是追加了一路接收方。
     void setLinkConnected(bool connected);
 
@@ -236,6 +236,23 @@ private:
     // 「重启算法」的可用性只由这一处决定（含等待窗口与串口模式两项）
     void updateRestartButton();
 
+    // 控制指令的两道门禁（唯一判定处）//////////////////////////////////////////
+    // canSendControlCommands()：TCP 已连接 / UDP 已绑定 / **串口已打开**，三者任一。
+    // canDownloadMap()：只有 TCP / UDP —— 串口上没有 `AA 00 05`（下传地图）这条子命令，
+    // 发过去模块静默丢弃，只会白等一个超时。
+    // emitCommandLinkGates()：把两者的当前值各发一次。**所有会改变链路状态的地方都调它**
+    // （TCP 连上/断开、UDP 绑定/关闭、串口打开/关闭），布尔值不再有第二处自己拼。
+    bool canSendControlCommands() const;
+    bool canDownloadMap() const;
+    void emitCommandLinkGates();
+
+    // 控制指令帧 / 参数帧按链路二选一：串口是 15 字节定长帧（命令帧 AA 00 <cmd> 00×11 0A、
+    // 参数帧 AA 10 <id> <vH> <vL> 00×9 0A），TCP / UDP 是 4 / 6 字节短帧。
+    // **构建分链路，解析不分**（ProtocolRouter 的 handleControlFrame / handleParameterFrame
+    // 同时认两种长度；两种形状的第 2 字节位置相同）。
+    QByteArray buildControlFrame(quint8 subCmd) const;
+    QByteArray buildParamFrame(quint8 paramId, qint16 value) const;
+
     // 重启判定成功后清掉本页缓存的运行态镜像（工单 02）：位姿两路（0x01 / 0x03）、
     // 模块类型（0x99）、模式（0x13）。
     // 不清的话每秒一次的打印定时器会继续把重启前的旧位姿当当下值吐到接收窗口。
@@ -282,11 +299,25 @@ private:
     PoseData latestPose03;    // 0x03 位置控制指令
     QByteArray latestFrame02; // 0x02 目标点回传原始数据
 
+    // 0x05 状态帧（1Hz，五件）：飞控 / 重定位 / 规划 + CPU / 运存百分比。
+    // 后两格里 0xFF = **未知**（upper 没起、或超 2 秒没收到 /resource_usage 采样），
+    // 打印时显示「—」，绝不折算成 0% —— 与三件状态用 3 表示「未响应」是同一条规矩。
+    // 初值也照协议：三件枚举按各自的初值（飞控 0、重定位/规划 3），两格百分比按未知。
+    struct FlightStatus {
+        quint8 fcState = 0;
+        quint8 relocalization = 3;   // 3 = 本链上尚无该状态
+        quint8 planning = 3;
+        quint8 cpuPercent = ProtocolRouter::kUartPercentUnknown;
+        quint8 memPercent = ProtocolRouter::kUartPercentUnknown;
+        bool valid = false;          // 本会话收到过 0x05 没有（没收到就一行都不打）
+    };
+    FlightStatus latestStatus05;
+
     // 接收计数器（用于频率统计）。0x04 / 0x05 不再有每秒打印，计数只喂下面那次统计
     int count01 = 0;  // 0x01计数
     int count02 = 0;  // 0x02计数
     int count03 = 0;  // 0x03计数
-    int count04 = 0;  // 0x04计数（实时速度帧，100Hz）
+    int count04 = 0;  // 0x04计数（规划速度帧，100Hz；pos_cmd 的速度指令，非实测速度）
     int count05 = 0;  // 0x05计数（飞控状态帧，1Hz）
     int statsIntervalSeconds = 10;  // 统计间隔（秒）
 
@@ -306,11 +337,20 @@ signals:
 
     void tcpConnectionChanged(bool connected);
 
-    // 控制指令链路（TCP / UDP）状态：给可视化页的「保存地图」、参数页的「写入参数」、
-    // 本页的「重启算法」开门 —— 三个接收方，同一条门禁。
-    // 串口不算 —— 15 字节帧里没有控制指令这一类消息（0x00 系列），
-    // 与测试按钮在串口模式下被禁用是同一条规矩。
+    // 控制指令链路（TCP / UDP / **串口**）状态：给可视化页的「保存地图」、参数页的
+    // 「获取参数 / 写入参数」、本页的「重启算法」开门 —— 三个接收方，同一条门禁。
+    //
+    // 串口为什么也算：协议 v2.9 之后串口上多了**命令帧 0x00**（Byte 2 = 子命令，与 TCP
+    // `AA 00 <cmd> 0A` 逐个同号：通信测试 / 保存地图 / 读参数 / 保存参数 / 重启模块算法，
+    // 共五条）+ **参数帧 0x10**，所以这五件事在串口上**都能做**。唯一**做不了**的是
+    // 下传地图（`AA 00 05 0A` 不在那五条里：整包约 1.9 MB，115200 下要 165 秒起），
+    // 那一条单独走下面的 mapDownloadLinkChanged。
     void controlLinkStateChanged(bool connected);
+
+    // 下传地图的专属门禁：**只认 TCP / UDP**。串口上一次都发不出去 ——
+    // 主控若照 TCP 的样子发 `AA 00 05`，模块是**静默丢弃**（不回帧、不打日志），
+    // 上位机只会白等一个超时。所以「下载地图」这颗键必须和「保存地图」分开判。
+    void mapDownloadLinkChanged(bool available);
 
     // 控制链路状态的**显示文案**（工单 07）：与上面那条门禁信号在同样的位置发出，
     // 但带文字（"TCP 已连接" / "UDP 已连接" / "尝试自动重连" / "未连接"）。

@@ -354,7 +354,8 @@ Ros3DPage::Ros3DPage(QWidget* parent)
     btnSave_ = new QPushButton(tr("保存地图"), actionsBody);
     btnSave_->setEnabled(false);   // 初始不可点，连上链路后由 setLinkConnected() 打开
 
-    // 紧挨着「保存地图」：两者都是模块侧地图文件的操作，门禁也共用同一条
+    // 紧挨着「保存地图」：两者都是模块侧地图文件的操作，但**门禁不再共用**——
+    // 存图在串口上也能做（子命令 02），下传地图只有 TCP / UDP（串口没有子命令 05，见 .h）
     btnDownload_ = new QPushButton(tr("下载地图"), actionsBody);
     btnDownload_->setEnabled(false);
 
@@ -707,12 +708,20 @@ void Ros3DPage::onNavSpinBoxChanged()
 }
 
 
-// 控制指令链路状态（TCP / UDP）：未连接时「保存地图」与「下载地图」都不可点
-// （两个按钮共用同一条门禁：控制指令只走 TCP / UDP，串口链不承载这一类消息）
+// 指令链路状态（TCP / UDP / 串口）：未连接时「保存地图」不可点。
+// 串口自协议 v2.9 起也能存图（命令帧 AA 00 02 …，子命令号与 TCP 相同），
+// 所以这里不再要求「必须是 TCP / UDP」，只要求「有一条能发指令的链路」。
 void Ros3DPage::setLinkConnected(bool connected)
 {
     if (btnSave_) btnSave_->setEnabled(connected);
-    if (btnDownload_) btnDownload_->setEnabled(connected);
+}
+
+// 「下载地图」是唯一仍然只认 TCP / UDP 的那个：串口命令面是五条子命令，**没有 05**。
+// 两条门禁分开的代价是多一个信号，但不分的话，串口模式下这颗键会亮着 ——
+// 点下去只能白等一个超时（模块对 05 静默丢弃，一帧都不回）。
+void Ros3DPage::setDownloadAvailable(bool available)
+{
+    if (btnDownload_) btnDownload_->setEnabled(available);
 }
 
 

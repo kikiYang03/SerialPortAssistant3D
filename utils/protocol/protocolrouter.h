@@ -25,11 +25,28 @@ public:
     static QByteArray buildFrame(quint8 command,
                           const QVariantMap &params = QVariantMap());
 
-    // 便捷方法
+    // 便捷方法 —— **以下产出的都是 TCP / UDP 的短帧形状**（4 / 6 字节）；
+    // 串口要的 15 字节定长帧用下面的 buildUart* 两个。
     static QByteArray buildTestFrame(bool isResponse = false);
     QByteArray buildSaveMapFrame();
     static QByteArray buildReadParamFrame(quint8 paramId = 0xFF); // 0xFF=读取所有
     static QByteArray buildWriteParamFrame(quint8 paramId, qint16 value);
+
+    // 串口线上的命令帧 / 参数帧（15 字节定长）///////////////////////////////
+    // 串口与 TCP 是**两套帧**，但命令面的子命令号逐个相同（协议「命令帧 / 参数帧格式」一节）：
+    //   TCP   AA 00 <sub> 0A                                 （4 字节）
+    //   串口  AA 00 <sub> 00 ×11 0A                           （15 字节，载荷空、补零到 14）
+    //   TCP   AA 10 <id> <vH> <vL> 0A                         （6 字节）
+    //   串口  AA 10 <id> <vH> <vL> 00 ×9 0A                    （15 字节）
+    // 两个形状的第 2 字节（id 位 / 子命令位）**位置相同**，所以解析侧可以共用一套
+    // （handleControlFrame / handleParameterFrame 同时认两种长度），只有构建要分链路 —— 见下。
+    static QByteArray buildUartCommandFrame(quint8 subCmd);
+    static QByteArray buildUartParamFrame(quint8 paramId, qint16 value);
+
+    // 串口 0x05 状态帧 Byte 5/6（CPU / 运存）的**未知哨兵**：upper 没起、或超 2 秒没收到
+    // /resource_usage 采样时发的是它，不是百分比。本地拿它区分「0%」与「没人报」——
+    // 与三件状态各占一格的 `3`（未响应）是同一条规矩：不能让上位机把「没人报」读成 0。
+    static constexpr quint8 kUartPercentUnknown = 0xFF;
     // 下传地图指令 AA 00 05 0A：请求模块把盘上那份地图打包分块发来。
     // 应答是 N 帧 0x0C（见 MapArchive）；模块失败时一帧都不发，上位机按超时判失败。
     QByteArray buildDownloadMapFrame();
@@ -85,14 +102,18 @@ signals:
     // 0x02目标点回传信号（下位机返回完整帧）
     void navGoalEchoReceived(const QByteArray &frame);
 
-    // 0x04 实时速度帧信号（100Hz）：vx/vy/vz 单位 cm/s，yawDot 单位度/s
+    // 0x04 规划速度帧信号（100Hz）：vx/vy/vz 单位 cm/s，yawDot 单位度/s。
+    // 「规划速度」= pos_cmd 里下发的速度指令，**不是实测实时速度**，文案/日志别写成实时速度。
     void uartSpeedReceived(qint16 vx, qint16 vy, qint16 vz, qint16 yawDot);
 
-    // 0x05 状态帧信号（1Hz）：三件状态各占一个字节，顺排在 Byte 2 / Byte 3 / Byte 4。
+    // 0x05 状态帧信号（1Hz）：**五件**状态，顺排在 Byte 2 ~ Byte 6。
     // fcState 是飞控枚举（0x00~0x04，超出按未知处理），relocalization / planning 取值
     // 同 TCP 的 AA 0B（0 进行中 / 1 成功 / 2 失败 / 3 未响应），两边同义同值。
-    // Byte 5~13 是恒零预留区，不参与解析。
-    void uartFlightStatusReceived(quint8 fcState, quint8 relocalization, quint8 planning);
+    // cpuPercent / memPercent 是模块自己的资源占用（0~100），**0xFF = 未知**
+    // （upper 没起 / 超 2 秒没采样），由接收方按 kUartPercentUnknown 判，不要直接除以 100。
+    // Byte 7~13 是恒零预留区，不参与解析。
+    void uartFlightStatusReceived(quint8 fcState, quint8 relocalization, quint8 planning,
+                                  quint8 cpuPercent, quint8 memPercent);
 
     // 打印原来数据
     void printFrame(const QByteArray &frame);

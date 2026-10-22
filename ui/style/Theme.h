@@ -64,6 +64,14 @@ constexpr int Radius        = 6;
 constexpr int RadiusLg      = 8;
 constexpr int ControlH      = 28; // 按钮/输入框标准高度
 constexpr int ControlHSmall = 24; // 紧凑行（表头、悬浮条按钮）
+// 参数表第一列里的折叠按钮（−/+ 方块）的**内容盒**尺寸。
+// 两个坑都写在这儿，改之前先读完：
+//  1) QSS 的 min-width/min-height 会由 QStyleSheetStyle 落到 setMinimumWidth/Height 上，
+//     而且**要再加一圈描边**（这里 1px 描边 → 26px 写出去、量到的是 28px）。所以代码里
+//     不要再用 setFixedSize 跟它抢：两套取值一打架，min 比 max 大，按钮就成了被裁一半的方块。
+//  2) 表格 cell widget 的可用区不是列宽/行高，而是「减掉 QSS 里 QTableWidget::item 的
+//     padding（各 @gap-sm / @gap-xs）再加 1px 网格线」。列宽/行高要按 28 反推（见 params.cpp）。
+constexpr int FoldBtnPx     = 26;
 constexpr int SectionHeaderH = 32; // 折叠分组标题行（原型 .sech，整行可点）
 // 窗口最外圈那条描边的宽度。真正的绘制在 FramelessWindow 里的 WindowFrame 覆盖条上
 // （QSS 给 QMainWindow 写 border 会被标题栏 / 中央区 / 状态栏盖掉，见那边的注释）。
@@ -76,6 +84,11 @@ constexpr int GapXl         = 24;
 constexpr int FontPtBase    = 12; // 正文（沿用改造前的取值，观感调整留给收尾票）
 constexpr int FontPtSmall   = 10; // 次要文本
 constexpr int FontPtTiny    = 9;  // 注释、计数
+// 参数设置页专用的一档：这张表是「逐行对号 + 念说明」的阅读场景，
+// 屏幕前隔着一段距离看，比正文再大一档才不费眼。
+// 只作用于 `Params` 那一页（见 app.qss.in「参数设置页字号」那段），
+// 想整体调大 / 调小就改这一个常数——列宽与最小行高都按它换算（params.cpp 的 scaleForParamFont）。
+constexpr int FontPtParam   = 14;
 // 「操作说明」这类备注：**用 px 不用 pt**（spec 定的就是 11px）。
 // pt 在 125%/150% 缩放下会被系统放大到读起来像正文，而这一档要的就是「比正文小一截且稳定」。
 constexpr int FontPxHint    = 11;

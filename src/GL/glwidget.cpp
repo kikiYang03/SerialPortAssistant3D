@@ -505,8 +505,8 @@ void GLWidget::paintGL()
         progSimple_.bind();
         // 同样直接使用 proj * view，因为点已在 map 系下
         progSimple_.setUniformValue("mvp", toQMatrix(proj_ * view_));
-        // 红色。注意：历史轨迹现在也是红色，两者同色，只能靠线宽/走向区分
-        progSimple_.setUniformValue("col", QVector3D(1.0f, 0.0f, 0.0f));
+        // 橙色。历史轨迹（运动拖尾）占红色，规划路径必须换色才能一眼分开
+        progSimple_.setUniformValue("col", QVector3D(1.0f, 0.55f, 0.0f));
 
         vaoOptimalPath_.bind();
         vboOptimalPath_.bind();
@@ -589,7 +589,7 @@ void GLWidget::paintGL()
     //
     // 与机器人箭头是**同一个几何体，只换颜色**：两个箭头会同时在图上，形状分不出谁是谁，
     // 颜色是这一票唯一的区分手段。取蓝色是因为一圈颜色都用掉了——机器人箭头红、实时点云青、
-    // 地图点云按高度配色、2D 扫描浅红、轨迹红、规划路径红、指点箭头绿/黄。
+    // 地图点云按高度配色、2D 扫描浅红、轨迹红、规划路径橙、指点箭头绿/黄。
     //
     // 位置与朝向都取模块那条静态边的**现值**，**不判新鲜度**：开机点是一趟里不变的事实，
     // 不会因为 `0x02` 不再重发就不成立（`edgeTransform` 拿的是最后一帧的真值，

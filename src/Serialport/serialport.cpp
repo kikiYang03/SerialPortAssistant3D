@@ -33,6 +33,41 @@ QString portStateText(const QString &port, qint32 baud, const QString &state)
     return QStringLiteral("%1 · %2 · %3").arg(name).arg(baud).arg(state);
 }
 
+// 0x05 状态帧那三件枚举的中文（只有这一处，日志与将来的界面共用同一份说法）：
+// 飞控五档见协议「附：0x05 飞控状态枚举值定义」，重定位 / 规划四档见
+// 「Byte 3 重定位 / Byte 4 规划 取值」。表外取值不猜，原样报出数字。
+QString fcStateText(quint8 v)
+{
+    switch (v) {
+    case 0:  return QStringLiteral("未连接");
+    case 1:  return QStringLiteral("未解锁");
+    case 2:  return QStringLiteral("已解锁·地面");
+    case 3:  return QStringLiteral("空中悬停");
+    case 4:  return QStringLiteral("执行航点");
+    default: return QStringLiteral("未知(%1)").arg(v);
+    }
+}
+
+QString progressStateText(quint8 v)
+{
+    switch (v) {
+    case 0:  return QStringLiteral("进行中");
+    case 1:  return QStringLiteral("成功");
+    case 2:  return QStringLiteral("失败");
+    case 3:  return QStringLiteral("未响应");
+    default: return QStringLiteral("未知(%1)").arg(v);
+    }
+}
+
+// 百分比：`0xFF` 是「未知」哨兵，不是读数（upper 没起 / 超 2 秒没采样）。
+// 折成 0% 或钳到 100% 都是在编造一条模块没报过的数。
+QString percentText(quint8 v)
+{
+    return v == ProtocolRouter::kUartPercentUnknown
+               ? QStringLiteral("—")
+               : QStringLiteral("%1%").arg(v);
+}
+
 } // namespace
 
 
@@ -96,8 +131,10 @@ SerialPort::SerialPort(QWidget *parent)
 
         } else {
             // TCP 掉了：UDP 还绑着的话链路其实没断，文案就得说 UDP —— 判据与门禁
-            // 那条 controlLinkStateChanged 的 `connected || isUdpBound` 是同一个，
+            // 那条 canSendControlCommands()（`connected || isUdpBound || 串口`）是同一个，
             // 不在这里另立一套「算不算断了」的规则。
+            // 注意这一段管的是**网络**那条文案（TCP / UDP），串口那段另有 portStateChanged，
+            // 所以串口开着而 TCP 掉了时，这里照样说「尝试自动重连」。
             if (isUdpBound)
                 emit controlLinkTextChanged(QStringLiteral("UDP 已连接"), true);
             else
@@ -109,7 +146,8 @@ SerialPort::SerialPort(QWidget *parent)
             }
         }
         emit tcpConnectionChanged(connected);
-        emit controlLinkStateChanged(connected || isUdpBound);
+        // 两条门禁都交给唯一判定处：TCP 掉了但 UDP 绑着 / 串口开着，指令照样发得出去
+        emitCommandLinkGates();
     });
 
     // 初始化WiFi UDP
@@ -256,7 +294,7 @@ SerialPort::SerialPort(QWidget *parent)
                 }
             });
 
-    // 串口数据解析 - 0x04 实时速度帧：只计数，供每 10 秒的频率统计读数
+    // 串口数据解析 - 0x04 规划速度帧（pos_cmd 的速度指令，非实测速度）：只计数，供每 10 秒的频率统计读数
     connect(ProtocolRouter::instance(), &ProtocolRouter::uartSpeedReceived,
             this, [this](qint16, qint16, qint16, qint16){
                 // 仅在串口模式下处理
@@ -265,12 +303,21 @@ SerialPort::SerialPort(QWidget *parent)
                 count04++;
             });
 
-    // 串口数据解析 - 0x05 状态帧（Byte 2 飞控 / Byte 3 重定位 / Byte 4 规划）：同上，只计数
+    // 串口数据解析 - 0x05 状态帧（1Hz，五件）：飞控 / 重定位 / 规划 + CPU / 运存百分比。
+    // 前三个字节是枚举，后两格是百分比或 0xFF（未知）；只缓存 + 计数，打印由每秒那一次定时器统一做
+    // （5 Hz 的帧不该有 5 行日志，1 Hz 也照样是一秒一行）。
     connect(ProtocolRouter::instance(), &ProtocolRouter::uartFlightStatusReceived,
-            this, [this](quint8, quint8, quint8){
+            this, [this](quint8 fcState, quint8 relocalization, quint8 planning,
+                         quint8 cpuPercent, quint8 memPercent){
                 // 仅在串口模式下处理
                 if (!isSerialPortConnected) return;
 
+                latestStatus05.fcState = fcState;
+                latestStatus05.relocalization = relocalization;
+                latestStatus05.planning = planning;
+                latestStatus05.cpuPercent = cpuPercent;
+                latestStatus05.memPercent = memPercent;
+                latestStatus05.valid = true;
                 count05++;
             });
 
@@ -348,6 +395,9 @@ SerialPort::SerialPort(QWidget *parent)
                           QStringLiteral("未连接")),
             false);
         emit controlLinkTextChanged(QStringLiteral("未连接"), false);
+        // 两道指令门禁也发一次初值：此刻三个按钮（存图 / 下载 / 写参数）都还是构造时的
+        // 不可点状态，发一遍让「谁在决定它们」始终只有 emitCommandLinkGates() 这一处
+        emitCommandLinkGates();
     });
 }
 
@@ -451,8 +501,9 @@ void SerialPort::sendData(const QByteArray &data)
 // 发送按钮点击槽函数
 void SerialPort::on_sendBt_clicked()
 {
-    // 使用协议工具类构建测试帧
-    QByteArray testFrame = ProtocolRouter::buildTestFrame();
+    // 使用协议工具类构建测试帧：串口上是 15 字节命令帧（AA 00 01 00×11 0A），
+    // TCP / UDP 上是 4 字节（AA 00 01 0A）—— 帧形不同，子命令号都是 01。
+    QByteArray testFrame = buildControlFrame(0x01);
     qDebug() << "发送测试数据中...."<< testFrame;
     sendData(testFrame);
     QString timestamp = QDateTime::currentDateTime().toString("HH:mm:ss >> 测试操作: ");
@@ -531,9 +582,9 @@ void SerialPort::closeSaveMapWait()
 
 void SerialPort::onSaveMapRequested()
 {
-    // 与按钮的可用条件一致：只有 TCP / UDP 能承载控制指令，串口不在此列
-    TcpClient* tcpClient = TcpClient::getInstance();
-    if (!tcpClient->isConnected() && !isUdpBound) {
+    // 与按钮的可用条件一致（同一条 controlLinkStateChanged）：TCP / UDP / 串口三条链路任一即可。
+    // 串口命令面里 `02` 就是保存地图，行为与 TCP 那一份由同一段实现保证。
+    if (!canSendControlCommands()) {
         QMessageBox::warning(this, "警告", "请先连接模块！");
         return;
     }
@@ -544,7 +595,7 @@ void SerialPort::onSaveMapRequested()
     // 关框与结果提示由 onSaveMapAckReceived / onSaveMapTimeout 负责。
     showSaveMapWait();
 
-    sendData(ProtocolRouter::instance()->buildSaveMapFrame());
+    sendData(buildControlFrame(0x02));
 
     // 上一轮补发的通信测试若还没出结果，这一轮重新计时
     saveMapProbePending = false;
@@ -582,12 +633,13 @@ void SerialPort::onSaveMapTimeout()
 {
     closeSaveMapWait();
 
-    // 补发一次通信测试：复用 buildTestFrame 与 testFrameReceived → handleTestFrame 这条链路，
-    // 结果由 handler 里的 saveMapProbePending 分流。这里不再单独写一行「超时」日志——
-    // 这次超时的结论只有一句「保存地图失败」，由补发的那次测试收尾时写出。
+    // 补发一次通信测试：复用 buildControlFrame(0x01) 与 testFrameReceived → handleTestFrame
+    // 这条链路（帧形跟链路走，串口上是 15 字节），结果由 handler 里的 saveMapProbePending 分流。
+    // 这里不再单独写一行「超时」日志——这次超时的结论只有一句「保存地图失败」，
+    // 由补发的那次测试收尾时写出。
     saveMapProbePending = true;
     testFlag = false;
-    sendData(ProtocolRouter::buildTestFrame());
+    sendData(buildControlFrame(0x01));
     testTimer->start(3000);
 
     // 弹窗只给不承诺原因的结论：模块失败时是沉默的（定位模式下必然被拒也不回显），
@@ -609,9 +661,8 @@ void SerialPort::onSaveMapTimeout()
 // 对已知号的越界值也不回错——不比对的话，填错值、发错号都只会得到一句「成功」。
 void SerialPort::onWriteParamsRequested(const QVector<ParamWrite> &params)
 {
-    // 与按钮的可用条件一致：控制指令只走 TCP / UDP，串口链只承载定长状态帧族
-    TcpClient* tcpClient = TcpClient::getInstance();
-    if (!tcpClient->isConnected() && !isUdpBound) {
+    // 与按钮的可用条件一致：TCP / UDP / 串口任一即可 —— 串口上有参数帧 0x10 与保存子命令 04
+    if (!canSendControlCommands()) {
         QMessageBox::warning(this, "警告", "请先连接模块！");
         return;
     }
@@ -648,11 +699,11 @@ void SerialPort::onWriteParamsRequested(const QVector<ParamWrite> &params)
     showSaveParamsWait();
 
     for (const ParamWrite &p : params) {
-        sendData(ProtocolRouter::buildWriteParamFrame(p.id, p.value));
+        sendData(buildParamFrame(p.id, p.value));
     }
 
     // 保存终结指令：模块收到它才落盘（并回发全表参数值，下面等这个）
-    sendData(ProtocolRouter::buildFrame(0x00, QVariantMap{{"sub_cmd", 0x04}}));
+    sendData(buildControlFrame(0x04));
 
     const int timeoutMs = saveParamsTimeoutMs();
     saveParamsTimer->start(timeoutMs);
@@ -838,9 +889,9 @@ void SerialPort::settleSaveParams(const QString &logLine, const QString &summary
 // 上位机分不出「读取失败」与「链路已断」，只按超时判、并写明收到了几条。
 void SerialPort::onReadParamsRequested(int expectedCount)
 {
-    // 与按钮的可用条件一致：控制指令只走 TCP / UDP，串口链不承载这一类消息
-    TcpClient* tcpClient = TcpClient::getInstance();
-    if (!tcpClient->isConnected() && !isUdpBound) {
+    // 与按钮的可用条件一致：TCP / UDP / 串口任一即可 —— 串口命令面 `03` 就是读参数，
+    // 应答是 22 条参数帧 0x10（TCP 侧形状是 6 字节，串口侧是 15 字节，解析同一段）
+    if (!canSendControlCommands()) {
         QMessageBox::warning(this, "警告", "请先连接模块！");
         return;
     }
@@ -863,7 +914,7 @@ void SerialPort::onReadParamsRequested(int expectedCount)
     // 关掉框只会让这次读取变成一条没人认领的半截数据。
     showReadParamsWait();
 
-    sendData(ProtocolRouter::buildReadParamFrame(0xFF));
+    sendData(buildControlFrame(0x03));
 
     const int timeoutMs = readParamsTimeoutMs();
     readParamsTimer->start(timeoutMs);
@@ -1022,10 +1073,16 @@ void SerialPort::closeDownloadWait()
 
 void SerialPort::onDownloadMapRequested()
 {
-    // 与按钮的可用条件一致：控制指令只走 TCP / UDP，串口链不承载这一类消息
-    TcpClient* tcpClient = TcpClient::getInstance();
-    if (!tcpClient->isConnected() && !isUdpBound) {
-        QMessageBox::warning(this, "警告", "请先连接模块！");
+    // 这一条**只认 TCP / UDP**：串口的命令面是五条子命令（01/02/03/04/06），**没有 05**。
+    // 主控照 TCP 的样子发 `AA 00 05` 会被模块静默丢弃，上位机只会白等一个超时 ——
+    // 所以宁可当场说清楚，也不要让它发出去。
+    if (!canDownloadMap()) {
+        QMessageBox::warning(
+            this, "警告",
+            isSerialPortConnected
+                ? "串口不支持下载地图（整包约 1.9 MB，115200 下要 165 秒起）。\n"
+                  "请改用 TCP / UDP 连接。"
+                : "请先连接模块！");
         return;
     }
 
@@ -1241,14 +1298,15 @@ void SerialPort::onDownloadTotalTimeout()
 }
 
 // 重启算法 /////////////////////////////////////////////////////////////////
-// 线上是一条控制帧 AA 00 06 0A（帧头 + 帧号 0x00 控制组 + 子命令 0x06 + 帧尾），帧内没有长度
-// 字段、没有校验字节、没有版本字节，与既有 TCP 帧一致。
+// 线上是一条控制帧 —— TCP 是 `AA 00 06 0A`（4 字节），串口是 `AA 00 06 00×11 0A`（15 字节，
+// 子命令号在同一个位置）。帧内没有长度字段、没有校验字节、没有版本字节。
 // 回包规矩：模块**先原样回发本帧、再执行关机**。所以「收到回发」= 模块已受理重启，是判成功的
 // 唯一依据；而「连接断开」是另一件、后发生的事，本功能不去推断它（那会依赖模块是否发出 TCP
-// FIN，属模块侧实现细节，不可依赖）。超时 = 未收到回发，结果未知 —— 不编造原因。
+// FIN / 串口是否掉线，属模块侧实现细节，不可依赖）。超时 = 未收到回发，结果未知 —— 不编造原因。
 //
-// 门禁：只走 TCP / UDP（串口链是另一套固定 15 字节帧族，4 字节的 AA 00 06 0A 在它那里根本不成帧），
-// 与「保存地图」「写入参数」同一条控制链路门禁。不设管理权限门禁，对所有用户开放。
+// 门禁：TCP / UDP / **串口**三条链路都行（串口命令面的五条子命令里就有 `06`，
+// 协议原文点名「回显由串口侧的 pose_send 就地发出」），与「保存地图」「读/写参数」同一条门禁。
+// 不设管理权限门禁，对所有用户开放。
 //
 // 提示策略：**全程只有一次弹窗** —— 收到回发后那句「模块已收到重启命令」的回执。
 // 按下不二次确认（按下即发）；超时不弹框，只在后台把按钮恢复可用。
@@ -1259,26 +1317,69 @@ void SerialPort::setLinkConnected(bool connected)
     updateRestartButton();
 }
 
-// 「重启算法」可用性的唯一判定处，三条规则都写在这里：
-//   1. 控制链路在（TCP 已连接或 UDP 已绑定）—— 由 controlLinkStateChanged 喂进来；
-//   2. 不在串口模式 —— 同上，串口链不承载这条指令（控件树上这一条也已经成立：按钮所在的
-//      「发送」分组在打开串口时被整体置灰，与「发送测试数据」是同一条规矩，这里再写一遍
-//      是为了三条规则在同一处可读、可查）；
-//   3. 不在等待回发的窗口内 —— 模块已经准备关机了，不该再发第二条重启指令。
+// 控制指令门禁的**唯一判定处**（构建侧）。三条链路任一在，控制指令就发得出去：
+// TCP 已连接 / UDP 已绑定 / 串口已打开。
+bool SerialPort::canSendControlCommands() const
+{
+    TcpClient* tcpClient = TcpClient::getInstance();
+    return isSerialPortConnected || tcpClient->isConnected() || isUdpBound;
+}
+
+// 下传地图只认 TCP / UDP：串口的命令面是**五条**子命令（01/02/03/04/06），**没有 05**。
+// 主控若照 TCP 的样子发 `AA 00 05`，模块静默丢弃（不回帧、不打日志），上位机只会白等超时。
+bool SerialPort::canDownloadMap() const
+{
+    TcpClient* tcpClient = TcpClient::getInstance();
+    return tcpClient->isConnected() || isUdpBound;
+}
+
+// 两道门禁的唯一发射点：任何会改变链路状态的地方（TCP 连上/断开、UDP 绑定/关闭、
+// 串口打开/关闭）都调它，别在别处再拼一遍布尔值 —— 三条链路 × 两种判断，
+// 散着写迟早出现「按钮亮了但发不出去」。
+void SerialPort::emitCommandLinkGates()
+{
+    emit controlLinkStateChanged(canSendControlCommands());
+    emit mapDownloadLinkChanged(canDownloadMap());
+}
+
+// 控制指令帧：串口 15 字节定长帧，TCP / UDP 4 字节短帧。**只在构建时分链路** ——
+// 解析侧（ProtocolRouter::handleControlFrame）两种长度都认，子命令位置相同。
+QByteArray SerialPort::buildControlFrame(quint8 subCmd) const
+{
+    if (isSerialPortConnected) return ProtocolRouter::buildUartCommandFrame(subCmd);
+
+    QVariantMap params;
+    params["sub_cmd"] = QVariant(uint(subCmd));
+    return ProtocolRouter::buildFrame(0x00, params);
+}
+
+// 参数帧：串口 15 字节（`AA 10 <id> <vH> <vL> 00×9 0A`），TCP / UDP 6 字节。
+QByteArray SerialPort::buildParamFrame(quint8 paramId, qint16 value) const
+{
+    return isSerialPortConnected ? ProtocolRouter::buildUartParamFrame(paramId, value)
+                                 : ProtocolRouter::buildWriteParamFrame(paramId, value);
+}
+
+// 「重启算法」可用性的唯一判定处，两条规则都写在这里：
+//   1. 指令链路在（TCP 已连接 / UDP 已绑定 / **串口已打开**）—— 由 controlLinkStateChanged 喂进来；
+//   2. 不在等待回发的窗口内 —— 模块已经准备重启了，不该再发第二条重启指令。
+// （串口早年不承载控制指令时这里还有一条「不在串口模式」，协议 v2.9 起串口有命令帧 0x00，
+// 那一条已经不成立了，别再往回加。）
 void SerialPort::updateRestartButton()
 {
-    ui->restartBt->setEnabled(controlLinkConnected_ && !isSerialPortConnected && !restartPending);
+    ui->restartBt->setEnabled(controlLinkConnected_ && !restartPending);
 }
 
 void SerialPort::on_restartBt_clicked()
 {
-    // 与按钮的可用条件一致：这条指令只走 TCP / UDP。串口挨着当前串口打开时 sendData 会走串口，
-    // 那是这条指令明确不支持的一条链，所以这里连串口模式一并挡住。
-    TcpClient* tcpClient = TcpClient::getInstance();
-    if (isSerialPortConnected || (!tcpClient->isConnected() && !isUdpBound)) {
+    // 与按钮的可用条件一致：TCP / UDP / 串口任意一条在就行（串口命令面第五六条子命令）
+    if (!canSendControlCommands()) {
         QMessageBox::warning(this, "警告", "请先连接模块！");
         return;
     }
+
+    const bool viaSerial = isSerialPortConnected;
+    TcpClient* tcpClient = TcpClient::getInstance();
 
     // 按下即发，**没有二次确认**：本功能的弹窗只有一次，就是收到回发后那句回执（见
     // onRestartAckReceived）。指令确实发出去了这件事由下面第一行日志交代。
@@ -1287,13 +1388,15 @@ void SerialPort::on_restartBt_clicked()
     QString timestamp = QDateTime::currentDateTime().toString("HH:mm:ss >> 用户操作: ");
     ui->recvEdit->append(timestamp + QStringLiteral("重启算法"));
 
-    // 2. 发出 AA 00 06 0A。发帧之前先关掉自动重连（工单 03）：模块收到即断电，断线随时会来，
+    // 2. 发出重启帧。走 TCP 时发帧之前先关掉自动重连（工单 03）：模块收到即断电，断线随时会来，
     //    开关必须先于那一帧在位。**成功回调里不解除** —— 回显早于断电到达，图省事在成功回调里
     //    解除的话，断电那一刻自动重连会照常触发（必然失败），本功能就静默失效了。
     //    一直压到用户自己点「打开连接」为止：万一模块重启得慢、或者回发丢了但其实断电了，
     //    那一刻也依然被正确压制。
-    tcpClient->setAutoReconnectEnabled(false);
-    sendData(ProtocolRouter::instance()->buildRestartFrame());
+    //    串口这条链没有「自动重连」这回事（口开着自己就在），所以只在非串口时动那把开关。
+    if (!viaSerial)
+        tcpClient->setAutoReconnectEnabled(false);
+    sendData(buildControlFrame(0x06));
 
     // 3. 进入等待窗口：按钮置灰挡住第二条重启指令（等待期断开链路也由门禁接住）
     restartPending = true;
@@ -1339,6 +1442,10 @@ void SerialPort::clearModuleRuntimeCaches()
     // 位姿两路：0x01 当前位姿 / 0x03 位置控制指令。valid 归假，打印定时器随之闭嘴
     latestPose01 = PoseData();
     latestPose03 = PoseData();
+
+    // 五件状态（0x05）同理：verdict 回初值并置 valid=false，重启回来之前不再打那一行，
+    // 免得把重启前的飞控 / 资源读数当成「现在」的值继续报
+    latestStatus05 = FlightStatus();
 
     // 模块类型（参数 0x99）：-1 = 没读到过。它决定存图超时取 3D 的宽档还是 2D 的窄档，
     // 重启后模块还没自报类型之前，按「不知道」宽档兜底才是安全的
@@ -1412,13 +1519,9 @@ void SerialPort::handleTestFrame(const QByteArray &frame, bool isResponse)
         // 这是其他设备发来的测试请求（不是对我们请求的响应）
         qDebug() << "收到测试请求，自动回复响应";
 
-        // 自动构建测试响应帧
-        QByteArray response = ProtocolRouter::instance()->buildFrame(
-            0x00, {
-                {"sub_cmd", 0x01},
-                {"is_request", false}  // 标记为响应
-            }
-            );
+        // 自动构建测试响应帧：帧形跟链路走（串口 15 字节 / 网络 4 字节），
+        // 子命令都是 01。别在这里另拼一份 —— 帧形的唯一出处是 buildControlFrame()。
+        QByteArray response = buildControlFrame(0x01);
 
         // 回复对方
         sendData(response);
@@ -1526,7 +1629,7 @@ void SerialPort::on_wifiConnectBt_clicked()
 
                 if (udpSocket->bind(port)) {
                     isUdpBound = true;
-                    emit controlLinkStateChanged(tcpClient->isConnected() || isUdpBound);
+                    emitCommandLinkGates();
                     ui->wifiConnectBt->setText("关闭连接");
                     emit controlLinkTextChanged(QStringLiteral("UDP 已连接"), true);
 
@@ -1579,7 +1682,7 @@ void SerialPort::on_wifiConnectBt_clicked()
             if (isUdpBound) {
                 udpSocket->close();
                 isUdpBound = false;
-                emit controlLinkStateChanged(tcpClient->isConnected() || isUdpBound);
+                emitCommandLinkGates();
 
                 ui->wifiConnectBt->setText("打开连接");
                 emit controlLinkTextChanged(QStringLiteral("未连接"), false);
@@ -1648,10 +1751,11 @@ void SerialPort::on_portOpenBt_clicked()
     // 与页内这颗按钮是同一个动作的两个入口，靠「读按钮文案」推链路状态迟早会不同步。
     if (!isSerialPortConnected) {
         if(serialPort->open(QIODevice::ReadWrite) == true){
-            // 设置WifiBox不可选
+            // 设置WifiBox不可选（两条链路互斥：串口开着时不再接网络）
             ui->wifiBox->setEnabled(false);
-            // 不支持发送数据
-            ui->groupBox_4->setEnabled(false);
+            // 「发送」分组**不再置灰**：协议 v2.9 起串口上有命令帧 0x00（字节 2 = 子命令），
+            // 「通信测试 / 保存地图 / 读参数 / 保存参数 / 重启模块算法」五件事在串口上都能做，
+            // 只有「下传地图」那一条不在其中（见 onDownloadMapRequested）。
             // 不支持检测串口
             ui->portSearchBt->setEnabled(false);
             isSerialPortConnected=true;
@@ -1662,7 +1766,19 @@ void SerialPort::on_portOpenBt_clicked()
             // 文字格式只在 portStateText() 里定：端口 · 波特率 · 状态
             emit portStateChanged(
                 portStateText(serialPort->portName(), baudRate, QStringLiteral("已连接")), true);
-            QMessageBox::warning(this, "提示", "仅用于测试串口输出坐标");
+
+            // 门禁跟着链路走：串口一开，「保存地图 / 读参数 / 写参数 / 重启算法」就都该亮
+            // （「下载地图」仍不亮 —— 串口没有 05 这条子命令）
+            emitCommandLinkGates();
+
+            // 日志窗口留一行交代这次连接能做什么。**不弹模态框**：原先那句
+            // 「仅用于测试串口输出坐标」在协议加了命令帧之后已经是错的，而且它会挡住日志。
+            ui->recvEdit->append(
+                QDateTime::currentDateTime().toString("HH:mm:ss >> ") +
+                QStringLiteral("串口已打开：%1 · %2 · 8N1；可用命令与 TCP 同号"
+                               "（通信测试 / 保存地图 / 读参数 / 保存参数 / 重启算法），"
+                               "下载地图仍需走 TCP。")
+                    .arg(serialPort->portName()).arg(baudRate));
 
             // 串口连接成功，启动打印定时器
             if (!printTimer->isActive()) {
@@ -1694,10 +1810,11 @@ void SerialPort::on_portOpenBt_clicked()
             portStateText(serialPort->portName(), baudRate, QStringLiteral("已关闭")), false);
         // 设置WifiBox可选
         ui->wifiBox->setEnabled(true);
-        // 支持发送数据
-        ui->groupBox_4->setEnabled(true);
         // 支持检测串口
         ui->portSearchBt->setEnabled(true);
+
+        // 串口一关，控制指令的门禁要跟着收回（否则按钮还亮着、点下去只能弹一句「请先连接模块」）
+        emitCommandLinkGates();
 
         // 串口关闭，停止打印定时器
         if (printTimer->isActive()) {
@@ -1772,6 +1889,19 @@ void SerialPort::onPrintTimerTimeout()
                              QString::number(latestPose03.pitch) + " yaw=" +
                              QString::number(latestPose03.yaw) + "°");
     }
+
+    // 打印0x05状态帧（五件）：飞控 / 重定位 / 规划 + CPU / 运存。
+    // 模块那边 1 Hz 发，这里也 1 Hz 打一行 —— 与前面两行同频，不额外刷屏；
+    // 收到过至少一帧才打（valid），否则开串口的那一秒就会先出现一行全初值的假状态。
+    // 两格百分比为 0xFF 时显示「—」：那是「没人报」，不是 0%。
+    if (latestStatus05.valid) {
+        ui->recvEdit->append(
+            timestamp + " >> 模块状态: 飞控=" + fcStateText(latestStatus05.fcState) +
+            " 重定位=" + progressStateText(latestStatus05.relocalization) +
+            " 规划=" + progressStateText(latestStatus05.planning) +
+            " CPU=" + percentText(latestStatus05.cpuPercent) +
+            " 运存=" + percentText(latestStatus05.memPercent));
+    }
 }
 
 // 每10秒统计频率（仅串口模式）
@@ -1792,7 +1922,9 @@ void SerialPort::onStatsPrintTimerTimeout()
     ui->recvEdit->append(timestamp + " >> 位姿：" + QString::number(freq01, 'f', 2) + "Hz");
     ui->recvEdit->append(timestamp + " >> 导航目标点：" + QString::number(freq02, 'f', 2) + "Hz");
     ui->recvEdit->append(timestamp + " >> 导航位置指令：" + QString::number(freq03, 'f', 2) + "Hz");
-    ui->recvEdit->append(timestamp + " >> 导航速度指令：" + QString::number(freq04, 'f', 2) + "Hz");
+    // 0x04 是 pos_cmd 转发下来的**规划速度**（规划器给出的速度指令），不是实测实时速度，
+    // 文案照这个叫法写，别写成「导航速度指令」或「实时速度」。
+    ui->recvEdit->append(timestamp + " >> 规划速度：" + QString::number(freq04, 'f', 2) + "Hz");
     ui->recvEdit->append(timestamp + " >> 状态：" + QString::number(freq05, 'f', 2) + "Hz");
     ui->recvEdit->append(timestamp + " >> ==============================");
 

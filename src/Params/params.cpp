@@ -11,6 +11,25 @@
 // 参数值那一列的列号（输入控件都挂在这一列上，折叠时要连它们一起藏）
 namespace {
 constexpr int kValueColumn = 3;
+
+// 折叠按钮那格的真实可用区（cell widget 拿到的矩形）＝ 列宽/行高 减掉 QSS 里
+// QTableWidget::item 的 padding（左右各 @gap-sm、上下各 @gap-xs），再减 1px 网格线。
+// 反过来说：想让 `FoldBtnPx + 1px 描边` 的按钮**完整**画出来，列宽/行高就得按这些量反推，
+// 否则按钮的右边和下边会被 cell widget 的矩形裁掉（看着像个缺两条边的方块）。
+constexpr int kFoldBtnBox    = Theme::Metric::FoldBtnPx + 2;     // 含 1px 描边后的外框
+constexpr int kFoldCellInsetX = 2 * Theme::Metric::GapSm + 1;    // 左右 padding + 网格线
+constexpr int kFoldCellInsetY = 2 * Theme::Metric::GapXs + 1;    // 上下 padding + 网格线
+constexpr int kFoldSlack      = 4;                               // 两侧各留 2px，别贴着格线
+
+// 下面那些列宽 / 最小行高是按**全局正文**（FontPtBase = 12pt）排出来的基准值。
+// 参数页的字号比正文大一档（QSS 里的 @font-size-param，唯一取值点 Theme::Metric::FontPtParam），
+// 同一列要按字号比例跟着放宽，否则「参数名称」「值范围」两列会把字截成一串省略号。
+// 所以这里不在两个地方各写一套数字，只留「按比例换算」这一步：
+// 想整体放大 / 缩小，改 Theme::Metric::FontPtParam 一个数就够了。
+constexpr int scaleForParamFont(int base)
+{
+    return base * Theme::Metric::FontPtParam / Theme::Metric::FontPtBase;
+}
 }
 
 const QVector<Parameter> Params::s_parameters = {
@@ -69,7 +88,7 @@ Params::Params(QWidget *parent)
     // 初始化参数
     setupParameters();
 
-    // 「写入参数」的门禁跟随链路层：初始不可点，连上 TCP / UDP 后由
+    // 「写入参数」的门禁跟随链路层：初始不可点，连上 TCP / UDP / 串口 后由
     // SerialPort::controlLinkStateChanged 打开（与可视化页「保存地图」同一口径）
     ui->writeButton->setEnabled(false);
 }
@@ -93,11 +112,15 @@ void Params::setupTable()
     ui->tableWidget->setAlternatingRowColors(true);
 
     // 设置列宽 - 减小列宽
-    ui->tableWidget->setColumnWidth(0, 25);    // 减小第一列宽度
-    ui->tableWidget->setColumnWidth(1, 70);    // 参数ID列
-    ui->tableWidget->setColumnWidth(2, 100);   // 参数名称列
-    ui->tableWidget->setColumnWidth(3, 120);   // 参数值列（只是下限：setupParameters 会按最长下拉选项再撑宽）
-    ui->tableWidget->setColumnWidth(4, 100);   // 值范围列
+    // 第一列只放折叠按钮：宽度按「按钮外框 + cell widget 的左右 inset」反推，
+    // 写死 25 的那一版会把这个列里的控件裁掉右边框（见 kFoldCellInsetX 的注释）。
+    ui->tableWidget->setColumnWidth(0, kFoldBtnBox + kFoldCellInsetX + kFoldSlack);
+    // 1~4 列的基准值按全局正文（12pt）量过一遍；参数页字号大一档，宽度同比放大
+    // （换算见 kFoldBtnBox 下方的 scaleForParamFont）。
+    ui->tableWidget->setColumnWidth(1, scaleForParamFont(70));    // 参数ID列
+    ui->tableWidget->setColumnWidth(2, scaleForParamFont(100));   // 参数名称列
+    ui->tableWidget->setColumnWidth(3, scaleForParamFont(120));   // 参数值列（只是下限：setupParameters 会按最长下拉选项再撑宽）
+    ui->tableWidget->setColumnWidth(4, scaleForParamFont(100));   // 值范围列
     // 说明列自动拉伸
 
     // 设置自动换行和文本显示
@@ -157,7 +180,8 @@ void Params::setupParameters()
         const Parameter &param = parameters[row];
 
         // 在两个分组表头行上添加折叠按钮
-        if (row == placementHeaderRow || row == plannerHeaderRow) {
+        const bool isFoldRow = (row == placementHeaderRow || row == plannerHeaderRow);
+        if (isFoldRow) {
             // 创建容器widget确保按钮居中
             QWidget *container = new QWidget();
             QHBoxLayout *layout = new QHBoxLayout(container);
@@ -166,10 +190,11 @@ void Params::setupParameters()
 
             QPushButton *foldButton = new QPushButton();
             foldButton->setText("−");
-            foldButton->setFixedSize(20, 20);
+            foldButton->setCursor(Qt::PointingHandCursor);
             foldButton->setToolTip("折叠 / 展开这一组参数");
-            // 全局 QSS 里 QPushButton 的内边距是按页面按钮定的，塞进 20×20 会把字挤没；
-            // 这个 objectName 对应一条把它归零的规则（工单 03）。
+            // 尺寸**只由 QSS 定**（#foldButton 那四条 min/max）：QSS polish 落在构造之后，
+            // 在这里 setFixedSize 会跟它抢，min 比 max 大一档，按钮就被裁成半个方块。
+            // 原来「塞进 20×20 把字挤没」的毛病，靠同一段 QSS 把 padding 归零解决（工单 03）。
             foldButton->setObjectName(QStringLiteral("foldButton"));
 
             // 分组状态留在成员里，不留在按钮上：按钮是 cell widget，
@@ -200,6 +225,12 @@ void Params::setupParameters()
         QTableWidgetItem *idItem = new QTableWidgetItem(param.id);
         ui->tableWidget->setItem(row, 1, idItem);
 
+        // 表头行得高到能装下折叠按钮。行高是 verticalHeader 的 ResizeToContents 按**item 的
+        // sizeHint** 算出来的（cell widget 不参与），所以高度只能从 item 上要：
+        // setRowHeight 在这个模式下会被下一次重算覆盖掉，看着就是「设了没反应」。
+        if (isFoldRow)
+            idItem->setSizeHint(QSize(0, kFoldBtnBox + kFoldCellInsetY + kFoldSlack));
+
         // 参数名称
         QTableWidgetItem *nameItem = new QTableWidgetItem(param.name);
         ui->tableWidget->setItem(row, 2, nameItem);
@@ -226,9 +257,15 @@ void Params::setupParameters()
     // 中间那几个字省略掉了。这里按控件自己的字体度量算，而不是再写死一个像素数——
     // 表格样式里的 font-size 一改、系统 DPI 一变，写死的值又会开始截断。
     // 数码框那几行本来就比这窄，所以拿现有列宽兜底即可。
-    // 量的是表格自己的字体：font-size 是打在 QTableWidget 上的，下拉框继承的就是这一份。
+    // 量的是**参数页实际用的那一档字号**，不是 tableWidget->font() 的当前值：
+    // QSS 的 font-size 要等控件第一次 polish 才落到 font() 上，而这里在构造函数里就跑，
+    // 那一刻拿到的还是全局正文（12pt）。按 12pt 算出来的列宽装不下 14pt 的下拉选项，
+    // 「3D沿地面空间路径规划」就会被省略成「3D沿地面…」。
+    QFont cellFont = ui->tableWidget->font();
+    cellFont.setPointSize(Theme::Metric::FontPtParam);
+
     int valueColumnWidth = ui->tableWidget->columnWidth(kValueColumn);
-    const QFontMetrics fm(ui->tableWidget->font());
+    const QFontMetrics fm(cellFont);
     for (QWidget *valueWidget : valueWidgets) {
         const QComboBox *comboBox = valueWidget->findChild<QComboBox *>();
         if (!comboBox) continue;
@@ -248,8 +285,8 @@ void Params::setupParameters()
 
     // 额外优化：强制紧凑布局
     for (int row = 0; row < ui->tableWidget->rowCount(); ++row) {
-        // 设置行高更紧凑
-        ui->tableWidget->setRowHeight(row, qMax(ui->tableWidget->rowHeight(row), 25)); // 最小行高25px
+        // 设置行高更紧凑（下限跟着参数页字号走，不然大字号会被压进 25px 的行里）
+        ui->tableWidget->setRowHeight(row, qMax(ui->tableWidget->rowHeight(row), scaleForParamFont(25)));
     }
 
     // 行高定完再让 view 摆一遍 cell widget：上面这些 resizeRowsToContents / setRowHeight
@@ -470,7 +507,8 @@ void Params::on_writeButton_clicked()
     emit writeParamsRequested(params);
 }
 
-// 控制指令链路状态（TCP / UDP）：未连接（含只有串口）时「写入参数」不可点
+// 指令链路状态（TCP / UDP / 串口任一）：都没有时「写入参数」不可点。
+// 串口自协议 v2.9 起也能改参数（参数帧 0x10 + 保存子命令 04），所以这里不再排除串口。
 void Params::setLinkConnected(bool connected)
 {
     ui->writeButton->setEnabled(connected);
